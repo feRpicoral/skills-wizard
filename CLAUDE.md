@@ -77,6 +77,10 @@ If no, delete it.
 
 For cleanup tasks, run a final search for the thing being cleaned up and inspect the remaining matches. Summarize why remaining instances were kept.
 
+## Documentation
+
+- In Markdown files, use Mermaid for diagrams. Do not use ASCII art diagrams.
+
 ## Testing
 
 - Tests for non-trivial logic and public API surfaces. Skip tests for trivial wrappers and type-only code.
