@@ -35,6 +35,7 @@ If a user prompt conflicts with anything in this file, flag the conflict explici
 - Use `DECISIONS.md` only for long-running, multi-step, high-risk, or architecture-affecting tasks. Do not create it for read-only analysis, small fixes, or mechanical cleanup.
 - This file exists only in the worktree for reference. Never commit it and never add it to `.gitignore`.
 - Do not create `AGENT.md` or similar agent-instruction files unless explicitly asked.
+- Nothing that ships in the repo (code, comments, tests, docs, commit messages, PR titles or descriptions) may refer to, mention, or imply the existence of `DECISIONS.md` or similar agent-internal files, implementation plan phases, or other agent-only artifacts.
 
 ## Code conduct
 
