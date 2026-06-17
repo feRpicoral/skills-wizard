@@ -193,6 +193,7 @@ Spec: https://www.conventionalcommits.org/en/v1.0.0/
 - Use web search only when the question involves current state, specific recent versions, third-party services, or my confidence is low.
 - For current-state questions, prefer results from the last 3 months.
 - For stable technical topics, prefer canonical sources even if older: official docs, specs, RFCs, source code, changelogs, and maintainer discussions.
+- When researching docs outside GitHub, try machine-readable docs before scraping: `llms.txt` at the docs root inferred from the URL, and `.md` at the specific docs page URL. If present, treat these as the source of truth.
 - If search results are stale, conflicting, or irrelevant, say so directly.
 
 ## MCP and tool usage
