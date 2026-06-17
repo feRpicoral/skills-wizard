@@ -17,6 +17,7 @@ If a user prompt conflicts with anything in this file, flag the conflict explici
 
 - Output should not read as machine-generated, in prose or code.
 - Avoid the common tells: overuse of em dashes, "not just X but Y" phrasing, needless bullet lists where prose fits, hedging boilerplate, and formulaic intros or summaries.
+- Avoid unicode arrows, emoji, decorative symbols, and overexplained comments unless the target file or design explicitly requires them.
 - No filler or decorative phrasing. Say the thing once.
 
 ## Task execution
@@ -27,14 +28,16 @@ If a user prompt conflicts with anything in this file, flag the conflict explici
 - If the requested change would require a risky migration, destructive command, or major architecture change, ask first.
 - Before starting non-trivial work, reread the relevant sections of this file and call out any instruction conflict before acting.
 - Before declaring a task complete, run the narrowest relevant validation available: tests, typecheck, lint, or build.
+- For trivial follow-up changes, do not run the full local validation stack unless the change actually needs it.
 - If validation cannot be run, explain exactly why and what should be run manually.
 - Do not claim compliance with a rule unless it was actually checked. For example, do not say comments were audited unless remaining comments in touched files were reviewed.
+- In plan mode, if a plan yields more than one implementation PR, decide the PR stacking explicitly. Prefer individual PRs against the default branch unless stacking is required by dependent changes or to minimize merge conflicts.
 
 ## Working notes
 
 - Use `DECISIONS.md` only for long-running, multi-step, high-risk, or architecture-affecting tasks. Do not create it for read-only analysis, small fixes, or mechanical cleanup.
 - This file exists only in the worktree for reference. Never commit it and never add it to `.gitignore`.
-- Do not create `AGENT.md` or similar agent-instruction files unless explicitly asked.
+- Do not create `AGENTS.md` or similar agent-instruction files unless explicitly asked.
 - Nothing that ships in the repo (code, comments, tests, docs, commit messages, PR titles or descriptions) may refer to, mention, or imply the existence of `DECISIONS.md` or similar agent-internal files, implementation plan phases, or other agent-only artifacts.
 
 ## Code conduct
@@ -80,6 +83,8 @@ For cleanup tasks, run a final search for the thing being cleaned up and inspect
 ## Documentation
 
 - In Markdown files, use Mermaid for diagrams. Do not use ASCII art diagrams.
+- If documentation starts getting complex, prefer a `docs/` folder over a crowded README.
+- When changing documented code or flows, update the nearby documentation in the same change.
 
 ## Testing
 
@@ -96,6 +101,11 @@ For cleanup tasks, run a final search for the thing being cleaned up and inspect
 - If adding a dependency, explain why it is necessary and whether it affects runtime, build time, or bundle size.
 - Use the package manager already used by the project. Do not change lockfiles unless dependency changes are required.
 - For new projects or when no package manager is established, prefer `yarn` over `npm`.
+
+## Environment variables
+
+- Access and validate environment variables through a dedicated service that fails fast at boot. Avoid scattered direct `process.env` reads.
+- When adding an environment variable, update `.env.example` and every boot path that would fail without it, including CI, test setup, e2e setup and deploy configuration.
 
 ## Shell commands
 
@@ -116,15 +126,19 @@ For cleanup tasks, run a final search for the thing being cleaned up and inspect
 - When creating a new GitHub repo, configure these before pushing the first commit:
   - Enable auto-delete of head branches on merge (`gh repo edit <repo> --delete-branch-on-merge`).
   - Allow only merge commits for PRs; disable squash and rebase merging (`gh repo edit <repo> --enable-merge-commit --enable-squash-merge=false --enable-rebase-merge=false`).
-  - Protect `main` with a ruleset that requires a PR for changes and blocks direct pushes. If the exact ruleset spec is unclear, surface the choice instead of guessing.
+  - Protect the default branch with a ruleset that requires PRs for changes and blocks direct pushes. If the exact ruleset spec is unclear, surface the choice instead of guessing.
 
 ## Branching and pull requests
 
-- Unless explicitly told to commit directly on a branch, create a branch, open a PR with the `gh` CLI, and do the work on that branch.
+- Unless explicitly told to commit directly on a branch, create a branch, open a draft PR with the `gh` CLI, and do the work on that branch.
 - If the user asks to open, update, fix, or resolve conflicts on a PR, that authorizes normal pushes to that PR branch needed to complete that request after validation.
 - Do not push unrelated changes. Force-pushes, pushes to `main`/protected/shared branches, tags, releases, or remote changes require explicit permission.
-- Open the PR early once there is a coherent first commit. Do not create an empty PR unless explicitly asked.
+- Open the draft PR early once there is a coherent first commit. Do not create an empty PR unless explicitly asked.
 - Merge PRs with a merge commit (`gh pr merge --merge`). Do not squash or rebase.
+
+## Pull request reviews
+
+- Always review thoroughly. Prioritize code quality, readability, maintainability, bugs, AI tells, code and render performance, and whether the change follows the repo's agent instructions.
 
 ## Pull request descriptions
 
@@ -137,6 +151,7 @@ For cleanup tasks, run a final search for the thing being cleaned up and inspect
 - Commit along the way in small, focused commits as work progresses.
 - Before pushing, inspect `git status`, inspect the staged or committed diff, and run the narrowest relevant validation.
 - Push only committed, task-relevant changes to the task branch. Report the branch, commit SHA, PR URL, and validation result after pushing.
+- Do not poll CI after a push unless the user explicitly asks for it.
 - Before committing, inspect `git diff --staged` and `git status`.
 - Commit only files relevant to the requested task.
 - If unrelated modified files exist, leave them untouched and mention them.
@@ -153,7 +168,7 @@ Format:
 Rules:
 - Header line only. NEVER write a body or footer.
 - NEVER add a `Co-Authored-By:` trailer.
-- NEVER add "🤖 Generated with Claude Code" or any attribution line.
+- NEVER add generated-by-agent attribution lines.
 - Description: lowercase, imperative mood, no trailing period.
 - Keep commits small and focused. Each commit should leave the codebase in a working state when possible.
 
@@ -178,6 +193,7 @@ Spec: https://www.conventionalcommits.org/en/v1.0.0/
 - Use web search only when the question involves current state, specific recent versions, third-party services, or my confidence is low.
 - For current-state questions, prefer results from the last 3 months.
 - For stable technical topics, prefer canonical sources even if older: official docs, specs, RFCs, source code, changelogs, and maintainer discussions.
+- When researching docs outside GitHub, try machine-readable docs before scraping: `llms.txt` at the docs root inferred from the URL, and `.md` at the specific docs page URL. If present, treat these as the source of truth.
 - If search results are stale, conflicting, or irrelevant, say so directly.
 
 ## MCP and tool usage
@@ -190,7 +206,8 @@ Spec: https://www.conventionalcommits.org/en/v1.0.0/
 ## Supabase with Prisma
 
 - Use the new API key style (publishable key + secret key), not the legacy `anon` key.
-- Connection URLs: set `DATABASE_URL` to the transaction pooler and `DIRECT_URL` to the session pooler (not the IPv4 direct URL, so Prisma can connect), where applicable.
+- Connection URLs: set `DATABASE_TRANSACTION_POOLING_URL` to the transaction pooler and `DATABASE_SESSION_POOLING_URL` to the session pooler, where applicable.
+- When an implementation creates or implies a new Supabase project, suggest adding it to `feRpicoral/supabase-heartbeat` to prevent pausing.
 - The database cannot be reset because of other Supabase-managed tables, and the first migration won't generate due to drift. Baseline it instead:
 
       mkdir -p prisma/migrations/0_init
