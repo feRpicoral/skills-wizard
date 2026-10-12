@@ -1,5 +1,11 @@
-import { writeManifest } from '../state/manifest.ts';
-import { removePath, replaceSymlink, writeTextAtomic } from './fs.ts';
+import { ApplyError } from '../errors.ts';
+import { serializeManifest, writeManifest } from '../state/manifest.ts';
+import {
+  readTextIfExists,
+  removePath,
+  replaceSymlink,
+  writeTextAtomic,
+} from './fs.ts';
 import type { Plan, PlannedAction } from './plan.ts';
 
 export interface ApplyOutcome {
@@ -12,7 +18,10 @@ async function execute(action: PlannedAction): Promise<void> {
     case 'none':
       return;
     case 'write':
-      return writeTextAtomic(action.path, action.change.content);
+      return writeTextAtomic(
+        action.writePath ?? action.path,
+        action.change.content,
+      );
     case 'delete':
       return removePath(action.path);
     case 'symlink':
@@ -20,11 +29,24 @@ async function execute(action: PlannedAction): Promise<void> {
   }
 }
 
-export async function applyPlan(
-  plan: Plan,
-  manifestPath: string,
-  baseDir?: string,
-): Promise<ApplyOutcome> {
+async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
+  const entries = plan.actions.flatMap((action) => {
+    const entry = applied.has(action) ? action.entry : action.previous;
+    return entry ? [entry] : [];
+  });
+  if (entries.length === 0 && plan.manifest.tools.length === 0) {
+    await removePath(plan.manifestPath);
+    return;
+  }
+
+  const manifest = { ...plan.manifest, entries };
+  const existing = await readTextIfExists(plan.manifestPath);
+  if (existing !== serializeManifest(manifest, plan.projectDir)) {
+    await writeManifest(plan.manifestPath, manifest, plan.projectDir);
+  }
+}
+
+export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   const applied: PlannedAction[] = [];
   const skipped: PlannedAction[] = [];
 
@@ -34,16 +56,18 @@ export async function applyPlan(
         skipped.push(action);
         continue;
       }
-      await execute(action);
+      try {
+        await execute(action);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new ApplyError(`Could not update ${action.path}: ${reason}`, {
+          cause: error,
+        });
+      }
       applied.push(action);
     }
   } finally {
-    const done = new Set(applied);
-    const entries = plan.actions.flatMap((action) => {
-      const entry = done.has(action) ? action.entry : action.previous;
-      return entry ? [entry] : [];
-    });
-    await writeManifest(manifestPath, { ...plan.manifest, entries }, baseDir);
+    await recordManifest(plan, new Set(applied));
   }
 
   return { applied, skipped };

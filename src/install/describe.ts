@@ -1,7 +1,7 @@
 import { relative, sep } from 'node:path';
 import { styleText } from 'node:util';
 
-import type { ActionStatus, Plan } from './plan.ts';
+import type { ActionStatus, ManifestStatus, Plan } from './plan.ts';
 
 type Format = Parameters<typeof styleText>[0];
 
@@ -23,27 +23,40 @@ export function displayPath(path: string, home: string): string {
     : path;
 }
 
-export function describePlan(
-  plan: Plan,
-  home: string,
-  baseDir?: string,
-): string[] {
+function line(
+  status: ActionStatus | ManifestStatus,
+  path: string,
+  label: string,
+): string {
+  return `${styleText(STATUS_FORMAT[status], status.padEnd(STATUS_WIDTH))}  ${path}  ${styleText('dim', label)}`;
+}
+
+export function describePlan(plan: Plan, home: string): string[] {
   const show = (path: string) =>
-    baseDir && path.startsWith(`${baseDir}${sep}`)
-      ? relative(baseDir, path)
+    plan.projectDir && path.startsWith(`${plan.projectDir}${sep}`)
+      ? relative(plan.projectDir, path)
       : displayPath(path, home);
-  return plan.actions.map((action) => {
-    const status = styleText(
-      STATUS_FORMAT[action.status],
-      action.status.padEnd(STATUS_WIDTH),
-    );
+
+  const lines = plan.actions.map((action) => {
+    const target = action.writePath ? ` -> ${show(action.writePath)}` : '';
     const reason = action.reason ? ` (${action.reason})` : '';
-    return `${status}  ${show(action.path)}  ${styleText('dim', action.label)}${reason}`;
+    return line(
+      action.status,
+      `${show(action.path)}${target}`,
+      `${action.label}${reason}`,
+    );
   });
+  if (plan.manifestStatus !== 'unchanged') {
+    lines.push(line(plan.manifestStatus, show(plan.manifestPath), 'manifest'));
+  }
+  return lines;
 }
 
 export function hasChanges(plan: Plan): boolean {
-  return plan.actions.some((action) => action.change.type !== 'none');
+  return (
+    plan.manifestStatus !== 'unchanged' ||
+    plan.actions.some((action) => action.change.type !== 'none')
+  );
 }
 
 export function conflicts(plan: Plan) {

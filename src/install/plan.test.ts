@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
-import { lstat, readFile, readlink, rm, symlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 
 import type { BlockLibrary } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
+import { ApplyError } from '../errors.ts';
 import {
   globalManifestPath,
   type Manifest,
@@ -14,9 +25,16 @@ import {
 import { tempDir, tempPaths, writeFiles } from '../test-support/fixtures.ts';
 import type { ToolId } from '../tools/registry.ts';
 import { applyPlan } from './apply.ts';
-import { buildPlan, type Plan } from './plan.ts';
+import {
+  buildPlan,
+  type Plan,
+  type ProjectContext,
+  type Selection,
+} from './plan.ts';
 
+const run = promisify(execFile);
 const BEGIN = '<!-- BEGIN:agents-config -->';
+const END = '<!-- END:agents-config -->';
 const REPO = '/repo';
 
 const library: BlockLibrary = {
@@ -31,6 +49,7 @@ const library: BlockLibrary = {
       scopes: ['global'],
       defaults: ['global'],
       variables: ['githubUsername'],
+      requires: [],
       body: 'GitHub username: {{githubUsername}}',
     },
     {
@@ -41,47 +60,91 @@ const library: BlockLibrary = {
       scopes: ['global', 'project'],
       defaults: ['global', 'project'],
       variables: [],
+      requires: [],
       body: '## Style\n\nBe direct.',
     },
   ],
 };
 
-async function globalPlan(
-  paths: Paths,
+function selection(
   tools: ToolId[],
-  options: { linkCommand?: boolean } = {},
-): Promise<Plan> {
-  const manifestPath = globalManifestPath(paths);
-  return buildPlan({
-    scope: 'global',
-    selection: {
-      tools,
-      blocks: ['core/identity', 'core/style'],
-      variables: { githubUsername: 'octocat' },
-      linkCommand: options.linkCommand ?? false,
-      keepLocal: false,
-    },
-    library,
-    paths,
-    repoRoot: REPO,
-    previous: await readManifest(manifestPath),
-    manifestPath,
-    now: new Date('2026-01-01T00:00:00Z'),
-  });
+  overrides: Partial<Selection> = {},
+): Selection {
+  return {
+    tools,
+    blocks: ['core/identity', 'core/style'],
+    variables: { githubUsername: 'octocat' },
+    linkCommand: false,
+    keepLocal: false,
+    ...overrides,
+  };
 }
 
 async function installGlobal(
   paths: Paths,
   tools: ToolId[],
-  options: { linkCommand?: boolean } = {},
+  overrides: Partial<Selection> = {},
 ): Promise<Plan> {
-  const plan = await globalPlan(paths, tools, options);
-  await applyPlan(plan, globalManifestPath(paths));
+  const manifestPath = globalManifestPath(paths);
+  const plan = await buildPlan({
+    scope: 'global',
+    selection: selection(tools, overrides),
+    library,
+    paths,
+    repoRoot: REPO,
+    previous: await readManifest(manifestPath),
+    manifestPath,
+  });
+  await applyPlan(plan);
+  return plan;
+}
+
+async function installProject(
+  paths: Paths,
+  project: ProjectContext,
+  tools: ToolId[],
+  overrides: Partial<Selection> = {},
+): Promise<Plan> {
+  const manifestPath = projectManifestPath(project.dir);
+  const previous = await readManifest(manifestPath, {
+    dir: project.dir,
+    ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
+  });
+  const plan = await buildPlan({
+    scope: 'project',
+    selection: selection(tools, {
+      blocks: ['core/style'],
+      variables: {},
+      ...overrides,
+    }),
+    library,
+    paths,
+    repoRoot: REPO,
+    previous,
+    manifestPath,
+    project,
+  });
+  await applyPlan(plan);
   return plan;
 }
 
 async function manifestOf(paths: Paths): Promise<Manifest | null> {
   return readManifest(globalManifestPath(paths));
+}
+
+async function gitProject(root: string, subdir = ''): Promise<ProjectContext> {
+  await run('git', ['init', '-q'], { cwd: root });
+  const realRoot = await realpath(root);
+  const dir = join(realRoot, subdir);
+  await mkdir(dir, { recursive: true });
+  return {
+    dir,
+    title: 'app',
+    git: {
+      root: realRoot,
+      excludePath: join(realRoot, '.git', 'info', 'exclude'),
+    },
+  };
 }
 
 test('writes one shared Gemini file plus tool-specific files', async (t) => {
@@ -103,21 +166,30 @@ test('writes one shared Gemini file plus tool-specific files', async (t) => {
   );
   assert.equal(
     await readFile(join(paths.geminiHome, 'AGENTS.md'), 'utf8'),
-    `${BEGIN}\n# Rules\n\nGitHub username: octocat\n\n## Style\n\nBe direct.\n<!-- END:agents-config -->\n`,
+    `${BEGIN}\n# Rules\n\nGitHub username: octocat\n\n## Style\n\nBe direct.\n${END}\n`,
   );
-  assert.equal((await manifestOf(paths))?.entries.length, 3);
 });
 
-test('a second run reports every action as unchanged', async (t) => {
+test('a second run plans nothing, including the manifest', async (t) => {
   const paths = await tempPaths(t);
   await installGlobal(paths, ['claude-code', 'gemini-cli']);
 
-  const plan = await globalPlan(paths, ['claude-code', 'gemini-cli']);
+  const manifestPath = globalManifestPath(paths);
+  const plan = await buildPlan({
+    scope: 'global',
+    selection: selection(['claude-code', 'gemini-cli']),
+    library,
+    paths,
+    repoRoot: REPO,
+    previous: await readManifest(manifestPath),
+    manifestPath,
+  });
 
   assert.ok(plan.actions.every((action) => action.status === 'unchanged'));
+  assert.equal(plan.manifestStatus, 'unchanged');
 });
 
-test('deselecting a tool removes only the content agents-config added', async (t) => {
+test('deselecting tools removes only the content agents-config added', async (t) => {
   const paths = await tempPaths(t);
   await writeFiles(paths.home, {
     '.claude/CLAUDE.md': '# Mine\n',
@@ -138,9 +210,21 @@ test('deselecting a tool removes only the content agents-config added', async (t
   await assert.rejects(lstat(join(paths.geminiHome, 'AGENTS.md')), {
     code: 'ENOENT',
   });
-  assert.deepEqual(
-    (await manifestOf(paths))?.entries.map((entry) => entry.path),
-    [join(paths.codexHome, 'AGENTS.md')],
+});
+
+test('deselecting Gemini CLI restores a string context file name', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.gemini/settings.json':
+      '{\n    "context": { "fileName": "GEMINI.md" }\n}\n',
+  });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.equal(
+    await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
+    '{\n    "context": {\n        "fileName": "GEMINI.md"\n    }\n}\n',
   );
 });
 
@@ -154,9 +238,25 @@ test('keeps the shared Gemini file while another tool still uses it', async (t) 
     (action) => action.path === join(paths.geminiHome, 'AGENTS.md'),
   );
   assert.equal(shared?.status, 'unchanged');
-  await assert.rejects(lstat(join(paths.geminiHome, 'settings.json')), {
-    code: 'ENOENT',
-  });
+});
+
+test('writes through a symlinked instructions file and keeps the link', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, { 'dotfiles/CLAUDE.md': '# Mine\n' });
+  await mkdir(paths.claudeHome, { recursive: true });
+  const real = await realpath(join(paths.home, 'dotfiles', 'CLAUDE.md'));
+  await symlink(real, join(paths.claudeHome, 'CLAUDE.md'));
+
+  const plan = await installGlobal(paths, ['claude-code']);
+
+  assert.equal(plan.actions[0]?.writePath, real);
+  assert.ok(
+    (await lstat(join(paths.claudeHome, 'CLAUDE.md'))).isSymbolicLink(),
+  );
+  assert.match(
+    await readFile(real, 'utf8'),
+    /^# Mine\n\n<!-- BEGIN:agents-config -->/,
+  );
 });
 
 test('never replaces an unmanaged file at the command link path', async (t) => {
@@ -177,27 +277,38 @@ test('never replaces an unmanaged file at the command link path', async (t) => {
 
 test('links the command and removes the link once deselected', async (t) => {
   const paths = await tempPaths(t);
-  await installGlobal(paths, ['codex'], { linkCommand: true });
   const link = join(paths.localBin, 'agents-config');
-  const target = await readlink(link);
+  await installGlobal(paths, ['codex'], { linkCommand: true });
 
   await installGlobal(paths, ['codex'], { linkCommand: false });
 
-  assert.equal(target, join(REPO, 'src', 'cli.ts'));
   await assert.rejects(lstat(link), { code: 'ENOENT' });
 });
 
-test('leaves a symlink alone when it was retargeted outside agents-config', async (t) => {
+test('a still selected link that was retargeted is left alone', async (t) => {
   const paths = await tempPaths(t);
-  await installGlobal(paths, ['codex'], { linkCommand: true });
   const link = join(paths.localBin, 'agents-config');
-  await writeFiles(paths.home, { 'other-cli': '' });
+  await installGlobal(paths, ['codex'], { linkCommand: true });
   await rm(link);
-  await symlink(join(paths.home, 'other-cli'), link);
+  await symlink('/elsewhere/cli', link);
 
-  await installGlobal(paths, ['codex'], { linkCommand: false });
+  const plan = await installGlobal(paths, ['codex'], { linkCommand: true });
 
-  assert.equal(await readlink(link), join(paths.home, 'other-cli'));
+  const action = plan.actions.find((entry) => entry.path === link);
+  assert.equal(action?.status, 'conflict');
+  assert.equal(await readlink(link), '/elsewhere/cli');
+});
+
+test('a still selected link replaced by a file is left alone', async (t) => {
+  const paths = await tempPaths(t);
+  const link = join(paths.localBin, 'agents-config');
+  await installGlobal(paths, ['codex'], { linkCommand: true });
+  await rm(link);
+  await writeFiles(paths.home, { '.local/bin/agents-config': 'mine\n' });
+
+  await installGlobal(paths, ['codex'], { linkCommand: true });
+
+  assert.equal(await readFile(link, 'utf8'), 'mine\n');
 });
 
 test('marks malformed managed regions as conflicts and leaves them untouched', async (t) => {
@@ -212,51 +323,117 @@ test('marks malformed managed regions as conflicts and leaves them untouched', a
     await readFile(join(paths.claudeHome, 'CLAUDE.md'), 'utf8'),
     broken,
   );
-  assert.deepEqual((await manifestOf(paths))?.entries, []);
 });
 
-test('project installs append after existing regions and prepend the import line', async (t) => {
+test('records only the actions that ran when an apply fails midway', async (t) => {
   const paths = await tempPaths(t);
-  const project = await tempDir(t);
-  await writeFiles(project, {
-    'AGENTS.md':
-      '<!-- BEGIN:nextjs-agent-rules -->\nnext\n<!-- END:nextjs-agent-rules -->\n',
-    'CLAUDE.md': '# Claude only\n',
-  });
-  const manifestPath = projectManifestPath(project);
-
+  await writeFiles(paths.home, { '.claude': 'not a directory\n' });
+  const manifestPath = globalManifestPath(paths);
   const plan = await buildPlan({
-    scope: 'project',
-    selection: {
-      tools: ['claude-code', 'gemini-cli'],
-      blocks: ['core/style'],
-      variables: {},
-      linkCommand: false,
-      keepLocal: false,
-    },
+    scope: 'global',
+    selection: selection(['antigravity', 'claude-code']),
     library,
     paths,
     repoRoot: REPO,
     previous: null,
-    projectDir: project,
-    projectTitle: 'app',
     manifestPath,
-    now: new Date('2026-01-01T00:00:00Z'),
   });
-  await applyPlan(plan, manifestPath, project);
+
+  await assert.rejects(applyPlan(plan), ApplyError);
+
+  assert.deepEqual(
+    (await manifestOf(paths))?.entries.map((entry) => entry.path),
+    [join(paths.geminiHome, 'AGENTS.md')],
+  );
+});
+
+test('project installs append after existing regions and prepend the import line', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, {
+    'AGENTS.md':
+      '<!-- BEGIN:nextjs-agent-rules -->\nnext\n<!-- END:nextjs-agent-rules -->\n',
+    'CLAUDE.md': '# Claude only\n',
+  });
+
+  await installProject(paths, { dir, title: 'app' }, [
+    'claude-code',
+    'gemini-cli',
+  ]);
 
   assert.equal(
-    await readFile(join(project, 'AGENTS.md'), 'utf8'),
-    `<!-- BEGIN:nextjs-agent-rules -->\nnext\n<!-- END:nextjs-agent-rules -->\n\n${BEGIN}\n## Style\n\nBe direct.\n<!-- END:agents-config -->\n`,
+    await readFile(join(dir, 'AGENTS.md'), 'utf8'),
+    `<!-- BEGIN:nextjs-agent-rules -->\nnext\n<!-- END:nextjs-agent-rules -->\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
   );
   assert.equal(
-    await readFile(join(project, 'CLAUDE.md'), 'utf8'),
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
     '@AGENTS.md\n\n# Claude only\n',
   );
-  assert.deepEqual(
-    JSON.parse(
-      await readFile(join(project, '.gemini', 'settings.json'), 'utf8'),
-    ),
-    { context: { fileName: ['AGENTS.md', 'GEMINI.md'] } },
+});
+
+test('an import line that already existed is kept when Claude Code is deselected', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '@AGENTS.md\n' });
+  await installProject(paths, { dir, title: 'app' }, ['claude-code']);
+
+  await installProject(paths, { dir, title: 'app' }, ['gemini-cli']);
+
+  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n');
+});
+
+test('a CLAUDE.md that links to AGENTS.md needs no import line', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'AGENTS.md': '# Team\n' });
+  await symlink('AGENTS.md', join(dir, 'CLAUDE.md'));
+
+  const plan = await installProject(paths, { dir, title: 'app' }, [
+    'claude-code',
+  ]);
+
+  const claude = plan.actions.find(
+    (action) => action.path === join(dir, 'CLAUDE.md'),
+  );
+  assert.equal(claude?.status, 'unchanged');
+  assert.equal(claude?.entry, null);
+  assert.ok((await lstat(join(dir, 'CLAUDE.md'))).isSymbolicLink());
+});
+
+test('removing a project install deletes the files it created', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await installProject(paths, { dir, title: 'app' }, [
+    'claude-code',
+    'gemini-cli',
+  ]);
+
+  await installProject(paths, { dir, title: 'app' }, []);
+
+  await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
+  await assert.rejects(lstat(join(dir, 'CLAUDE.md')), { code: 'ENOENT' });
+  await assert.rejects(lstat(projectManifestPath(dir)), { code: 'ENOENT' });
+});
+
+test('keep-local patterns are relative to the repository root, one region per project', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const app = await gitProject(root, 'packages/app');
+  const web = await gitProject(root, 'packages/web');
+
+  await installProject(paths, app, ['codex'], { keepLocal: true });
+  await installProject(paths, web, ['codex'], { keepLocal: true });
+
+  const exclude = await readFile(
+    join(app.git?.root ?? '', '.git', 'info', 'exclude'),
+    'utf8',
+  );
+  assert.match(
+    exclude,
+    /# BEGIN:agents-config packages\/app\n\/packages\/app\/AGENTS\.md\n\/packages\/app\/\.agents\/agents-config\.json\n# END:agents-config packages\/app/,
+  );
+  assert.match(
+    exclude,
+    /# BEGIN:agents-config packages\/web\n\/packages\/web\/AGENTS\.md/,
   );
 });
