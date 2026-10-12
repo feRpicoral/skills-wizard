@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
@@ -32,7 +38,7 @@ async function storeRaw(file: string, entries: unknown[]): Promise<void> {
 }
 
 test('project manifests store entry paths relative to the project', async (t) => {
-  const project = await tempDir(t);
+  const project = await realpath(await tempDir(t));
   const file = projectManifestPath(project);
   const original = manifest([
     {
@@ -53,7 +59,7 @@ test('project manifests store entry paths relative to the project', async (t) =>
 });
 
 test('readProjectManifest returns null when no manifest exists', async (t) => {
-  const project = await tempDir(t);
+  const project = await realpath(await tempDir(t));
 
   const result = await readProjectManifest(projectManifestPath(project), {
     dir: project,
@@ -71,7 +77,7 @@ test('readManifest rejects a manifest with an invalid shape', async (t) => {
 });
 
 test('project manifests cannot reference paths outside the project', async (t) => {
-  const project = await tempDir(t);
+  const project = await realpath(await tempDir(t));
   const file = projectManifestPath(project);
   await storeRaw(file, [
     {
@@ -90,7 +96,7 @@ test('project manifests cannot reference paths outside the project', async (t) =
 });
 
 test('project manifests cannot use absolute paths', async (t) => {
-  const project = await tempDir(t);
+  const project = await realpath(await tempDir(t));
   const file = projectManifestPath(project);
   await storeRaw(file, [
     { kind: 'region', path: '/etc/hosts', createdFile: false },
@@ -103,7 +109,7 @@ test('project manifests cannot use absolute paths', async (t) => {
 });
 
 test('a git exclude entry from another repository is ignored, not trusted', async (t) => {
-  const project = await tempDir(t);
+  const project = await realpath(await tempDir(t));
   const file = projectManifestPath(project);
   await storeRaw(file, [
     {
@@ -125,4 +131,25 @@ test('a git exclude entry from another repository is ignored, not trusted', asyn
     result?.manifest.entries.map((entry) => entry.kind),
     ['region'],
   );
+});
+
+test('a project manifest that links outside the project is refused before reading', async (t) => {
+  const project = await realpath(await tempDir(t));
+  const outside = await realpath(await tempDir(t));
+  await writeFile(join(outside, 'manifest.json'), '{}');
+  await mkdir(join(project, '.agents'));
+  await symlink(join(outside, 'manifest.json'), projectManifestPath(project));
+
+  await assert.rejects(
+    readProjectManifest(projectManifestPath(project), { dir: project }),
+    /resolves outside the project/,
+  );
+});
+
+test('a manifest path that is not a regular file is refused', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  await mkdir(file);
+
+  await assert.rejects(readManifest(file), /is not a regular file/);
 });

@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { UnsafeWriteError } from '../errors.ts';
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import { fsErrorReason, realLocation, writeTextAtomic } from './fs.ts';
 
@@ -33,7 +34,7 @@ test('writeTextAtomic refuses to replace a symlink', async (t) => {
 
   await assert.rejects(
     writeTextAtomic(join(dir, 'link.md'), 'new\n'),
-    /symlink/,
+    UnsafeWriteError,
   );
 });
 

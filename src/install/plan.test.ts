@@ -617,3 +617,15 @@ test('a target that is not a regular file is a conflict', async (t) => {
   assert.equal(plan.actions[0]?.status, 'conflict');
   assert.equal(plan.actions[0]?.reason, 'is not a regular file');
 });
+
+test('a manifest that cannot be written names the changes it could not record', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.agents/agents-config': 'not a directory\n',
+  });
+
+  await assert.rejects(installGlobal(paths, ['copilot']), {
+    name: 'ApplyError',
+    message: /changed but not recorded: .*copilot-instructions\.md/,
+  });
+});

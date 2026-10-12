@@ -24,3 +24,5 @@ export class JsonMergeError extends AgentsConfigError {}
 export class ManifestError extends AgentsConfigError {}
 
 export class ApplyError extends AgentsConfigError {}
+
+export class UnsafeWriteError extends AgentsConfigError {}

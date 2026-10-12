@@ -46,29 +46,65 @@ async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
   }
 }
 
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function executeAll(
+  plan: Plan,
+  applied: PlannedAction[],
+  skipped: PlannedAction[],
+): Promise<void> {
+  for (const action of plan.actions) {
+    if (action.status === 'conflict') {
+      skipped.push(action);
+      continue;
+    }
+    try {
+      await execute(action);
+    } catch (error) {
+      throw new ApplyError(
+        `Could not update ${action.path}: ${message(error)}`,
+        { cause: error },
+      );
+    }
+    applied.push(action);
+  }
+}
+
 export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   const applied: PlannedAction[] = [];
   const skipped: PlannedAction[] = [];
 
+  let failure: ApplyError | undefined;
   try {
-    for (const action of plan.actions) {
-      if (action.status === 'conflict') {
-        skipped.push(action);
-        continue;
-      }
-      try {
-        await execute(action);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        throw new ApplyError(`Could not update ${action.path}: ${reason}`, {
-          cause: error,
-        });
-      }
-      applied.push(action);
-    }
-  } finally {
-    await recordManifest(plan, new Set(applied));
+    await executeAll(plan, applied, skipped);
+  } catch (error) {
+    if (!(error instanceof ApplyError)) throw error;
+    failure = error;
   }
+
+  try {
+    await recordManifest(plan, new Set(applied));
+  } catch (error) {
+    const unrecorded = applied
+      .filter((action) => action.change.type !== 'none')
+      .map((action) => action.path);
+    const details = [
+      ...(failure === undefined ? [] : [message(failure)]),
+      ...(unrecorded.length > 0
+        ? [`changed but not recorded: ${unrecorded.join(', ')}`]
+        : []),
+    ];
+    throw new ApplyError(
+      [
+        `Could not record the manifest at ${plan.manifestPath}: ${message(error)}`,
+        ...details,
+      ].join('; '),
+      { cause: error },
+    );
+  }
+  if (failure !== undefined) throw failure;
 
   return { applied, skipped };
 }

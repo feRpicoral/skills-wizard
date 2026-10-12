@@ -5,7 +5,13 @@ import { z } from 'zod';
 import { SCOPES } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import { ManifestError } from '../errors.ts';
-import { isInside, readTextIfExists, writeTextAtomic } from '../install/fs.ts';
+import {
+  isInside,
+  readTextIfExists,
+  realLocation,
+  statIfExists,
+  writeTextAtomic,
+} from '../install/fs.ts';
 import { TOOL_IDS } from '../tools/registry.ts';
 
 export const MANIFEST_VERSION = 1;
@@ -119,6 +125,10 @@ export function serializeManifest(
 }
 
 export async function readManifest(file: string): Promise<Manifest | null> {
+  const stats = await statIfExists(file);
+  if (stats && !stats.isFile()) {
+    throw new ManifestError(`${file} is not a regular file`);
+  }
   const content = await readTextIfExists(file);
   if (content === null) return null;
 
@@ -139,6 +149,10 @@ export async function readProjectManifest(
   file: string,
   project: ProjectBase,
 ): Promise<ProjectManifest | null> {
+  const location = await realLocation(file);
+  if (location !== null && !isInside(project.dir, location)) {
+    throw new ManifestError(`${file} resolves outside the project`);
+  }
   const manifest = await readManifest(file);
   if (!manifest) return null;
 

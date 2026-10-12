@@ -14,6 +14,8 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 
+import { UnsafeWriteError } from '../errors.ts';
+
 const FS_ERROR_REASONS: Readonly<Record<string, string>> = {
   EISDIR: 'is a directory',
   EACCES: 'permission denied',
@@ -110,7 +112,7 @@ export async function writeTextAtomic(
 ): Promise<void> {
   const existing = await lstatIfExists(path);
   if (existing?.isSymbolicLink()) {
-    throw new Error(`refusing to replace the symlink at ${path}`);
+    throw new UnsafeWriteError(`refusing to replace the symlink at ${path}`);
   }
 
   await mkdir(dirname(path), { recursive: true });
