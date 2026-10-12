@@ -13,7 +13,7 @@ export interface Paths {
   localBin: string;
 }
 
-export type Environment = Readonly<Record<string, string | undefined>>;
+type Environment = Readonly<Record<string, string | undefined>>;
 
 function directory(env: Environment, name: string): string | undefined {
   const value = env[name]?.trim();

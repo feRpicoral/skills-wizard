@@ -1,7 +1,7 @@
 import { JsonMergeError } from '../errors.ts';
 import { lineEnding } from './lines.ts';
 
-export type JsonObject = Record<string, unknown>;
+type JsonObject = Record<string, unknown>;
 
 const DEFAULT_INDENT = 2;
 
@@ -65,7 +65,7 @@ function stringValues(value: unknown, keyPath: string): string[] {
   );
 }
 
-export interface EnsureResult {
+interface EnsureResult {
   doc: JsonObject;
   added: string[];
   wasString: boolean;
