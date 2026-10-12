@@ -42,7 +42,6 @@ test('prepareEvalWorkspace sets up with_skill workdir with clean git status and 
     runner: 'agy',
     env: isolatedGitEnv(root),
   });
-
   const pkg = await readFile(join(prepared.workdir, 'package.json'), 'utf8');
   const installedSkill = await readFile(
     join(prepared.workdir, '.agents', 'skills', 'demo-skill', 'SKILL.md'),
@@ -122,7 +121,6 @@ test('prepareEvalWorkspace excludes skill at workspace level for without_skill a
     paths,
     env: isolatedGitEnv(root),
   });
-
   const agyExclude = JSON.parse(
     await readFile(
       join(agyWorkspace.workdir, '.agents', 'skills.json'),
@@ -155,6 +153,48 @@ test('prepareEvalWorkspace excludes skill at workspace level for without_skill a
   assert.equal(codexWorkspace.possiblyContaminated, true);
   assert.match(codexWorkspace.warning ?? '', /possibly contaminated/);
   assert.match(globalSkillAfter, /name: demo-skill/);
+});
+
+test('prepareEvalWorkspace detects globally installed plugin skills via scanInstalledSkills', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const skillDir = join(root, 'skills', 'demo-skill');
+  await writeFiles(skillDir, {
+    'SKILL.md': skillSource('demo-skill'),
+  });
+  await writeFiles(
+    join(
+      paths.geminiHome,
+      'config',
+      'plugins',
+      'custom-plugin',
+      'skills',
+      'custom-dir',
+    ),
+    {
+      'SKILL.md': skillSource('demo-skill'),
+    },
+  );
+
+  const codexWorkspace = await prepareEvalWorkspace({
+    runDir: join(root, 'run-codex-plugin'),
+    skillDir,
+    skillName: 'demo-skill',
+    evalCase: {
+      id: 'plugin-case',
+      prompt: 'Do task',
+      expected_output: 'Done',
+      files: [],
+      assertions: [],
+    },
+    variant: 'without_skill',
+    runner: 'codex',
+    paths,
+    env: isolatedGitEnv(root),
+  });
+
+  assert.equal(codexWorkspace.possiblyContaminated, true);
+  assert.match(codexWorkspace.warning ?? '', /possibly contaminated/);
 });
 
 test('prepareEvalWorkspace extracts old_skill snapshot from git ref and prepareTriggerWorkspace installs skill', async (t) => {
@@ -212,7 +252,6 @@ test('prepareEvalWorkspace extracts old_skill snapshot from git ref and prepareT
     skillName: 'demo-skill',
     env,
   });
-
   const oldSkillContent = await readFile(
     join(oldWorkspace.workdir, '.agents', 'skills', 'demo-skill', 'SKILL.md'),
     'utf8',
