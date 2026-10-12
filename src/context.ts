@@ -1,6 +1,8 @@
 import {
+  type AgyConfig,
   gitEnvironment,
   type Paths,
+  resolveAgyConfig,
   resolvePaths,
   resolveSearchPath,
 } from './env.ts';
@@ -13,6 +15,7 @@ export interface Context {
   searchPath: string[];
   interactive: boolean;
   sources: SourceSettings;
+  agy?: AgyConfig;
   print: (line?: string) => void;
 }
 
@@ -38,6 +41,7 @@ export function createContext({
       env: gitEnvironment(),
       now: () => new Date(),
     },
+    agy: resolveAgyConfig(),
     print: (line = '') => {
       process.stdout.write(`${line}\n`);
     },
