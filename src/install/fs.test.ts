@@ -76,11 +76,16 @@ test('realLocation returns null when a link on the path is dangling', async (t) 
   assert.equal(location, null);
 });
 
-test('fsErrorReason describes the errors planning turns into conflicts', async (t) => {
+test('fsErrorReason describes reading a directory', async (t) => {
   const dir = await tempDir(t);
 
   const error = await readFile(dir).catch((caught: unknown) => caught);
 
   assert.equal(fsErrorReason(error), 'is a directory');
-  assert.equal(fsErrorReason(new Error('plain')), undefined);
+});
+
+test('fsErrorReason ignores errors without a known code', () => {
+  const reason = fsErrorReason(new Error('plain'));
+
+  assert.equal(reason, undefined);
 });
