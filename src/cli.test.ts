@@ -373,3 +373,17 @@ test('rejects disallowed flags on update, adopt and skill validate', async (t) =
     /Usage: agents-config skill validate \[path\.\.\.\] \[--catalog\]/,
   );
 });
+
+test('cli rejects invalid numeric flags for skill eval and triggers', async (t) => {
+  const home = await tempDir(t);
+
+  const [badRuns, badThreshold] = await Promise.all([
+    cli(home, ['skill', 'eval', 'some-skill', '--runs', '0']),
+    cli(home, ['skill', 'triggers', 'some-skill', '--threshold', 'not-num']),
+  ]);
+
+  assert.equal(badRuns.code, 2);
+  assert.match(badRuns.stderr, /--runs must be a positive integer/);
+  assert.equal(badThreshold.code, 2);
+  assert.match(badThreshold.stderr, /--threshold must be a number/);
+});

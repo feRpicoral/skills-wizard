@@ -34,6 +34,10 @@ Commands:
   adopt [skill...]          Take over existing unmanaged skills after backing them up
   doctor                    Check an install and report problems
   skill validate [path...]  Validate skill directories or --catalog
+  skill new <name>          Scaffold a new first-party skill in skills/<name>
+  skill eval <name>         Run with-skill vs baseline benchmark and grade assertions
+  skill triggers <name>     Measure trigger precision/recall on trigger_queries.json
+  skill report <name> [dir] Regenerate report.md from an existing benchmark iteration
   help                      Show this help
 
 Run without a command in a terminal to open the interactive menu.
@@ -48,6 +52,20 @@ Options:
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --catalog             skill validate: validate every skill in catalog.yaml
+  --template <kind>     skill new: basic (default), scripted, or reference-heavy
+  --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
+  --runner <name>       skill eval/triggers: agy, claude, codex, gemini, or fake
+  --binary <path>       skill eval/triggers: override runner CLI binary path
+  --runs <n>            skill eval/triggers: runs per configuration or query (default: 1)
+  --baseline            skill eval: run without_skill baseline (default; use --no-baseline to skip)
+  --compare <ref>       skill eval: also run old_skill snapshot from <ref>:skills/<name>
+  --case <id>           skill eval: filter to a single eval case ID
+  --parallel <n>        skill eval/triggers: concurrent runs (default: 2)
+  --timeout <seconds>   skill eval/triggers: per-run timeout in seconds
+  --sandbox             skill eval/triggers: pass --sandbox to runners that support it
+  --keep-workdirs       skill eval/triggers: keep temporary workdirs for debugging
+  --split <name>        skill triggers: train, validation, or all (default: all)
+  --threshold <0..1>    skill triggers: pass threshold for positive queries (default: 0.5)
   --var <name=value>    Block variable, repeatable
   --link-command        Link the agents-config command into ~/.local/bin
   --local               Project scope: keep the files out of git
@@ -64,6 +82,20 @@ const OPTIONS = {
   skills: { type: 'string' },
   'skill-mode': { type: 'string' },
   catalog: { type: 'boolean' },
+  template: { type: 'string' },
+  'with-evals': { type: 'boolean' },
+  runner: { type: 'string' },
+  binary: { type: 'string' },
+  runs: { type: 'string' },
+  baseline: { type: 'boolean' },
+  compare: { type: 'string' },
+  case: { type: 'string' },
+  parallel: { type: 'string' },
+  timeout: { type: 'string' },
+  sandbox: { type: 'boolean' },
+  'keep-workdirs': { type: 'boolean' },
+  split: { type: 'string' },
+  threshold: { type: 'string' },
   var: { type: 'string', multiple: true },
   'link-command': { type: 'boolean' },
   local: { type: 'boolean' },
@@ -104,7 +136,23 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
   update: ['yes', 'dry-run'],
   adopt: ['skills', 'tools', 'yes', 'dry-run'],
   doctor: ['global', 'project'],
-  skill: ['catalog'],
+  skill: [
+    'catalog',
+    'template',
+    'with-evals',
+    'runner',
+    'binary',
+    'runs',
+    'baseline',
+    'compare',
+    'case',
+    'parallel',
+    'timeout',
+    'sandbox',
+    'keep-workdirs',
+    'split',
+    'threshold',
+  ],
 };
 
 function isCommand(value: string): value is Command {
@@ -154,6 +202,37 @@ function parseVariables(values: string[] | undefined): Record<string, string> {
     variables[entry.slice(0, separator)] = entry.slice(separator + 1);
   }
   return variables;
+}
+
+interface ParseFlagParams {
+  value: string | undefined;
+  flagName: string;
+}
+
+function parsePositiveInt({
+  value,
+  flagName,
+}: ParseFlagParams): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new UsageError(
+      `--${flagName} must be a positive integer, got "${value}"`,
+    );
+  }
+  return parsed;
+}
+
+function parseFloatFlag({
+  value,
+  flagName,
+}: ParseFlagParams): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) {
+    throw new UsageError(`--${flagName} must be a number, got "${value}"`);
+  }
+  return parsed;
 }
 
 function rejectOptions(command: Command, provided: readonly string[]): void {
@@ -300,12 +379,44 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'doctor':
       return runDoctor(ctx, { scope: scope ?? 'global', ...projectDir });
-    case 'skill':
+    case 'skill': {
+      const runs = parsePositiveInt({ value: values.runs, flagName: 'runs' });
+      const parallel = parsePositiveInt({
+        value: values.parallel,
+        flagName: 'parallel',
+      });
+      const timeout = parsePositiveInt({
+        value: values.timeout,
+        flagName: 'timeout',
+      });
+      const threshold = parseFloatFlag({
+        value: values.threshold,
+        flagName: 'threshold',
+      });
       return runSkill(ctx, {
         subcommand: positionals[1],
         paths: positionals.slice(2),
         catalog: values.catalog ?? false,
+        ...(values.template !== undefined ? { template: values.template } : {}),
+        ...(values['with-evals'] !== undefined
+          ? { withEvals: values['with-evals'] }
+          : {}),
+        ...(values.runner !== undefined ? { runner: values.runner } : {}),
+        ...(values.binary !== undefined ? { binary: values.binary } : {}),
+        ...(runs !== undefined ? { runs } : {}),
+        ...(values.baseline !== undefined ? { baseline: values.baseline } : {}),
+        ...(values.compare !== undefined ? { compare: values.compare } : {}),
+        ...(values.case !== undefined ? { caseId: values.case } : {}),
+        ...(parallel !== undefined ? { parallel } : {}),
+        ...(timeout !== undefined ? { timeout } : {}),
+        ...(values.sandbox !== undefined ? { sandbox: values.sandbox } : {}),
+        ...(values['keep-workdirs'] !== undefined
+          ? { keepWorkdirs: values['keep-workdirs'] }
+          : {}),
+        ...(values.split !== undefined ? { split: values.split } : {}),
+        ...(threshold !== undefined ? { threshold } : {}),
       });
+    }
   }
 }
 
