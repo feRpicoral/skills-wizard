@@ -27,6 +27,7 @@ import {
   type Manifest,
   projectManifestPath,
   readManifest,
+  readProjectManifest,
 } from '../state/manifest.ts';
 
 const run = promisify(execFile);
@@ -116,18 +117,26 @@ export async function resolveLocation(
 }
 
 export async function readLocationManifest(
+  ctx: Context,
+  prompting: boolean,
   location: Location,
 ): Promise<Manifest | null> {
   const project = location.project;
-  return readManifest(
-    location.manifestPath,
-    project
-      ? {
-          dir: project.dir,
-          ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
-        }
-      : undefined,
-  );
+  if (!project) return readManifest(location.manifestPath);
+
+  const result = await readProjectManifest(location.manifestPath, {
+    dir: project.dir,
+    ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
+  });
+  for (const path of result?.ignored ?? []) {
+    notify(
+      ctx,
+      prompting,
+      `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`,
+      'warn',
+    );
+  }
+  return result?.manifest ?? null;
 }
 
 export function dropUnknownBlocks(

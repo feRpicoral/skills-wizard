@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { lstat, readFile, writeFile } from 'node:fs/promises';
+import { cp, lstat, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -171,4 +171,26 @@ test('sync without a recorded install is a usage error', async (t) => {
 
   assert.equal(result.code, 2);
   assert.match(result.stderr, /run agents-config init first/);
+});
+
+test('a keep-local project copied out of its repository still syncs', async (t) => {
+  const home = await tempDir(t);
+  const repo = await tempDir(t);
+  const copy = await tempDir(t);
+  await run('git', ['init', '-q'], { cwd: repo });
+  await cli(home, [
+    'init',
+    '--project',
+    repo,
+    '--yes',
+    '--tools',
+    'codex',
+    '--local',
+  ]);
+  await cp(join(repo, '.agents'), join(copy, '.agents'), { recursive: true });
+
+  const result = await cli(home, ['sync', '--project', copy, '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /belong to another repository/);
 });

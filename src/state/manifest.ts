@@ -66,9 +66,14 @@ const manifestSchema = z.object({
 
 export type Manifest = z.infer<typeof manifestSchema>;
 
-export interface ProjectBase {
+interface ProjectBase {
   dir: string;
   gitExcludePath?: string;
+}
+
+interface ProjectManifest {
+  manifest: Manifest;
+  ignored: string[];
 }
 
 export function globalManifestPath(paths: Paths): string {
@@ -87,18 +92,15 @@ function resolveProjectEntry(
   file: string,
   entry: ManifestEntry,
   project: ProjectBase,
-): ManifestEntry {
+): ManifestEntry | null {
   if (isAbsolute(entry.path)) {
     throw new ManifestError(`${file}: entry paths must be relative`);
   }
   const path = resolve(project.dir, entry.path);
   if (entry.kind === 'exclude-region') {
-    if (path !== project.gitExcludePath) {
-      throw new ManifestError(
-        `${file}: the git exclude entry does not belong to this repository`,
-      );
-    }
-  } else if (!isInside(project.dir, path)) {
+    return path === project.gitExcludePath ? { ...entry, path } : null;
+  }
+  if (!isInside(project.dir, path)) {
     throw new ManifestError(`${file}: ${entry.path} is outside the project`);
   }
   return { ...entry, path };
@@ -120,10 +122,7 @@ export function serializeManifest(
   return `${JSON.stringify(stored, null, 2)}\n`;
 }
 
-export async function readManifest(
-  file: string,
-  project?: ProjectBase,
-): Promise<Manifest | null> {
+export async function readManifest(file: string): Promise<Manifest | null> {
   const content = await readTextIfExists(file);
   if (content === null) return null;
 
@@ -137,14 +136,24 @@ export async function readManifest(
   if (!result.success) {
     throw new ManifestError(`${file}: ${z.prettifyError(result.error)}`);
   }
+  return result.data;
+}
 
-  if (!project) return result.data;
-  return {
-    ...result.data,
-    entries: result.data.entries.map((entry) =>
-      resolveProjectEntry(file, entry, project),
-    ),
-  };
+export async function readProjectManifest(
+  file: string,
+  project: ProjectBase,
+): Promise<ProjectManifest | null> {
+  const manifest = await readManifest(file);
+  if (!manifest) return null;
+
+  const ignored: string[] = [];
+  const entries = manifest.entries.flatMap((entry) => {
+    const resolved = resolveProjectEntry(file, entry, project);
+    if (resolved) return [resolved];
+    ignored.push(entry.path);
+    return [];
+  });
+  return { manifest: { ...manifest, entries }, ignored };
 }
 
 export async function writeManifest(
