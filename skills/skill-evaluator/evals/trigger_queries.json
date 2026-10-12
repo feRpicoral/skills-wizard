@@ -1,0 +1,82 @@
+[
+  {
+    "query": "Run the evaluation suite for skills/eslint-configuration with 3 runs per variant and tell me whether with_skill beats the without_skill baseline.",
+    "should_trigger": true
+  },
+  {
+    "query": "Measure trigger precision, recall, and false positive rate on the held-out validation split of skills/prettier-configuration/evals/trigger_queries.json.",
+    "should_trigger": true
+  },
+  {
+    "query": "Compare our current skills/eslint-configuration against main using --compare main to check if our SKILL.md edits caused any regressions.",
+    "should_trigger": true
+  },
+  {
+    "query": "Audit ~/.agents/agents-config/evals/prettier-configuration/iteration-1/benchmark.json and identify any non-discriminating assertions that pass 100% in both variants.",
+    "should_trigger": true
+  },
+  {
+    "query": "Replace the string-only expectations in skills/skill-author/evals/evals.json with deterministic file_exists, regex, json_valid, and command assertions.",
+    "should_trigger": true
+  },
+  {
+    "query": "Why did our benchmark report mark baseline_status as possibly contaminated when we ran skill eval with the codex runner?",
+    "should_trigger": true
+  },
+  {
+    "query": "Regenerate report.md from the latest benchmark iteration for eslint-configuration using yarn agents-config skill report.",
+    "should_trigger": true
+  },
+  {
+    "query": "Our skill triggers 100% on the train split but only 50% on the validation split. Help me diagnose the false negatives and tune the description without overfitting.",
+    "should_trigger": true
+  },
+  {
+    "query": "Write 10 positive and 10 near-miss negative trigger queries in evals/trigger_queries.json for our new skill.",
+    "should_trigger": true
+  },
+  {
+    "query": "How does the blind LLM grader in agents-config skill eval handle assertions when the grader returns empty evidence?",
+    "should_trigger": true
+  },
+  {
+    "query": "Scaffold a brand-new first-party skill in skills/graphql-schema-design from scratch and write its SKILL.md and reference docs.",
+    "should_trigger": false
+  },
+  {
+    "query": "Split our 550-line skills/api-migration/SKILL.md into progressive-disclosure reference files under references/ so it passes strict validation.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure Vitest coverage thresholds in vitest.config.ts for our backend service.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up ESLint v9 flat config in eslint.config.mjs with typescript-eslint and simple-import-sort.",
+    "should_trigger": false
+  },
+  {
+    "query": "Run yarn test and fix the failing unit test in src/state/manifest.test.ts.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a third-party skill from github.com/anthropics/skills to catalog.yaml and run yarn agents-config update.",
+    "should_trigger": false
+  },
+  {
+    "query": "Install our global AGENTS.md instructions and skills for Claude Code and Antigravity using yarn agents-config init.",
+    "should_trigger": false
+  },
+  {
+    "query": "Format all Markdown and TypeScript files in the repository with Prettier.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a GitHub Actions workflow in .github/workflows/ci.yml that runs yarn lint, yarn typecheck, and yarn test on pull requests.",
+    "should_trigger": false
+  },
+  {
+    "query": "Edit blocks/engineering/testing.md to update our Arrange-Act-Assert conventions.",
+    "should_trigger": false
+  }
+]

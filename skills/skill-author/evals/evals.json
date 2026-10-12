@@ -1,0 +1,87 @@
+{
+  "skill_name": "skill-author",
+  "evals": [
+    {
+      "id": "casual-changelog-skill",
+      "prompt": "We keep writing release notes by hand from commit logs like sample-commits.txt. Can you create a new skill called release-notes-drafter under skills/release-notes-drafter that groups conventional commits into Breaking Changes, Features, and Fixes, and ignores docs/chore commits?",
+      "expected_output": "A spec-compliant skills/release-notes-drafter/SKILL.md with third-person description including Use when and Don't use for clauses, clear grouping instructions, and no extraneous README.md.",
+      "files": ["evals/files/casual-changelog-skill/sample-commits.txt"],
+      "assertions": [
+        "The SKILL.md description is written in third-person voice and states both what the skill does and when to trigger it",
+        "The SKILL.md instructions explain how to group feat, fix, and breaking changes while excluding docs or chore commits",
+        {
+          "type": "file_exists",
+          "path": "skills/release-notes-drafter/SKILL.md"
+        },
+        {
+          "type": "file_absent",
+          "path": "skills/release-notes-drafter/README.md"
+        },
+        {
+          "type": "regex",
+          "path": "skills/release-notes-drafter/SKILL.md",
+          "pattern": "^name:\\s+release-notes-drafter$",
+          "flags": "m"
+        },
+        {
+          "type": "regex",
+          "path": "skills/release-notes-drafter/SKILL.md",
+          "pattern": "Use when",
+          "flags": "i"
+        }
+      ]
+    },
+    {
+      "id": "precise-scripted-skill",
+      "prompt": "Author a scripted skill named json-schema-linter in skills/json-schema-linter. Include SKILL.md, a non-interactive Node.js script at skills/json-schema-linter/scripts/lint-schema.mjs that supports --help and checks that object schemas in sample-schema.json set additionalProperties: false, and an evals/evals.json file with at least one case.",
+      "expected_output": "A complete scripted skill at skills/json-schema-linter with SKILL.md, executable scripts/lint-schema.mjs supporting --help, and valid evals/evals.json.",
+      "files": ["evals/files/precise-scripted-skill/sample-schema.json"],
+      "assertions": [
+        "SKILL.md documents how to invoke scripts/lint-schema.mjs and interpret its output",
+        {
+          "type": "file_exists",
+          "path": "skills/json-schema-linter/SKILL.md"
+        },
+        {
+          "type": "file_exists",
+          "path": "skills/json-schema-linter/scripts/lint-schema.mjs"
+        },
+        {
+          "type": "json_valid",
+          "path": "skills/json-schema-linter/evals/evals.json"
+        },
+        {
+          "type": "command",
+          "run": "node skills/json-schema-linter/scripts/lint-schema.mjs --help",
+          "expect": 0
+        }
+      ]
+    },
+    {
+      "id": "edge-bloated-skill-refactor",
+      "prompt": "The current SKILL.md and README.md in this directory came from a broken draft for a skill that should be named http-error-catalog. Refactor it in place so SKILL.md passes strict Agent Skills spec validation for name http-error-catalog, move the HTTP status code reference list into references/status-codes.md linked one hop from SKILL.md, and remove the disallowed README.md.",
+      "expected_output": "Refactored SKILL.md with valid frontmatter (name: http-error-catalog, no unknown author key, Use when description), references/status-codes.md linked from SKILL.md, and README.md removed.",
+      "files": [
+        "evals/files/edge-bloated-skill-refactor/SKILL.md",
+        "evals/files/edge-bloated-skill-refactor/README.md"
+      ],
+      "assertions": [
+        "SKILL.md removes the unsupported author frontmatter field and links directly to references/status-codes.md",
+        { "type": "file_exists", "path": "SKILL.md" },
+        { "type": "file_exists", "path": "references/status-codes.md" },
+        { "type": "file_absent", "path": "README.md" },
+        {
+          "type": "regex",
+          "path": "SKILL.md",
+          "pattern": "^name:\\s+http-error-catalog$",
+          "flags": "m"
+        },
+        {
+          "type": "regex",
+          "path": "SKILL.md",
+          "pattern": "references/status-codes\\.md"
+        }
+      ]
+    }
+  ]
+}

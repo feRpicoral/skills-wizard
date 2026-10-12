@@ -1,0 +1,14 @@
+{
+  "train": {
+    "recall": 1.0,
+    "precision": 1.0,
+    "false_positive_rate": 0.0,
+    "accuracy": 1.0
+  },
+  "validation": {
+    "recall": 0.5,
+    "precision": 0.6667,
+    "false_positive_rate": 0.25,
+    "accuracy": 0.625
+  }
+}
