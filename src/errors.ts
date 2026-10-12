@@ -7,6 +7,10 @@ export class AgentsConfigError extends Error {
 
 export class UsageError extends AgentsConfigError {}
 
+export class CancelledError extends AgentsConfigError {}
+
+export class EnvironmentError extends AgentsConfigError {}
+
 export class BlockLibraryError extends AgentsConfigError {}
 
 export class CompositionError extends AgentsConfigError {}
@@ -19,4 +23,4 @@ export class JsonMergeError extends AgentsConfigError {}
 
 export class ManifestError extends AgentsConfigError {}
 
-export class CancelledError extends AgentsConfigError {}
+export class ApplyError extends AgentsConfigError {}

@@ -1,35 +1,41 @@
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
+
+import { EnvironmentError } from './errors.ts';
 
 export interface Paths {
   home: string;
-  agentsHome: string;
   stateDir: string;
   claudeHome: string;
   codexHome: string;
   geminiHome: string;
   copilotHome: string;
-  xdgConfigHome: string;
-  xdgCacheHome: string;
   localBin: string;
 }
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 
+function directory(env: Environment, name: string): string | undefined {
+  const value = env[name]?.trim();
+  if (!value) return undefined;
+  if (!isAbsolute(value)) {
+    throw new EnvironmentError(
+      `${name} must be an absolute path, got "${value}"`,
+    );
+  }
+  return value;
+}
+
 export function resolvePaths(env: Environment = process.env): Paths {
-  const home = env.HOME ?? homedir();
-  const agentsHome = join(home, '.agents');
+  const home = directory(env, 'HOME') ?? homedir();
 
   return {
     home,
-    agentsHome,
-    stateDir: join(agentsHome, 'agents-config'),
-    claudeHome: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'),
-    codexHome: env.CODEX_HOME ?? join(home, '.codex'),
+    stateDir: join(home, '.agents', 'agents-config'),
+    claudeHome: directory(env, 'CLAUDE_CONFIG_DIR') ?? join(home, '.claude'),
+    codexHome: directory(env, 'CODEX_HOME') ?? join(home, '.codex'),
     geminiHome: join(home, '.gemini'),
-    copilotHome: env.COPILOT_HOME ?? join(home, '.copilot'),
-    xdgConfigHome: env.XDG_CONFIG_HOME ?? join(home, '.config'),
-    xdgCacheHome: env.XDG_CACHE_HOME ?? join(home, '.cache'),
+    copilotHome: directory(env, 'COPILOT_HOME') ?? join(home, '.copilot'),
     localBin: join(home, '.local', 'bin'),
   };
 }
