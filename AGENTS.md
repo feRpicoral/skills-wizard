@@ -1,21 +1,25 @@
 # agents-config
 
-A CLI and the content it installs: `AGENTS.md` instructions for Claude Code, Codex, Gemini CLI, Antigravity (IDE and `agy`) and Copilot.
+A CLI and the content it installs: `AGENTS.md` instructions and skills for Claude Code, Codex, Gemini CLI, Antigravity (IDE and `agy`) and Copilot.
 
 ## Commands
 
 - Setup: `nvm use && corepack enable && yarn install`
 - Run the CLI from source: `yarn agents-config [command]`. Node 24 strips the TypeScript types at runtime, so there is no build step.
+- Validate skills: `yarn agents-config skill validate [path...]` or `yarn agents-config skill validate --catalog`
 - Checks before pushing: `yarn lint && yarn typecheck && yarn test`
 
 ## Layout
 
 - `blocks/`: instruction fragments. `blocks/index.yaml` sets the composed order and the group labels.
+- `skills/`: first-party skills (`skills/<name>/SKILL.md`), validated strictly against the Agent Skills spec.
+- `catalog.yaml`: curated third-party skills by upstream repository and path.
 - `src/blocks/`: loading, validating and composing blocks.
-- `src/install/`: planning and applying file changes (managed regions, import lines, JSON merges, symlinks).
-- `src/tools/registry.ts`: where each supported tool reads its files.
-- `src/state/`: manifests that record every path the CLI owns.
-- `src/commands/` and `src/prompts/`: CLI commands and interactive prompts.
+- `src/skills/`: catalog loading, sparse git source cache, skill tree copying/hashing, spec validation, collision detection, diffs and risk scanning.
+- `src/install/`: planning and applying file and skill changes (managed regions, import lines, JSON merges, symlinks, skill trees).
+- `src/tools/registry.ts`: where each supported tool reads its instructions and skills.
+- `src/state/`: manifests and the recorded projects registry (`projects.json`).
+- `src/commands/` and `src/prompts/`: CLI commands (`init`, `sync`, `update`, `adopt`, `doctor`, `skill`) and interactive prompts.
 - `docs/`: architecture and per-tool reference.
 
 ## Conventions
@@ -24,5 +28,6 @@ A CLI and the content it installs: `AGENTS.md` instructions for Claude Code, Cod
 - Only `src/env.ts` reads environment variables. Everything else receives a `Paths` object.
 - Never modify or delete a path that is not recorded in a manifest.
 - Block bodies start with an H2 heading, except `core/identity`. Block text becomes installed instructions, so edit it deliberately. Prettier ignores `blocks/` to keep that text exact.
+- Every skill in `catalog.yaml` from the same repository must share one `ref`, and its upstream `SKILL.md` frontmatter `name` must match the catalog `name`.
 - Code, docs, tests and commits reference only public tools and paths.
-- Tests use `tempPaths` and `tempDir` and never touch the real home directory.
+- Tests use `tempPaths`, `tempDir` and local bare git repositories (`createUpstream`) and never touch the network or the real home directory.
