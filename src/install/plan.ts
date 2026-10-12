@@ -137,6 +137,8 @@ const NONE: Change = { type: 'none' };
 const REMOVAL_LABEL = 'no longer selected';
 const CHANGED_OUTSIDE = 'changed outside agents-config, left in place';
 const OUTSIDE_PROJECT = 'resolves outside the project, left in place';
+const NOTHING_LEFT = 'nothing left to remove';
+
 function keyOf(entry: { kind: string; path: string }): string {
   return `${entry.kind}:${entry.path}`;
 }
@@ -504,11 +506,12 @@ function removal(
   change: Change,
   options: { writePath?: string; reason?: string } = {},
 ): PlannedAction {
+  const untouched = change.type === 'none';
   return {
     path: entry.path,
     ...(options.writePath ? { writePath: options.writePath } : {}),
-    label: REMOVAL_LABEL,
-    status: 'remove',
+    label: untouched ? 'no longer tracked' : REMOVAL_LABEL,
+    status: untouched ? 'unchanged' : 'remove',
     change,
     entry: null,
     previous: entry,
@@ -526,7 +529,9 @@ function rewriteOrDelete(
   if (entry.createdFile && !file.viaLink && emptyWhen(next)) {
     return removal(entry, { type: 'delete' });
   }
-  if (next === file.existing) return removal(entry, NONE, writePath);
+  if (next === file.existing) {
+    return removal(entry, NONE, { ...writePath, reason: NOTHING_LEFT });
+  }
   return removal(entry, { type: 'write', content: next }, writePath);
 }
 
@@ -548,7 +553,9 @@ async function planRemoval(
     return conflict(conflictTarget, entry, OUTSIDE_PROJECT);
   }
   const existing = await readTextIfExists(writePath);
-  if (existing === null) return removal(entry, NONE);
+  if (existing === null) {
+    return removal(entry, NONE, { reason: 'already gone' });
+  }
   const file = { writePath, existing, viaLink: viaLink !== null };
 
   switch (entry.kind) {
@@ -572,7 +579,11 @@ async function planRemoval(
       }
     }
     case 'line':
-      if (!entry.added) return removal(entry, NONE);
+      if (!entry.added) {
+        return removal(entry, NONE, {
+          reason: 'the line was there before agents-config',
+        });
+      }
       return rewriteOrDelete(
         entry,
         file,
@@ -589,7 +600,7 @@ async function planRemoval(
           entry.wasString,
         );
         if (JSON.stringify(after) === JSON.stringify(before)) {
-          return removal(entry, NONE);
+          return removal(entry, NONE, { reason: NOTHING_LEFT });
         }
         return rewriteOrDelete(
           entry,

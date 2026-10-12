@@ -378,8 +378,15 @@ test('an import line that already existed is kept when Claude Code is deselected
   await writeFiles(dir, { 'CLAUDE.md': '@AGENTS.md\n' });
   await installProject(paths, { dir, title: 'app' }, ['claude-code']);
 
-  await installProject(paths, { dir, title: 'app' }, ['gemini-cli']);
+  const plan = await installProject(paths, { dir, title: 'app' }, [
+    'gemini-cli',
+  ]);
 
+  const claude = plan.actions.find(
+    (action) => action.path === join(dir, 'CLAUDE.md'),
+  );
+  assert.equal(claude?.status, 'unchanged');
+  assert.equal(claude?.reason, 'the line was there before agents-config');
   assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n');
 });
 
