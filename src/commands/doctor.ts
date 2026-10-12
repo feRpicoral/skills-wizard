@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { styleText } from 'node:util';
 
-import { withRequirements } from '../blocks/compose.ts';
+import { unknownBlockIds, withRequirements } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath } from '../install/describe.ts';
@@ -15,7 +15,6 @@ import { buildPlan } from '../install/plan.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, TOOLS } from '../tools/registry.ts';
 import {
-  dropUnknownBlocks,
   loadLibrary,
   readLocationManifest,
   resolveLocation,
@@ -143,12 +142,29 @@ export async function runDoctor(
   }
 
   const library = await loadLibrary(ctx);
-  const known = dropUnknownBlocks(ctx, false, library, manifest.blocks);
+  const findings: Finding[] = [];
+  const unknown = unknownBlockIds(library, manifest.blocks);
+  if (unknown.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `Blocks no longer in the library: ${unknown.join(', ')}; agents-config sync will drop them`,
+    });
+  }
+  const { ids: blocks, added } = withRequirements(
+    library,
+    manifest.blocks.filter((id) => !unknown.includes(id)),
+  );
+  if (added.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `Required blocks missing from the install: ${added.join(', ')}; agents-config sync will add them`,
+    });
+  }
   const plan = await buildPlan({
     scope: options.scope,
     selection: {
       tools: manifest.tools,
-      blocks: withRequirements(library, known).ids,
+      blocks,
       variables: manifest.variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal: manifest.options.keepLocal ?? false,
@@ -161,7 +177,6 @@ export async function runDoctor(
     ...(location.project ? { project: location.project } : {}),
   });
 
-  const findings: Finding[] = [];
   for (const action of plan.actions) {
     const where = displayPath(action.path, home);
     if (action.status === 'conflict') {
