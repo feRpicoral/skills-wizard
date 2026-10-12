@@ -12,7 +12,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 
 const FS_ERROR_REASONS: Readonly<Record<string, string>> = {
   EISDIR: 'is a directory',
@@ -83,7 +83,11 @@ export async function resolveIfSymlink(path: string): Promise<string | null> {
   }
 }
 
-export async function realLocation(path: string): Promise<string> {
+export function isInside(dir: string, path: string): boolean {
+  return path.startsWith(`${dir}${sep}`);
+}
+
+export async function realLocation(path: string): Promise<string | null> {
   const missing: string[] = [];
   let current = path;
   for (;;) {
@@ -91,6 +95,7 @@ export async function realLocation(path: string): Promise<string> {
       return join(await realpath(current), ...missing);
     } catch (error) {
       if (!isMissing(error)) throw error;
+      if ((await lstatIfExists(current))?.isSymbolicLink()) return null;
       const parent = dirname(current);
       if (parent === current) return path;
       missing.unshift(basename(current));

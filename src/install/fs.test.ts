@@ -66,6 +66,15 @@ test('realLocation follows a symlinked file to its target', async (t) => {
   assert.equal(location, join(dir, 'real.md'));
 });
 
+test('realLocation returns null when a link on the path is dangling', async (t) => {
+  const dir = await realpath(await tempDir(t));
+  await symlink(join(dir, 'missing'), join(dir, 'linked'));
+
+  const location = await realLocation(join(dir, 'linked', 'file.md'));
+
+  assert.equal(location, null);
+});
+
 test('fsErrorReason describes the errors planning turns into conflicts', async (t) => {
   const dir = await tempDir(t);
 

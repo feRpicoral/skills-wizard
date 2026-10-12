@@ -554,3 +554,66 @@ test('a CLAUDE.md link to an AGENTS.md that does not exist yet needs no import l
   assert.equal(claude?.status, 'unchanged');
   assert.match(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), /^# app\n/);
 });
+
+test('a dangling link on the way to a target is a conflict', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await symlink(join(dir, 'missing'), join(dir, '.gemini'));
+
+  const plan = await installProject(paths, { dir, title: 'app' }, [
+    'gemini-cli',
+  ]);
+
+  const settings = plan.actions.find(
+    (action) => action.path === join(dir, '.gemini', 'settings.json'),
+  );
+  assert.equal(settings?.status, 'conflict');
+  assert.equal(settings?.reason, 'links to a missing location, left in place');
+});
+
+test('a manifest directory that is a dangling link stops before any write', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await symlink(join(dir, 'missing'), join(dir, '.agents'));
+
+  await assert.rejects(
+    installProject(paths, { dir, title: 'app' }, ['codex']),
+    /links to a missing location/,
+  );
+
+  await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
+});
+
+test('a symlinked manifest stops the install before any write', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    'dotfiles/manifest.json': JSON.stringify({
+      version: 1,
+      scope: 'global',
+      tools: [],
+      blocks: [],
+      variables: {},
+      entries: [],
+    }),
+  });
+  await mkdir(paths.stateDir, { recursive: true });
+  await symlink(
+    join(paths.home, 'dotfiles', 'manifest.json'),
+    globalManifestPath(paths),
+  );
+
+  await assert.rejects(installGlobal(paths, ['copilot']), /is a symlink/);
+
+  await assert.rejects(lstat(paths.copilotHome), { code: 'ENOENT' });
+});
+
+test('a target that is not a regular file is a conflict', async (t) => {
+  const paths = await tempPaths(t);
+  await mkdir(paths.codexHome, { recursive: true });
+  await run('mkfifo', [join(paths.codexHome, 'AGENTS.md')]);
+
+  const plan = await installGlobal(paths, ['codex']);
+
+  assert.equal(plan.actions[0]?.status, 'conflict');
+  assert.equal(plan.actions[0]?.reason, 'is not a regular file');
+});

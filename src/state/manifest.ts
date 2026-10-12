@@ -1,11 +1,11 @@
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { z } from 'zod';
 
 import { SCOPES } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import { ManifestError } from '../errors.ts';
-import { readTextIfExists, writeTextAtomic } from '../install/fs.ts';
+import { isInside, readTextIfExists, writeTextAtomic } from '../install/fs.ts';
 import { TOOL_IDS } from '../tools/registry.ts';
 
 export const MANIFEST_VERSION = 1;
@@ -82,10 +82,6 @@ export function globalManifestPath(paths: Paths): string {
 
 export function projectManifestPath(projectDir: string): string {
   return join(projectDir, '.agents', 'agents-config.json');
-}
-
-function isInside(dir: string, path: string): boolean {
-  return path.startsWith(`${dir}${sep}`);
 }
 
 function resolveProjectEntry(
