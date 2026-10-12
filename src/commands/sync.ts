@@ -8,6 +8,7 @@ import {
   confirmAndApply,
   dropUnknownBlocks,
   loadLibrary,
+  notify,
   readLocationManifest,
   resolveLocation,
   warnTrackedFiles,
@@ -39,11 +40,15 @@ export async function runSync(
 
   const library = await loadLibrary(ctx);
   const known = dropUnknownBlocks(ctx, prompting, library, previous.blocks);
+  const { ids: blocks, added } = withRequirements(library, known);
+  if (added.length > 0) {
+    notify(ctx, prompting, `Added required blocks: ${added.join(', ')}`);
+  }
   const plan = await buildPlan({
     scope: options.scope,
     selection: {
       tools: previous.tools,
-      blocks: withRequirements(library, known).ids,
+      blocks,
       variables: previous.variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: previous.options.keepLocal ?? false,

@@ -140,6 +140,18 @@ test('sync drops recorded blocks that left the library and still applies', async
   );
 });
 
+test('doctor warns that sync will drop blocks that left the library', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await addRecordedBlock(home, 'core/removed');
+
+  const result = await cli(home, ['doctor']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /core\/removed; agents-config sync will drop/);
+  assert.match(await readFile(manifestPath(home), 'utf8'), /core\/removed/);
+});
+
 test('rejects unknown tools with a usage error', async (t) => {
   const home = await tempDir(t);
 
