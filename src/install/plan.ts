@@ -1,4 +1,5 @@
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import type { Stats } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 
 import {
   composeGlobal,
@@ -22,11 +23,13 @@ import {
 import { orderedTools, type ToolId } from '../tools/registry.ts';
 import {
   fsErrorReason,
+  isInside,
   lstatIfExists,
   readSymlink,
   readTextIfExists,
   realLocation,
   resolveIfSymlink,
+  statIfExists,
 } from './fs.ts';
 import { ensureLine, hasLine, removeLine } from './import-line.ts';
 import {
@@ -136,24 +139,36 @@ const NONE: Change = { type: 'none' };
 
 const REMOVAL_LABEL = 'no longer selected';
 const CHANGED_OUTSIDE = 'changed outside agents-config, left in place';
-const OUTSIDE_PROJECT = 'resolves outside the project, left in place';
 const NOTHING_LEFT = 'nothing left to remove';
+
+const LOCATION_PROBLEMS = {
+  outside: 'resolves outside the project',
+  dangling: 'links to a missing location',
+} as const;
+
+type LocationProblem = keyof typeof LOCATION_PROBLEMS;
 
 function keyOf(entry: { kind: string; path: string }): string {
   return `${entry.kind}:${entry.path}`;
 }
 
-function isInside(dir: string, path: string): boolean {
-  return path.startsWith(`${dir}${sep}`);
-}
-
-async function escapes(
+async function locationProblem(
   path: string,
   boundary: string | undefined,
-): Promise<boolean> {
-  return (
-    boundary !== undefined && !isInside(boundary, await realLocation(path))
-  );
+): Promise<LocationProblem | undefined> {
+  const real = await realLocation(path);
+  if (real === null) return 'dangling';
+  if (boundary !== undefined && !isInside(boundary, real)) return 'outside';
+  return undefined;
+}
+
+function leftInPlace(problem: LocationProblem): string {
+  return `${LOCATION_PROBLEMS[problem]}, left in place`;
+}
+
+function fileKindProblem(stats: Stats | null): string | undefined {
+  if (!stats || stats.isFile()) return undefined;
+  return stats.isDirectory() ? 'is a directory' : 'is not a regular file';
 }
 
 async function linksTo(link: string, destination: string): Promise<boolean> {
@@ -163,7 +178,7 @@ async function linksTo(link: string, destination: string): Promise<boolean> {
     realLocation(resolve(dirname(link), target)),
     realLocation(destination),
   ]);
-  return linked === expected;
+  return linked !== null && linked === expected;
 }
 
 function globalTargets(input: PlanInput): Target[] {
@@ -402,12 +417,13 @@ async function planFile(
     }
     writePath = resolved;
   }
-  if (
-    target.kind !== 'exclude-region' &&
-    (await escapes(writePath, boundary))
-  ) {
-    return conflict(target, previous, OUTSIDE_PROJECT);
-  }
+  const problem = await locationProblem(
+    writePath,
+    target.kind === 'exclude-region' ? undefined : boundary,
+  );
+  if (problem) return conflict(target, previous, leftInPlace(problem));
+  const kindProblem = fileKindProblem(await statIfExists(writePath));
+  if (kindProblem) return conflict(target, previous, kindProblem);
 
   const existing = await readTextIfExists(writePath);
   const file = { writePath, existing };
@@ -559,9 +575,13 @@ async function planRemoval(
   const conflictTarget = { path: entry.path, label: REMOVAL_LABEL };
   const viaLink = await resolveIfSymlink(entry.path);
   const writePath = viaLink ?? entry.path;
-  if (entry.kind !== 'exclude-region' && (await escapes(writePath, boundary))) {
-    return conflict(conflictTarget, entry, OUTSIDE_PROJECT);
-  }
+  const problem = await locationProblem(
+    writePath,
+    entry.kind === 'exclude-region' ? undefined : boundary,
+  );
+  if (problem) return conflict(conflictTarget, entry, leftInPlace(problem));
+  const kindProblem = fileKindProblem(await statIfExists(writePath));
+  if (kindProblem) return conflict(conflictTarget, entry, kindProblem);
   const existing = await readTextIfExists(writePath);
   if (existing === null) {
     return removal(entry, NONE, { reason: 'already gone' });
@@ -628,13 +648,26 @@ async function planRemoval(
   }
 }
 
-export async function buildPlan(input: PlanInput): Promise<Plan> {
-  const boundary = input.scope === 'project' ? input.project?.dir : undefined;
-  if (await escapes(input.manifestPath, boundary)) {
+async function checkManifestPath(
+  manifestPath: string,
+  boundary: string | undefined,
+): Promise<void> {
+  if ((await lstatIfExists(manifestPath))?.isSymbolicLink()) {
     throw new ManifestError(
-      `${input.manifestPath} resolves outside the project; refusing to record the install there`,
+      `${manifestPath} is a symlink; replace it with a regular file`,
     );
   }
+  const problem = await locationProblem(manifestPath, boundary);
+  if (problem) {
+    throw new ManifestError(
+      `${manifestPath} ${LOCATION_PROBLEMS[problem]}; refusing to record the install there`,
+    );
+  }
+}
+
+export async function buildPlan(input: PlanInput): Promise<Plan> {
+  const boundary = input.scope === 'project' ? input.project?.dir : undefined;
+  await checkManifestPath(input.manifestPath, boundary);
 
   const targets =
     input.scope === 'global' ? globalTargets(input) : projectTargets(input);
