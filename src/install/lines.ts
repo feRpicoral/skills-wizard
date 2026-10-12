@@ -1,13 +1,12 @@
+import { detectNewlineGraceful } from 'detect-newline';
+
 export interface Line {
   text: string;
   eol: string;
 }
 
 export function lineEnding(content: string | null): string {
-  if (!content) return '\n';
-  const crlf = content.match(/\r\n/g)?.length ?? 0;
-  const lf = (content.match(/\n/g)?.length ?? 0) - crlf;
-  return crlf > lf ? '\r\n' : '\n';
+  return content ? detectNewlineGraceful(content) : '\n';
 }
 
 export function splitLines(content: string): Line[] {

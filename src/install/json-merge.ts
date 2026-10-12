@@ -1,4 +1,11 @@
 import detectIndent from 'detect-indent';
+import {
+  deleteProperty,
+  getProperty,
+  hasProperty,
+  parsePath,
+  setProperty,
+} from 'dot-prop';
 
 import { JsonMergeError } from '../errors.ts';
 import { lineEnding } from './lines.ts';
@@ -29,31 +36,21 @@ export function parseJsonObject(content: string | null): JsonObject {
   return parsed;
 }
 
-function locate(
+function parseKeyPath(
   doc: JsonObject,
   keyPath: string,
-  create: boolean,
-): { parent: JsonObject; key: string } | null {
-  const keys = keyPath.split('.');
-  const last = keys.pop();
-  if (!last) throw new JsonMergeError(`invalid key path "${keyPath}"`);
-
-  let current = doc;
-  for (const key of keys) {
-    const next = current[key];
-    if (next === undefined && create) {
-      const created: JsonObject = {};
-      current[key] = created;
-      current = created;
-    } else if (isObject(next)) {
-      current = next;
-    } else if (next === undefined) {
-      return null;
-    } else {
-      throw new JsonMergeError(`"${key}" is not an object`);
+): Array<string | number> {
+  const keys = parsePath(keyPath);
+  if (keys.length === 0) {
+    throw new JsonMergeError(`invalid key path "${keyPath}"`);
+  }
+  for (let depth = 1; depth < keys.length; depth += 1) {
+    const ancestor = getProperty(doc, keys.slice(0, depth));
+    if (ancestor !== undefined && !isObject(ancestor)) {
+      throw new JsonMergeError(`"${String(keys[depth - 1])}" is not an object`);
     }
   }
-  return { parent: current, key: last };
+  return keys;
 }
 
 function stringValues(value: unknown, keyPath: string): string[] {
@@ -79,13 +76,11 @@ export function ensureArrayValues(
   values: readonly string[],
 ): EnsureResult {
   const next = structuredClone(doc);
-  const location = locate(next, keyPath, true);
-  if (!location) throw new JsonMergeError(`invalid key path "${keyPath}"`);
-
-  const original = location.parent[location.key];
+  const keys = parseKeyPath(next, keyPath);
+  const original = getProperty(next, keys);
   const current = stringValues(original, keyPath);
   const added = values.filter((value) => !current.includes(value));
-  if (added.length > 0) location.parent[location.key] = [...current, ...added];
+  if (added.length > 0) setProperty(next, keys, [...current, ...added]);
   return { doc: next, added, wasString: typeof original === 'string' };
 }
 
@@ -96,38 +91,29 @@ export function removeArrayValues(
   restoreString: boolean,
 ): JsonObject {
   const next = structuredClone(doc);
-  const location = locate(next, keyPath, false);
-  if (!location) return next;
+  const keys = parseKeyPath(next, keyPath);
+  if (!hasProperty(next, keys)) return next;
 
-  const remaining = stringValues(location.parent[location.key], keyPath).filter(
+  const remaining = stringValues(getProperty(next, keys), keyPath).filter(
     (value) => !values.includes(value),
   );
   if (remaining.length > 0) {
-    location.parent[location.key] =
-      restoreString && remaining.length === 1 ? remaining[0] : remaining;
+    setProperty(
+      next,
+      keys,
+      restoreString && remaining.length === 1 ? remaining[0] : remaining,
+    );
     return next;
   }
 
-  delete location.parent[location.key];
-  return pruneEmptyObjects(next, keyPath.split('.').slice(0, -1));
-}
-
-function pruneEmptyObjects(doc: JsonObject, keys: string[]): JsonObject {
-  for (let depth = keys.length; depth > 0; depth -= 1) {
-    const path = keys.slice(0, depth);
-    let parent: JsonObject = doc;
-    for (const key of path.slice(0, -1)) {
-      const next = parent[key];
-      if (!isObject(next)) return doc;
-      parent = next;
-    }
-    const leafKey = path.at(-1);
-    if (leafKey === undefined) return doc;
-    const leaf = parent[leafKey];
-    if (!isObject(leaf) || Object.keys(leaf).length > 0) return doc;
-    delete parent[leafKey];
+  deleteProperty(next, keys);
+  for (let depth = keys.length - 1; depth > 0; depth -= 1) {
+    const ancestorPath = keys.slice(0, depth);
+    const ancestor = getProperty(next, ancestorPath);
+    if (!isObject(ancestor) || Object.keys(ancestor).length > 0) break;
+    deleteProperty(next, ancestorPath);
   }
-  return doc;
+  return next;
 }
 
 export function serializeJson(

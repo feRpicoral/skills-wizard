@@ -29,6 +29,8 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "detect-indent": "7.0.2",
+    "detect-newline": "4.0.1",
+    "dot-prop": "10.2.0",
     "front-matter": "4.0.2",
     "which": "7.0.0",
     "write-file-atomic": "8.0.0",
