@@ -87,3 +87,19 @@ test('removeRegion returns an empty string when only the region remains', () => 
 
   assert.equal(content, '');
 });
+
+test('upsertRegion keeps the endings of lines outside the region', () => {
+  const existing = `a\r\nb\n\n${BEGIN}\nold\n${END}\r\nc\n`;
+
+  const content = upsertRegion(existing, 'new');
+
+  assert.equal(content, `a\r\nb\n\n${BEGIN}\nnew\n${END}\r\nc\n`);
+});
+
+test('removing an appended region restores a mixed-ending file', () => {
+  const existing = '# Team\r\nmixed\nendings\r\n';
+
+  const restored = removeRegion(upsertRegion(existing, 'rules'));
+
+  assert.equal(restored, existing);
+});

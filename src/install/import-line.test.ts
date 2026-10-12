@@ -28,3 +28,9 @@ test('removeLine drops the line and its blank separator', () => {
 test('removeLine returns an empty string when only the line remains', () => {
   assert.equal(removeLine('@AGENTS.md\n', '@AGENTS.md'), '');
 });
+
+test('removeLine keeps the endings of the other lines', () => {
+  const content = removeLine('@AGENTS.md\n\n# Claude\r\nmore\n', '@AGENTS.md');
+
+  assert.equal(content, '# Claude\r\nmore\n');
+});

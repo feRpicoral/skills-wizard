@@ -1,4 +1,5 @@
 import { JsonMergeError } from '../errors.ts';
+import { lineEnding } from './lines.ts';
 
 export type JsonObject = Record<string, unknown>;
 
@@ -136,7 +137,7 @@ export function serializeJson(
   doc: JsonObject,
   existing: string | null,
 ): string {
-  const eol = existing?.includes('\r\n') ? '\r\n' : '\n';
+  const eol = lineEnding(existing);
   const text = JSON.stringify(doc, null, detectIndent(existing));
   return `${text.replace(/\n/g, eol)}${eol}`;
 }

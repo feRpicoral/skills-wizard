@@ -1,6 +1,7 @@
 import { ManagedRegionError } from '../errors.ts';
+import { joinLines, type Line, lineEnding, splitLines } from './lines.ts';
 
-export interface Markers {
+interface Markers {
   begin: string;
   end: string;
 }
@@ -22,19 +23,11 @@ interface Bounds {
   end: number;
 }
 
-export function lineEnding(content: string | null): string {
-  return content?.includes('\r\n') ? '\r\n' : '\n';
-}
-
-function splitLines(content: string): string[] {
-  return content.split(/\r?\n/);
-}
-
-function locate(lines: readonly string[], markers: Markers): Bounds | null {
+function locate(lines: readonly Line[], markers: Markers): Bounds | null {
   const begins: number[] = [];
   const ends: number[] = [];
   lines.forEach((line, index) => {
-    const trimmed = line.trim();
+    const trimmed = line.text.trim();
     if (trimmed === markers.begin) begins.push(index);
     if (trimmed === markers.end) ends.push(index);
   });
@@ -53,8 +46,12 @@ function locate(lines: readonly string[], markers: Markers): Bounds | null {
   return { begin, end };
 }
 
-function regionLines(body: string, markers: Markers): string[] {
-  return [markers.begin, ...splitLines(body.replace(/\n+$/, '')), markers.end];
+function regionText(body: string, markers: Markers, eol: string): string {
+  return [
+    markers.begin,
+    ...body.replace(/\n+$/, '').split(/\r?\n/),
+    markers.end,
+  ].join(eol);
 }
 
 export function upsertRegion(
@@ -64,43 +61,41 @@ export function upsertRegion(
 ): string {
   const markers = options.markers ?? MARKDOWN_MARKERS;
   const eol = lineEnding(existing);
-  const region = regionLines(body, markers);
+  const region = regionText(body, markers, eol);
 
   if (existing === null || existing.trim() === '') {
-    const preamble = options.preamble ? [options.preamble, ''] : [];
-    return [...preamble, ...region, ''].join(eol);
+    const preamble = options.preamble ? `${options.preamble}${eol}${eol}` : '';
+    return `${preamble}${region}${eol}`;
   }
 
   const lines = splitLines(existing);
   const bounds = locate(lines, markers);
-  if (!bounds) {
-    return [...splitLines(existing.trimEnd()), '', ...region, ''].join(eol);
-  }
+  if (!bounds) return `${existing.trimEnd()}${eol}${eol}${region}${eol}`;
 
   return [
-    ...lines.slice(0, bounds.begin),
-    ...region,
-    ...lines.slice(bounds.end + 1),
-  ].join(eol);
+    joinLines(lines.slice(0, bounds.begin)),
+    region,
+    lines[bounds.end]?.eol ?? '',
+    joinLines(lines.slice(bounds.end + 1)),
+  ].join('');
 }
 
 export function removeRegion(
   existing: string,
   markers: Markers = MARKDOWN_MARKERS,
 ): string {
-  const eol = lineEnding(existing);
   const lines = splitLines(existing);
   const bounds = locate(lines, markers);
   if (!bounds) return existing;
 
   const before = lines.slice(0, bounds.begin);
   const after = lines.slice(bounds.end + 1);
-  if (before.length > 0 && before.at(-1)?.trim() === '') {
+  if (before.length > 0 && before.at(-1)?.text.trim() === '') {
     before.pop();
-  } else if (before.length === 0 && after[0]?.trim() === '') {
+  } else if (before.length === 0 && after[0]?.text.trim() === '') {
     after.shift();
   }
 
-  const remaining = [...before, ...after].join(eol);
-  return remaining.trim() === '' ? '' : `${remaining.trimEnd()}${eol}`;
+  const remaining = joinLines([...before, ...after]);
+  return remaining.trim() === '' ? '' : remaining;
 }
