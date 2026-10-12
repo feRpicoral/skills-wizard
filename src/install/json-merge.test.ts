@@ -4,60 +4,53 @@ import { test } from 'node:test';
 import { JsonMergeError } from '../errors.ts';
 import {
   ensureArrayValues,
-  hasArrayValues,
   parseJsonObject,
   removeArrayValues,
   serializeJson,
 } from './json-merge.ts';
 
-const FILE = 'settings.json';
+const KEY = 'context.fileName';
 const VALUES = ['AGENTS.md', 'GEMINI.md'];
 
-test('parseJsonObject treats a missing or blank file as an empty object', () => {
-  assert.deepEqual(parseJsonObject(null, FILE), {});
-  assert.deepEqual(parseJsonObject(' \n', FILE), {});
+test('parseJsonObject treats a missing file as an empty object', () => {
+  assert.deepEqual(parseJsonObject(null), {});
+});
+
+test('parseJsonObject treats a blank file as an empty object', () => {
+  assert.deepEqual(parseJsonObject(' \n'), {});
 });
 
 test('parseJsonObject refuses files with comments', () => {
-  assert.throws(() => parseJsonObject('{ // comment\n}', FILE), JsonMergeError);
+  assert.throws(() => parseJsonObject('{ // comment\n}'), JsonMergeError);
 });
 
 test('ensureArrayValues creates the key path when it is absent', () => {
-  const { doc, added } = ensureArrayValues(
-    { theme: 'dark' },
-    'context.fileName',
-    VALUES,
-    FILE,
-  );
+  const result = ensureArrayValues({ theme: 'dark' }, KEY, VALUES);
 
-  assert.deepEqual(doc, {
-    theme: 'dark',
-    context: { fileName: ['AGENTS.md', 'GEMINI.md'] },
+  assert.deepEqual(result, {
+    doc: { theme: 'dark', context: { fileName: ['AGENTS.md', 'GEMINI.md'] } },
+    added: VALUES,
+    wasString: false,
   });
-  assert.deepEqual(added, VALUES);
 });
 
-test('ensureArrayValues converts a string value and appends only missing values', () => {
-  const { doc, added } = ensureArrayValues(
+test('ensureArrayValues converts a string and appends only missing values', () => {
+  const result = ensureArrayValues(
     { context: { fileName: 'GEMINI.md' } },
-    'context.fileName',
+    KEY,
     VALUES,
-    FILE,
   );
 
-  assert.deepEqual(doc, { context: { fileName: ['GEMINI.md', 'AGENTS.md'] } });
-  assert.deepEqual(added, ['AGENTS.md']);
+  assert.deepEqual(result, {
+    doc: { context: { fileName: ['GEMINI.md', 'AGENTS.md'] } },
+    added: ['AGENTS.md'],
+    wasString: true,
+  });
 });
 
 test('ensureArrayValues rejects a value that is not a string list', () => {
   assert.throws(
-    () =>
-      ensureArrayValues(
-        { context: { fileName: 3 } },
-        'context.fileName',
-        VALUES,
-        FILE,
-      ),
+    () => ensureArrayValues({ context: { fileName: 3 } }, KEY, VALUES),
     /must be a string or a list of strings/,
   );
 });
@@ -65,32 +58,31 @@ test('ensureArrayValues rejects a value that is not a string list', () => {
 test('removeArrayValues removes values and prunes empty parents', () => {
   const doc = removeArrayValues(
     { theme: 'dark', context: { fileName: ['AGENTS.md'] } },
-    'context.fileName',
+    KEY,
     ['AGENTS.md'],
-    FILE,
+    false,
   );
 
   assert.deepEqual(doc, { theme: 'dark' });
 });
 
-test('removeArrayValues keeps values it did not add', () => {
+test('removeArrayValues restores a value that was originally a string', () => {
   const doc = removeArrayValues(
     { context: { fileName: ['GEMINI.md', 'AGENTS.md'] } },
-    'context.fileName',
+    KEY,
     ['AGENTS.md'],
-    FILE,
+    true,
   );
 
-  assert.deepEqual(doc, { context: { fileName: ['GEMINI.md'] } });
+  assert.deepEqual(doc, { context: { fileName: 'GEMINI.md' } });
 });
 
-test('hasArrayValues reports whether every value is present', () => {
-  const doc = { context: { fileName: ['AGENTS.md', 'GEMINI.md'] } };
+test('serializeJson keeps the indentation and line endings of the file', () => {
+  const content = serializeJson({ a: 1 }, '{\r\n    "b": 2\r\n}\r\n');
 
-  assert.equal(hasArrayValues(doc, 'context.fileName', VALUES, FILE), true);
-  assert.equal(hasArrayValues({}, 'context.fileName', VALUES, FILE), false);
+  assert.equal(content, '{\r\n    "a": 1\r\n}\r\n');
 });
 
-test('serializeJson uses two spaces and a trailing newline', () => {
-  assert.equal(serializeJson({ a: 1 }), '{\n  "a": 1\n}\n');
+test('serializeJson defaults to two spaces for new files', () => {
+  assert.equal(serializeJson({ a: 1 }, null), '{\n  "a": 1\n}\n');
 });
