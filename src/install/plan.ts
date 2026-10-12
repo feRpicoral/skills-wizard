@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import {
   composeGlobal,
@@ -9,10 +9,20 @@ import {
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
-import type { Manifest, ManifestEntry } from '../state/manifest.ts';
+import {
+  type Manifest,
+  MANIFEST_VERSION,
+  type ManifestEntry,
+  serializeManifest,
+} from '../state/manifest.ts';
 import { orderedTools, type ToolId } from '../tools/registry.ts';
-import { lstatIfExists, readSymlink, readTextIfExists } from './fs.ts';
-import { ensureLine, removeLine } from './import-line.ts';
+import {
+  lstatIfExists,
+  readSymlink,
+  readTextIfExists,
+  resolveIfSymlink,
+} from './fs.ts';
+import { ensureLine, hasLine, removeLine } from './import-line.ts';
 import {
   ensureArrayValues,
   parseJsonObject,
@@ -20,7 +30,7 @@ import {
   serializeJson,
 } from './json-merge.ts';
 import {
-  HASH_MARKERS,
+  excludeMarkers,
   MARKDOWN_MARKERS,
   removeRegion,
   upsertRegion,
@@ -29,7 +39,7 @@ import {
 export type ActionStatus =
   'create' | 'update' | 'unchanged' | 'remove' | 'conflict';
 
-export type Change =
+type Change =
   | { type: 'none' }
   | { type: 'write'; content: string }
   | { type: 'delete' }
@@ -37,6 +47,7 @@ export type Change =
 
 export interface PlannedAction {
   path: string;
+  writePath?: string;
   label: string;
   status: ActionStatus;
   change: Change;
@@ -53,24 +64,31 @@ export interface Selection {
   keepLocal: boolean;
 }
 
-export interface PlanInput {
+export interface ProjectContext {
+  dir: string;
+  title: string;
+  git?: { root: string; excludePath: string };
+}
+
+interface PlanInput {
   scope: Scope;
   selection: Selection;
   library: BlockLibrary;
   paths: Paths;
   repoRoot: string;
   previous: Manifest | null;
-  projectDir?: string;
-  projectTitle?: string;
-  gitExcludePath?: string;
   manifestPath: string;
-  now: Date;
+  project?: ProjectContext;
 }
 
+export type ManifestStatus = 'create' | 'update' | 'unchanged' | 'remove';
+
 export interface Plan {
-  scope: Scope;
   actions: PlannedAction[];
-  manifest: Manifest;
+  manifest: Omit<Manifest, 'entries'>;
+  manifestPath: string;
+  manifestStatus: ManifestStatus;
+  projectDir?: string;
 }
 
 type Target =
@@ -81,8 +99,20 @@ type Target =
       preamble?: string;
       label: string;
     }
-  | { kind: 'exclude-region'; path: string; body: string; label: string }
-  | { kind: 'line'; path: string; line: string; label: string }
+  | {
+      kind: 'exclude-region';
+      path: string;
+      id: string;
+      body: string;
+      label: string;
+    }
+  | {
+      kind: 'line';
+      path: string;
+      line: string;
+      satisfiedBy?: string;
+      label: string;
+    }
   | {
       kind: 'json-array';
       path: string;
@@ -91,6 +121,8 @@ type Target =
       label: string;
     }
   | { kind: 'symlink'; path: string; target: string; label: string };
+
+type FileEntry = Exclude<ManifestEntry, { kind: 'symlink' }>;
 
 const NONE: Change = { type: 'none' };
 
@@ -102,21 +134,20 @@ function globalTargets(input: PlanInput): Target[] {
   const { selection, paths, library } = input;
   const tools = orderedTools(selection.tools);
   const targets: Target[] = [];
-  if (tools.length === 0 && !selection.linkCommand) return targets;
 
   if (tools.length > 0) {
     const body = composeGlobal(library, selection.blocks, selection.variables);
-    const labels = new Map<string, string[]>();
+    const owners = new Map<string, string[]>();
     for (const tool of tools) {
       const path = tool.global.instructions(paths);
-      labels.set(path, [...(labels.get(path) ?? []), tool.label]);
+      owners.set(path, [...(owners.get(path) ?? []), tool.label]);
     }
-    for (const [path, owners] of labels) {
+    for (const [path, labels] of owners) {
       targets.push({
         kind: 'region',
         path,
         body,
-        label: `${owners.join(', ')} instructions`,
+        label: `${labels.join(', ')} instructions`,
       });
     }
     for (const tool of tools) {
@@ -145,16 +176,17 @@ function globalTargets(input: PlanInput): Target[] {
 }
 
 function projectTargets(input: PlanInput): Target[] {
-  const { selection, library, projectDir } = input;
+  const { selection, library, project } = input;
   const tools = orderedTools(selection.tools);
-  if (!projectDir || tools.length === 0) return [];
+  if (!project || tools.length === 0) return [];
 
+  const instructions = join(project.dir, 'AGENTS.md');
   const targets: Target[] = [
     {
       kind: 'region',
-      path: join(projectDir, 'AGENTS.md'),
+      path: instructions,
       body: composeProject(library, selection.blocks, selection.variables),
-      preamble: `# ${input.projectTitle ?? 'Project'}`,
+      preamble: `# ${project.title}`,
       label: 'project instructions',
     },
   ];
@@ -163,15 +195,16 @@ function projectTargets(input: PlanInput): Target[] {
     if (importLine) {
       targets.push({
         kind: 'line',
-        path: join(projectDir, importLine.file),
+        path: join(project.dir, importLine.file),
         line: importLine.line,
+        satisfiedBy: instructions,
         label: `${tool.label} import`,
       });
     }
     if (settings) {
       targets.push({
         kind: 'json-array',
-        path: join(projectDir, settings.file),
+        path: join(project.dir, settings.file),
         key: settings.key,
         values: settings.values,
         label: `${tool.label} settings`,
@@ -179,28 +212,23 @@ function projectTargets(input: PlanInput): Target[] {
     }
   }
 
-  if (selection.keepLocal && input.gitExcludePath) {
-    const excluded = [
+  if (selection.keepLocal && project.git) {
+    const { root, excludePath } = project.git;
+    const patterns = [
       ...targets.map((target) => target.path),
       input.manifestPath,
     ]
-      .map((path) => `/${path.slice(projectDir.length + 1)}`)
+      .map((path) => `/${relative(root, path)}`)
       .join('\n');
     targets.push({
       kind: 'exclude-region',
-      path: input.gitExcludePath,
-      body: excluded,
+      path: excludePath,
+      id: relative(root, project.dir) || '.',
+      body: patterns,
       label: 'git exclude entries',
     });
   }
   return targets;
-}
-
-function createdFile(existing: string | null, previous: ManifestEntry | null) {
-  if (existing === null) return true;
-  return previous !== null && 'createdFile' in previous
-    ? previous.createdFile
-    : false;
 }
 
 function conflict(
@@ -221,15 +249,20 @@ function conflict(
 
 function writeAction(
   target: { path: string; label: string },
-  existing: string | null,
+  file: { writePath: string; existing: string | null },
   next: string,
   entry: ManifestEntry,
   previous: ManifestEntry | null,
 ): PlannedAction {
   const status =
-    existing === null ? 'create' : next === existing ? 'unchanged' : 'update';
+    file.existing === null
+      ? 'create'
+      : next === file.existing
+        ? 'unchanged'
+        : 'update';
   return {
     path: target.path,
+    ...(file.writePath !== target.path ? { writePath: file.writePath } : {}),
     label: target.label,
     status,
     change: status === 'unchanged' ? NONE : { type: 'write', content: next },
@@ -238,67 +271,118 @@ function writeAction(
   };
 }
 
-async function planTarget(
-  target: Target,
+async function planSymlink(
+  target: Extract<Target, { kind: 'symlink' }>,
   previous: ManifestEntry | null,
 ): Promise<PlannedAction> {
-  if (target.kind === 'symlink') {
-    const stats = await lstatIfExists(target.path);
-    const current = await readSymlink(target.path);
-    const entry: ManifestEntry = {
-      kind: 'symlink',
-      path: target.path,
-      target: target.target,
-    };
-    if (current === target.target) {
-      return {
-        path: target.path,
-        label: target.label,
-        status: 'unchanged',
-        change: NONE,
-        entry,
-        previous,
-      };
-    }
-    if (stats && !previous) {
-      return conflict(
-        target,
-        previous,
-        'exists and is not managed by agents-config',
-      );
-    }
+  const stats = await lstatIfExists(target.path);
+  const current = await readSymlink(target.path);
+  const entry: ManifestEntry = {
+    kind: 'symlink',
+    path: target.path,
+    target: target.target,
+  };
+  const base = { path: target.path, label: target.label, entry, previous };
+
+  if (current === target.target) {
+    return { ...base, status: 'unchanged', change: NONE };
+  }
+  if (!stats) {
     return {
-      path: target.path,
-      label: target.label,
-      status: stats ? 'update' : 'create',
+      ...base,
+      status: 'create',
       change: { type: 'symlink', target: target.target },
-      entry,
-      previous,
     };
   }
+  if (previous?.kind === 'symlink' && current === previous.target) {
+    return {
+      ...base,
+      status: 'update',
+      change: { type: 'symlink', target: target.target },
+    };
+  }
+  return conflict(
+    target,
+    previous,
+    previous
+      ? 'changed outside agents-config, left in place'
+      : 'exists and is not managed by agents-config',
+  );
+}
 
-  const existing = await readTextIfExists(target.path);
-  const created = createdFile(existing, previous);
+function wasCreated(existing: string | null, previous: ManifestEntry | null) {
+  if (existing === null) return true;
+  return previous !== null && 'createdFile' in previous
+    ? previous.createdFile
+    : false;
+}
+
+async function planFile(
+  target: Exclude<Target, { kind: 'symlink' }>,
+  previous: ManifestEntry | null,
+): Promise<PlannedAction> {
+  let writePath = target.path;
+  const stats = await lstatIfExists(target.path);
+  if (stats?.isSymbolicLink()) {
+    const resolved = await resolveIfSymlink(target.path);
+    if (resolved === null) {
+      return conflict(target, previous, 'is a symlink to a missing file');
+    }
+    if (target.kind === 'line' && target.satisfiedBy) {
+      const instructions =
+        (await resolveIfSymlink(target.satisfiedBy)) ?? target.satisfiedBy;
+      if (resolved === instructions) {
+        return {
+          path: target.path,
+          label: `${target.label} (links to AGENTS.md)`,
+          status: 'unchanged',
+          change: NONE,
+          entry: null,
+          previous,
+        };
+      }
+    }
+    writePath = resolved;
+  }
+
+  const existing = await readTextIfExists(writePath);
+  const file = { writePath, existing };
+  const createdFile = wasCreated(existing, previous);
 
   switch (target.kind) {
     case 'region':
     case 'exclude-region': {
-      const markers =
-        target.kind === 'region' ? MARKDOWN_MARKERS : HASH_MARKERS;
       try {
-        const next = upsertRegion(existing, target.body, {
-          markers,
-          ...(target.kind === 'region' && target.preamble
-            ? { preamble: target.preamble }
-            : {}),
-        });
-        return writeAction(
-          target,
-          existing,
-          next,
-          { kind: target.kind, path: target.path, createdFile: created },
-          previous,
-        );
+        const next =
+          target.kind === 'region'
+            ? upsertRegion(existing, target.body, {
+                markers: MARKDOWN_MARKERS,
+                ...(target.preamble ? { preamble: target.preamble } : {}),
+              })
+            : upsertRegion(existing, target.body, {
+                markers: excludeMarkers(target.id),
+              });
+        const preamble =
+          target.kind === 'region' && previous?.kind === 'region'
+            ? previous.preamble
+            : target.kind === 'region' && existing === null
+              ? target.preamble
+              : undefined;
+        const entry: ManifestEntry =
+          target.kind === 'region'
+            ? {
+                kind: 'region',
+                path: target.path,
+                createdFile,
+                ...(preamble ? { preamble } : {}),
+              }
+            : {
+                kind: 'exclude-region',
+                path: target.path,
+                id: target.id,
+                createdFile,
+              };
+        return writeAction(target, file, next, entry, previous);
       } catch (error) {
         if (error instanceof ManagedRegionError) {
           return conflict(target, previous, error.message);
@@ -306,50 +390,56 @@ async function planTarget(
         throw error;
       }
     }
-    case 'line':
+    case 'line': {
+      const hadLine = existing !== null && hasLine(existing, target.line);
+      const added = hadLine
+        ? previous?.kind === 'line' && previous.added
+        : true;
       return writeAction(
         target,
-        existing,
+        file,
         ensureLine(existing, target.line),
         {
           kind: 'line',
           path: target.path,
           line: target.line,
-          createdFile: created,
+          added,
+          createdFile,
         },
         previous,
       );
+    }
     case 'json-array': {
       try {
-        const doc = parseJsonObject(existing, target.path);
         const result = ensureArrayValues(
-          doc,
+          parseJsonObject(existing),
           target.key,
           target.values,
-          target.path,
         );
-        const previouslyAdded =
-          previous?.kind === 'json-array' ? previous.added : [];
+        const earlier = previous?.kind === 'json-array' ? previous : null;
         const added = [
           ...new Set([
-            ...previouslyAdded.filter((value) => target.values.includes(value)),
+            ...(earlier?.added ?? []).filter((value) =>
+              target.values.includes(value),
+            ),
             ...result.added,
           ]),
         ];
         const next =
           existing === null || result.added.length > 0
-            ? serializeJson(result.doc)
+            ? serializeJson(result.doc, existing)
             : existing;
         return writeAction(
           target,
-          existing,
+          file,
           next,
           {
             kind: 'json-array',
             path: target.path,
             key: target.key,
             added,
-            createdFile: created,
+            wasString: earlier?.wasString ?? result.wasString,
+            createdFile,
           },
           previous,
         );
@@ -365,100 +455,101 @@ async function planTarget(
 
 function removal(
   entry: ManifestEntry,
-  label: string,
   change: Change,
-  reason?: string,
+  options: { writePath?: string; reason?: string } = {},
 ): PlannedAction {
   return {
     path: entry.path,
-    label,
+    ...(options.writePath ? { writePath: options.writePath } : {}),
+    label: 'no longer selected',
     status: 'remove',
     change,
     entry: null,
     previous: entry,
-    ...(reason ? { reason } : {}),
+    ...(options.reason ? { reason: options.reason } : {}),
   };
 }
 
-function removeOrRewrite(
-  entry: ManifestEntry & { createdFile: boolean },
-  existing: string,
+function rewriteOrDelete(
+  entry: FileEntry,
+  file: { writePath: string; existing: string; viaLink: boolean },
   next: string,
-  label: string,
+  emptyWhen: (next: string) => boolean,
 ): PlannedAction {
-  if (next === '' && entry.createdFile) {
-    return removal(entry, label, { type: 'delete' });
+  const writePath = file.viaLink ? { writePath: file.writePath } : {};
+  if (entry.createdFile && !file.viaLink && emptyWhen(next)) {
+    return removal(entry, { type: 'delete' });
   }
-  if (next === existing) return removal(entry, label, NONE);
-  return removal(entry, label, { type: 'write', content: next });
+  if (next === file.existing) return removal(entry, NONE, writePath);
+  return removal(entry, { type: 'write', content: next }, writePath);
 }
 
 async function planRemoval(entry: ManifestEntry): Promise<PlannedAction> {
-  const label = 'no longer selected';
-
   if (entry.kind === 'symlink') {
-    const current = await readSymlink(entry.path);
-    if (current === entry.target) {
-      return removal(entry, label, { type: 'delete' });
+    if ((await readSymlink(entry.path)) === entry.target) {
+      return removal(entry, { type: 'delete' });
     }
-    return removal(
-      entry,
-      label,
-      NONE,
-      'changed outside agents-config, left in place',
-    );
+    return removal(entry, NONE, {
+      reason: 'changed outside agents-config, left in place',
+    });
   }
 
-  const existing = await readTextIfExists(entry.path);
-  if (existing === null) return removal(entry, label, NONE);
+  const viaLink = await resolveIfSymlink(entry.path);
+  const writePath = viaLink ?? entry.path;
+  const existing = await readTextIfExists(writePath);
+  if (existing === null) return removal(entry, NONE);
+  const file = { writePath, existing, viaLink: viaLink !== null };
+  const conflictLabel = { path: entry.path, label: 'no longer selected' };
 
   switch (entry.kind) {
     case 'region':
     case 'exclude-region': {
-      const markers = entry.kind === 'region' ? MARKDOWN_MARKERS : HASH_MARKERS;
       try {
-        return removeOrRewrite(
+        const markers =
+          entry.kind === 'region' ? MARKDOWN_MARKERS : excludeMarkers(entry.id);
+        const preamble = entry.kind === 'region' ? entry.preamble : undefined;
+        return rewriteOrDelete(
           entry,
-          existing,
+          file,
           removeRegion(existing, markers),
-          label,
+          (next) => next === '' || next.trim() === preamble,
         );
       } catch (error) {
         if (error instanceof ManagedRegionError) {
-          return conflict({ path: entry.path, label }, entry, error.message);
+          return conflict(conflictLabel, entry, error.message);
         }
         throw error;
       }
     }
     case 'line':
-      return removeOrRewrite(
+      if (!entry.added) return removal(entry, NONE);
+      return rewriteOrDelete(
         entry,
-        existing,
+        file,
         removeLine(existing, entry.line),
-        label,
+        (next) => next === '',
       );
     case 'json-array': {
       try {
-        const before = parseJsonObject(existing, entry.path);
+        const before = parseJsonObject(existing);
         const after = removeArrayValues(
           before,
           entry.key,
           entry.added,
-          entry.path,
+          entry.wasString,
         );
-        if (serializeJson(after) === serializeJson(before)) {
-          return removal(entry, label, NONE);
+        if (JSON.stringify(after) === JSON.stringify(before)) {
+          return removal(entry, NONE);
         }
-        if (Object.keys(after).length === 0 && entry.createdFile) {
-          return removal(entry, label, { type: 'delete' });
-        }
-        return removal(entry, label, {
-          type: 'write',
-          content: serializeJson(after),
-        });
+        return rewriteOrDelete(
+          entry,
+          file,
+          serializeJson(after, existing),
+          () => Object.keys(after).length === 0,
+        );
       } catch (error) {
         if (error instanceof JsonMergeError) {
-          return conflict({ path: entry.path, label }, entry, error.message);
+          return conflict(conflictLabel, entry, error.message);
         }
         throw error;
       }
@@ -478,7 +569,12 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
   for (const target of targets) {
     const key = keyOf(target);
     planned.add(key);
-    actions.push(await planTarget(target, previousEntries.get(key) ?? null));
+    const previous = previousEntries.get(key) ?? null;
+    actions.push(
+      target.kind === 'symlink'
+        ? await planSymlink(target, previous)
+        : await planFile(target, previous),
+    );
   }
   for (const [key, entry] of previousEntries) {
     if (!planned.has(key)) actions.push(await planRemoval(entry));
@@ -495,24 +591,42 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
       return value === undefined ? [] : [[name, value]];
     }),
   );
+  const manifest: Omit<Manifest, 'entries'> = {
+    version: MANIFEST_VERSION,
+    scope: input.scope,
+    tools: [...input.selection.tools],
+    blocks: blocks.map((block) => block.id),
+    variables,
+    options:
+      input.scope === 'global'
+        ? { linkCommand: input.selection.linkCommand }
+        : { keepLocal: input.selection.keepLocal },
+  };
+
+  const entries = actions.flatMap((action) =>
+    action.entry ? [action.entry] : [],
+  );
+  const existing = await readTextIfExists(input.manifestPath);
+  const content = serializeManifest(
+    { ...manifest, entries },
+    input.project?.dir,
+  );
+  const empty = entries.length === 0 && manifest.tools.length === 0;
+  const manifestStatus: ManifestStatus = empty
+    ? existing === null
+      ? 'unchanged'
+      : 'remove'
+    : existing === null
+      ? 'create'
+      : existing === content
+        ? 'unchanged'
+        : 'update';
 
   return {
-    scope: input.scope,
     actions,
-    manifest: {
-      version: 1,
-      scope: input.scope,
-      tools: [...input.selection.tools],
-      blocks: blocks.map((block) => block.id),
-      variables,
-      options:
-        input.scope === 'global'
-          ? { linkCommand: input.selection.linkCommand }
-          : { keepLocal: input.selection.keepLocal },
-      entries: actions.flatMap((action) =>
-        action.entry ? [action.entry] : [],
-      ),
-      updatedAt: input.now.toISOString(),
-    },
+    manifest,
+    manifestPath: input.manifestPath,
+    manifestStatus,
+    ...(input.project ? { projectDir: input.project.dir } : {}),
   };
 }
