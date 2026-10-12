@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { type Environment, gitEnvironment, type Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
 import { lstatIfExists } from '../install/fs.ts';
+import { scanInstalledSkills } from '../skills/collisions.ts';
 import { failureDetail } from '../skills/process.ts';
 import { copySkillTree } from '../skills/tree.ts';
 import type { EvalCase } from './cases.ts';
@@ -221,16 +222,23 @@ interface ApplyBaselineExclusionParams {
   paths?: Paths;
 }
 
-async function isSkillInstalledGlobally(
-  skillName: string,
-  paths?: Paths,
-): Promise<boolean> {
+interface GlobalSkillCheckParams {
+  skillName: string;
+  paths?: Paths;
+}
+
+async function isSkillInstalledGlobally({
+  skillName,
+  paths,
+}: GlobalSkillCheckParams): Promise<boolean> {
   if (!paths) return false;
   const candidateDirs = [
     join(paths.skillsDir, skillName),
     join(paths.claudeHome, 'skills', skillName),
     join(paths.codexHome, 'skills', skillName),
     join(paths.geminiHome, 'skills', skillName),
+    join(paths.geminiHome, 'config', 'skills', skillName),
+    join(paths.geminiHome, 'antigravity-cli', 'skills', skillName),
     join(paths.copilotHome, 'skills', skillName),
   ];
   for (const dir of candidateDirs) {
@@ -238,7 +246,8 @@ async function isSkillInstalledGlobally(
       return true;
     }
   }
-  return false;
+  const scan = await scanInstalledSkills(paths, null);
+  return scan.skills.some((skill) => skill.name === skillName);
 }
 
 export async function applyBaselineExclusion({
@@ -289,7 +298,10 @@ export async function applyBaselineExclusion({
     return { possiblyContaminated: false };
   }
 
-  const installedGlobally = await isSkillInstalledGlobally(skillName, paths);
+  const installedGlobally = await isSkillInstalledGlobally({
+    skillName,
+    paths,
+  });
   if (installedGlobally) {
     return {
       possiblyContaminated: true,
