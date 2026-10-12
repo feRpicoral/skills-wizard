@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, lstat, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  lstat,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -44,6 +52,10 @@ const INSTALL = [
 
 function manifestPath(home: string): string {
   return join(home, '.agents', 'agents-config', 'manifest.json');
+}
+
+function projectsPath(home: string): string {
+  return join(home, '.agents', 'agents-config', 'projects.json');
 }
 
 interface RecordedBlockParams {
@@ -278,4 +290,17 @@ test('sync and init drop keep-local with a notice once the project leaves git', 
     await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
     /"keepLocal": false/,
   );
+});
+
+test('a project install is recorded and removing it drops the record', async (t) => {
+  const home = await tempDir(t);
+  const project = await realpath(await tempDir(t));
+  const install = ['init', '--project', project, '--yes', '--tools'];
+  await cli(home, [...install, 'codex']);
+  const recorded = await readFile(projectsPath(home), 'utf8');
+
+  await cli(home, [...install, '']);
+
+  assert.deepEqual(JSON.parse(recorded), { version: 1, projects: [project] });
+  await assert.rejects(lstat(projectsPath(home)), { code: 'ENOENT' });
 });

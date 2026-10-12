@@ -23,6 +23,8 @@ export class JsonMergeError extends AgentsConfigError {}
 
 export class ManifestError extends AgentsConfigError {}
 
+export class RegistryError extends AgentsConfigError {}
+
 export class ApplyError extends AgentsConfigError {}
 
 export class UnsafeWriteError extends AgentsConfigError {}
@@ -32,3 +34,9 @@ export class CatalogError extends AgentsConfigError {}
 export class SourceError extends AgentsConfigError {}
 
 export class SetupError extends AgentsConfigError {}
+
+export function isSystemError(error: unknown): error is Error {
+  return (
+    error instanceof Error && 'code' in error && typeof error.code === 'string'
+  );
+}
