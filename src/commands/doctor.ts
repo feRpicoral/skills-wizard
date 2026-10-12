@@ -133,7 +133,7 @@ export async function runDoctor(
     options.scope,
     options.projectDir,
   );
-  const manifest = await readLocationManifest(location);
+  const manifest = await readLocationManifest(ctx, false, location);
   const home = ctx.paths.home;
   if (!manifest) {
     ctx.print(

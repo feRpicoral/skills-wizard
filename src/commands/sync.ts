@@ -30,7 +30,7 @@ export async function runSync(
     options.scope,
     options.projectDir,
   );
-  const previous = await readLocationManifest(location);
+  const previous = await readLocationManifest(ctx, prompting, location);
   if (!previous) {
     throw new UsageError(
       `Nothing recorded at ${displayPath(location.manifestPath, ctx.paths.home)}; run agents-config init first.`,

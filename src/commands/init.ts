@@ -89,7 +89,7 @@ export async function runInit(
       : options.projectDir;
   const location = await resolveLocation(ctx, scope, projectDir);
   const library = await loadLibrary(ctx);
-  const previous = await readLocationManifest(location);
+  const previous = await readLocationManifest(ctx, prompting, location);
 
   const initialTools =
     options.tools ??

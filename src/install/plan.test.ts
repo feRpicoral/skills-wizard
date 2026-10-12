@@ -22,6 +22,7 @@ import {
   type Manifest,
   projectManifestPath,
   readManifest,
+  readProjectManifest,
 } from '../state/manifest.ts';
 import { tempDir, tempPaths, writeFiles } from '../test-support/fixtures.ts';
 import type { ToolId } from '../tools/registry.ts';
@@ -107,10 +108,11 @@ async function installProject(
   overrides: Partial<Selection> = {},
 ): Promise<Plan> {
   const manifestPath = projectManifestPath(project.dir);
-  const previous = await readManifest(manifestPath, {
+  const stored = await readProjectManifest(manifestPath, {
     dir: project.dir,
     ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
   });
+  const previous = stored?.manifest ?? null;
   const plan = await buildPlan({
     scope: 'project',
     selection: selection(tools, {

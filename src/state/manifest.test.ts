@@ -10,6 +10,7 @@ import {
   MANIFEST_VERSION,
   projectManifestPath,
   readManifest,
+  readProjectManifest,
   writeManifest,
 } from './manifest.ts';
 
@@ -45,16 +46,16 @@ test('project manifests store entry paths relative to the project', async (t) =>
 
   await writeManifest(file, original, project);
   const stored = JSON.parse(await readFile(file, 'utf8')) as Manifest;
-  const restored = await readManifest(file, { dir: project });
+  const restored = await readProjectManifest(file, { dir: project });
 
   assert.equal(stored.entries[0]?.path, 'CLAUDE.md');
-  assert.deepEqual(restored, original);
+  assert.deepEqual(restored, { manifest: original, ignored: [] });
 });
 
-test('readManifest returns null when no manifest exists', async (t) => {
+test('readProjectManifest returns null when no manifest exists', async (t) => {
   const project = await tempDir(t);
 
-  const result = await readManifest(projectManifestPath(project), {
+  const result = await readProjectManifest(projectManifestPath(project), {
     dir: project,
   });
 
@@ -83,7 +84,7 @@ test('project manifests cannot reference paths outside the project', async (t) =
   ]);
 
   await assert.rejects(
-    readManifest(file, { dir: project }),
+    readProjectManifest(file, { dir: project }),
     /outside the project/,
   );
 });
@@ -96,12 +97,12 @@ test('project manifests cannot use absolute paths', async (t) => {
   ]);
 
   await assert.rejects(
-    readManifest(file, { dir: project }),
+    readProjectManifest(file, { dir: project }),
     /must be relative/,
   );
 });
 
-test('a git exclude entry must match the current repository', async (t) => {
+test('a git exclude entry from another repository is ignored, not trusted', async (t) => {
   const project = await tempDir(t);
   const file = projectManifestPath(project);
   await storeRaw(file, [
@@ -111,13 +112,17 @@ test('a git exclude entry must match the current repository', async (t) => {
       id: '.',
       createdFile: false,
     },
+    { kind: 'region', path: 'AGENTS.md', createdFile: true },
   ]);
 
-  await assert.rejects(
-    readManifest(file, {
-      dir: project,
-      gitExcludePath: join(project, '.git', 'info', 'exclude'),
-    }),
-    /does not belong to this repository/,
+  const result = await readProjectManifest(file, {
+    dir: project,
+    gitExcludePath: join(project, '.git', 'info', 'exclude'),
+  });
+
+  assert.deepEqual(result?.ignored, ['../other/.git/info/exclude']);
+  assert.deepEqual(
+    result?.manifest.entries.map((entry) => entry.kind),
+    ['region'],
   );
 });
