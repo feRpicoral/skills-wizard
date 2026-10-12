@@ -2,3 +2,4 @@ node_modules/
 coverage/
 .yarn/
 yarn.lock
+blocks/

@@ -1,0 +1,33 @@
+headers:
+  global: '# Global Instructions'
+groups:
+  core: Core behavior
+  engineering: Engineering
+  git: Git and pull requests
+  tooling: Tooling
+  stack: Stack
+order:
+  - core/identity
+  - core/precedence
+  - core/communication-style
+  - core/no-ai-tells
+  - core/task-execution
+  - core/working-notes
+  - engineering/code-conduct
+  - engineering/comments
+  - engineering/documentation
+  - engineering/testing
+  - engineering/dependencies
+  - engineering/environment-variables
+  - tooling/shell-commands
+  - tooling/external-clis
+  - git/github-repo-setup
+  - git/branching-and-prs
+  - git/pr-reviews
+  - git/pr-descriptions
+  - git/git-behavior
+  - git/commits
+  - core/security-and-secrets
+  - tooling/web-research
+  - tooling/mcp-and-tools
+  - stack/supabase-prisma
