@@ -240,3 +240,14 @@ test('a package.json that links outside the project is not read for the title', 
     new RegExp(`^# ${basename(project)}\n`),
   );
 });
+
+test('doctor names project files relative to the project', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, '--yes', '--tools', 'codex']);
+  await writeFile(join(project, 'AGENTS.md'), 'edited\n');
+
+  const result = await cli(home, ['doctor', '--project', project]);
+
+  assert.match(result.stdout, /^warn\s+AGENTS\.md is out of date/m);
+});

@@ -4,7 +4,7 @@ import { styleText } from 'node:util';
 import { unknownBlockIds, withRequirements } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
-import { displayPath } from '../install/describe.ts';
+import { displayPath, planPath } from '../install/describe.ts';
 import {
   lstatIfExists,
   readSymlink,
@@ -178,7 +178,7 @@ export async function runDoctor(
   });
 
   for (const action of plan.actions) {
-    const where = displayPath(action.path, home);
+    const where = planPath(plan, action.path, home);
     if (action.status === 'conflict') {
       findings.push({
         level:
