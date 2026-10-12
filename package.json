@@ -2,7 +2,7 @@
   "name": "agents-config",
   "version": "0.1.0",
   "private": true,
-  "description": "Install AGENTS.md instructions, Agent Skills and MCP servers into coding agents",
+  "description": "Compose AGENTS.md from blocks and install it into coding agents",
   "type": "module",
   "packageManager": "yarn@4.18.1",
   "engines": {
