@@ -1,64 +1,11 @@
 import { createHash } from 'node:crypto';
 import { basename, isAbsolute, join, normalize, posix } from 'node:path';
 
+import { z } from 'zod';
+
 import { EvalError } from '../errors.ts';
 import { lstatIfExists, readTextIfExists } from '../install/fs.ts';
 import { isSkillName } from '../skills/validate.ts';
-
-export type ScriptedAssertion =
-  | { type: 'file_exists'; path: string }
-  | { type: 'file_absent'; path: string }
-  | { type: 'regex'; path: string; pattern: string; flags?: string }
-  | { type: 'json_valid'; path: string }
-  | { type: 'command'; run: string; expect: number };
-
-export type EvalAssertion = string | ScriptedAssertion;
-
-export interface EvalCase {
-  id: string;
-  prompt: string;
-  expected_output: string;
-  files: string[];
-  assertions: EvalAssertion[];
-}
-
-export interface EvalSuite {
-  skill_name: string;
-  evals: EvalCase[];
-}
-
-export interface TriggerQuery {
-  query: string;
-  should_trigger: boolean;
-}
-
-export type TriggerSplit = 'train' | 'validation' | 'all';
-
-export interface TriggerQuerySplit {
-  train: TriggerQuery[];
-  validation: TriggerQuery[];
-}
-
-export interface ParseEvalSuiteParams {
-  raw: unknown;
-  expectedSkillName?: string;
-  sourcePath?: string;
-}
-
-const EVAL_CASE_KEYS = new Set([
-  'id',
-  'prompt',
-  'expected_output',
-  'files',
-  'assertions',
-  'expectations',
-]);
-
-const TRIGGER_QUERY_KEYS = new Set(['query', 'should_trigger']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isSafeRelativePath(value: string): boolean {
   const trimmed = value.trim();
@@ -87,178 +34,143 @@ function isSafeCaseId(value: string): boolean {
   );
 }
 
-function assertOnlyKeys(
-  record: Record<string, unknown>,
-  allowed: ReadonlySet<string>,
-  label: string,
-): void {
-  for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) {
-      throw new EvalError(`${label} has unknown field "${key}"`);
-    }
-  }
-}
+const safePathSchema = z
+  .string()
+  .transform((val) => val.trim())
+  .refine(isSafeRelativePath, 'must be a safe relative path');
 
-function parseScriptedAssertion(
-  record: Record<string, unknown>,
-  label: string,
-): ScriptedAssertion {
-  const type = record.type;
-  if (
-    type === 'file_exists' ||
-    type === 'file_absent' ||
-    type === 'json_valid'
-  ) {
-    assertOnlyKeys(record, new Set(['type', 'path']), label);
-    if (typeof record.path !== 'string' || !isSafeRelativePath(record.path)) {
-      throw new EvalError(`${label} (${type}) requires a safe relative "path"`);
-    }
-    return { type, path: record.path.trim() };
-  }
+const fileExistsAssertionSchema = z.strictObject({
+  type: z.literal('file_exists'),
+  path: safePathSchema,
+});
 
-  if (type === 'regex') {
-    assertOnlyKeys(
-      record,
-      new Set(['type', 'path', 'pattern', 'flags']),
-      label,
-    );
-    if (typeof record.path !== 'string' || !isSafeRelativePath(record.path)) {
-      throw new EvalError(`${label} (regex) requires a safe relative "path"`);
-    }
-    if (typeof record.pattern !== 'string' || record.pattern.length === 0) {
-      throw new EvalError(`${label} (regex) requires a non-empty "pattern"`);
-    }
-    let flags: string | undefined;
-    if (record.flags !== undefined) {
-      if (typeof record.flags !== 'string') {
-        throw new EvalError(`${label} (regex) "flags" must be a string`);
-      }
-      flags = record.flags;
-    }
+const fileAbsentAssertionSchema = z.strictObject({
+  type: z.literal('file_absent'),
+  path: safePathSchema,
+});
+
+const jsonValidAssertionSchema = z.strictObject({
+  type: z.literal('json_valid'),
+  path: safePathSchema,
+});
+
+const regexAssertionSchema = z
+  .strictObject({
+    type: z.literal('regex'),
+    path: safePathSchema,
+    pattern: z.string().min(1),
+    flags: z.string().optional(),
+  })
+  .superRefine((val, ctx) => {
     try {
-      new RegExp(record.pattern, flags);
+      new RegExp(val.pattern, val.flags);
     } catch (error) {
-      throw new EvalError(
-        `${label} (regex) has invalid regular expression: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
+      ctx.addIssue({
+        code: 'custom',
+        message: `invalid regular expression: ${error instanceof Error ? error.message : String(error)}`,
+      });
     }
-    return {
-      type: 'regex',
-      path: record.path.trim(),
-      pattern: record.pattern,
-      ...(flags !== undefined ? { flags } : {}),
-    };
-  }
+  });
 
-  if (type === 'command') {
-    assertOnlyKeys(record, new Set(['type', 'run', 'expect']), label);
-    if (typeof record.run !== 'string' || !record.run.trim()) {
-      throw new EvalError(`${label} (command) requires a non-empty "run"`);
-    }
-    let expectCode = 0;
-    if (record.expect !== undefined) {
-      if (
-        typeof record.expect !== 'number' ||
-        !Number.isInteger(record.expect)
-      ) {
-        throw new EvalError(
-          `${label} (command) "expect" must be an integer exit code`,
-        );
-      }
-      expectCode = record.expect;
-    }
-    return { type: 'command', run: record.run.trim(), expect: expectCode };
-  }
+const commandAssertionSchema = z.strictObject({
+  type: z.literal('command'),
+  run: z
+    .string()
+    .transform((val) => val.trim())
+    .refine((val) => val.length > 0, 'must be a non-empty command'),
+  expect: z.number().int().default(0),
+});
 
-  throw new EvalError(
-    `${label} has unsupported assertion type "${String(type)}"`,
+const scriptedAssertionSchema = z.discriminatedUnion('type', [
+  fileExistsAssertionSchema,
+  fileAbsentAssertionSchema,
+  jsonValidAssertionSchema,
+  regexAssertionSchema,
+  commandAssertionSchema,
+]);
+
+const evalAssertionSchema = z.union([
+  z
+    .string()
+    .transform((val) => val.trim())
+    .refine((val) => val.length > 0, 'must be a non-empty string'),
+  scriptedAssertionSchema,
+]);
+
+const evalFileEntrySchema = safePathSchema
+  .transform((val) => posix.normalize(val.replaceAll('\\', '/')))
+  .refine(
+    (val) => val.startsWith('evals/files/') && val !== 'evals/files',
+    'must reside under "evals/files/"',
   );
+
+const evalCaseSchema = z
+  .strictObject({
+    id: z
+      .union([z.string(), z.number()])
+      .transform((val) => String(val).trim())
+      .refine(isSafeCaseId, 'must be a valid case identifier'),
+    prompt: z
+      .string()
+      .transform((val) => val.trim())
+      .refine((val) => val.length > 0, 'must be a non-empty string'),
+    expected_output: z
+      .string()
+      .transform((val) => val.trim())
+      .refine((val) => val.length > 0, 'must be a non-empty string'),
+    files: z.array(evalFileEntrySchema).default([]),
+    assertions: z.array(evalAssertionSchema).optional(),
+    expectations: z.array(evalAssertionSchema).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.assertions !== undefined && val.expectations !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'cannot define both "assertions" and "expectations"',
+      });
+    }
+  })
+  .transform(({ assertions, expectations, ...rest }) => ({
+    ...rest,
+    assertions: assertions ?? expectations ?? [],
+  }));
+
+const evalSuiteSchema = z.strictObject({
+  skill_name: z.string().refine(isSkillName, 'must be a valid skill name'),
+  evals: z.array(evalCaseSchema).min(1),
+});
+
+const triggerQuerySchema = z.strictObject({
+  query: z
+    .string()
+    .transform((val) => val.trim())
+    .refine((val) => val.length > 0, 'must be a non-empty string'),
+  should_trigger: z.boolean(),
+});
+
+const triggerQueriesSchema = z.array(triggerQuerySchema).min(1);
+
+export type ScriptedAssertion = z.infer<typeof scriptedAssertionSchema>;
+
+export type EvalAssertion = z.infer<typeof evalAssertionSchema>;
+
+export type EvalCase = z.infer<typeof evalCaseSchema>;
+
+export type EvalSuite = z.infer<typeof evalSuiteSchema>;
+
+export type TriggerQuery = z.infer<typeof triggerQuerySchema>;
+
+export type TriggerSplit = 'train' | 'validation' | 'all';
+
+export interface TriggerQuerySplit {
+  train: TriggerQuery[];
+  validation: TriggerQuery[];
 }
 
-function parseAssertion(raw: unknown, label: string): EvalAssertion {
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      throw new EvalError(`${label} cannot be an empty string`);
-    }
-    return trimmed;
-  }
-  if (isRecord(raw)) {
-    return parseScriptedAssertion(raw, label);
-  }
-  throw new EvalError(
-    `${label} must be a non-empty string or scripted assertion object`,
-  );
-}
-
-function parseEvalCase(raw: unknown, index: number): EvalCase {
-  const label = `evals[${index}]`;
-  if (!isRecord(raw)) {
-    throw new EvalError(`${label} must be an object`);
-  }
-  assertOnlyKeys(raw, EVAL_CASE_KEYS, label);
-
-  const rawId = raw.id;
-  if (typeof rawId !== 'string' && typeof rawId !== 'number') {
-    throw new EvalError(`${label}.id must be a string or number`);
-  }
-  const id = String(rawId).trim();
-  if (!isSafeCaseId(id)) {
-    throw new EvalError(`${label}.id "${id}" is not a valid case identifier`);
-  }
-
-  if (typeof raw.prompt !== 'string' || !raw.prompt.trim()) {
-    throw new EvalError(`${label}.prompt must be a non-empty string`);
-  }
-  if (typeof raw.expected_output !== 'string' || !raw.expected_output.trim()) {
-    throw new EvalError(`${label}.expected_output must be a non-empty string`);
-  }
-
-  const files: string[] = [];
-  if (raw.files !== undefined) {
-    if (!Array.isArray(raw.files)) {
-      throw new EvalError(`${label}.files must be an array of paths`);
-    }
-    for (const [fileIndex, entry] of raw.files.entries()) {
-      if (typeof entry !== 'string' || !isSafeRelativePath(entry)) {
-        throw new EvalError(
-          `${label}.files[${fileIndex}] must be a safe relative path`,
-        );
-      }
-      const normalized = posix.normalize(entry.trim().replaceAll('\\', '/'));
-      if (
-        !normalized.startsWith('evals/files/') ||
-        normalized === 'evals/files'
-      ) {
-        throw new EvalError(
-          `${label}.files[${fileIndex}] must reside under "evals/files/", got "${entry}"`,
-        );
-      }
-      files.push(normalized);
-    }
-  }
-
-  if (raw.assertions !== undefined && raw.expectations !== undefined) {
-    throw new EvalError(
-      `${label} cannot define both "assertions" and "expectations"`,
-    );
-  }
-  const rawAssertions = raw.assertions ?? raw.expectations ?? [];
-  if (!Array.isArray(rawAssertions)) {
-    throw new EvalError(`${label}.assertions must be an array`);
-  }
-  const assertions = rawAssertions.map((item, assertionIndex) =>
-    parseAssertion(item, `${label}.assertions[${assertionIndex}]`),
-  );
-
-  return {
-    id,
-    prompt: raw.prompt.trim(),
-    expected_output: raw.expected_output.trim(),
-    files,
-    assertions,
-  };
+export interface ParseEvalSuiteParams {
+  raw: unknown;
+  expectedSkillName?: string;
+  sourcePath?: string;
 }
 
 export function parseEvalSuite({
@@ -266,42 +178,28 @@ export function parseEvalSuite({
   expectedSkillName,
   sourcePath = 'evals/evals.json',
 }: ParseEvalSuiteParams): EvalSuite {
-  if (!isRecord(raw)) {
-    throw new EvalError(`${sourcePath} must contain a JSON object`);
+  const result = evalSuiteSchema.safeParse(raw);
+  if (!result.success) {
+    throw new EvalError(`${sourcePath}: ${z.prettifyError(result.error)}`);
   }
-  assertOnlyKeys(raw, new Set(['skill_name', 'evals']), sourcePath);
-
-  if (typeof raw.skill_name !== 'string' || !isSkillName(raw.skill_name)) {
+  const suite = result.data;
+  if (expectedSkillName && suite.skill_name !== expectedSkillName) {
     throw new EvalError(
-      `${sourcePath}: "skill_name" must be a valid skill name`,
+      `${sourcePath}: skill_name "${suite.skill_name}" does not match skill directory "${expectedSkillName}"`,
     );
-  }
-  if (expectedSkillName && raw.skill_name !== expectedSkillName) {
-    throw new EvalError(
-      `${sourcePath}: skill_name "${raw.skill_name}" does not match skill directory "${expectedSkillName}"`,
-    );
-  }
-
-  if (!Array.isArray(raw.evals) || raw.evals.length === 0) {
-    throw new EvalError(`${sourcePath}: "evals" must be a non-empty array`);
   }
 
   const seenIds = new Set<string>();
-  const evals = raw.evals.map((item, index) => {
-    const parsed = parseEvalCase(item, index);
-    if (seenIds.has(parsed.id)) {
+  for (const evalCase of suite.evals) {
+    if (seenIds.has(evalCase.id)) {
       throw new EvalError(
-        `${sourcePath}: duplicate eval case id "${parsed.id}"`,
+        `${sourcePath}: duplicate eval case id "${evalCase.id}"`,
       );
     }
-    seenIds.add(parsed.id);
-    return parsed;
-  });
+    seenIds.add(evalCase.id);
+  }
 
-  return {
-    skill_name: raw.skill_name,
-    evals,
-  };
+  return suite;
 }
 
 export async function loadEvalSuite(skillDir: string): Promise<EvalSuite> {
@@ -348,35 +246,22 @@ export function parseTriggerQueries(
   raw: unknown,
   sourcePath = 'evals/trigger_queries.json',
 ): TriggerQuery[] {
-  if (!Array.isArray(raw) || raw.length === 0) {
-    throw new EvalError(
-      `${sourcePath} must be a non-empty JSON array of trigger queries`,
-    );
+  const result = triggerQueriesSchema.safeParse(raw);
+  if (!result.success) {
+    throw new EvalError(`${sourcePath}: ${z.prettifyError(result.error)}`);
   }
 
   const seenQueries = new Set<string>();
-  return raw.map((item, index) => {
-    const label = `${sourcePath}[${index}]`;
-    if (!isRecord(item)) {
-      throw new EvalError(`${label} must be an object`);
+  for (const item of result.data) {
+    if (seenQueries.has(item.query)) {
+      throw new EvalError(
+        `${sourcePath}: duplicate trigger query "${item.query}"`,
+      );
     }
-    assertOnlyKeys(item, TRIGGER_QUERY_KEYS, label);
-    if (typeof item.query !== 'string' || !item.query.trim()) {
-      throw new EvalError(`${label}.query must be a non-empty string`);
-    }
-    if (typeof item.should_trigger !== 'boolean') {
-      throw new EvalError(`${label}.should_trigger must be a boolean`);
-    }
-    const query = item.query.trim();
-    if (seenQueries.has(query)) {
-      throw new EvalError(`${sourcePath}: duplicate trigger query "${query}"`);
-    }
-    seenQueries.add(query);
-    return {
-      query,
-      should_trigger: item.should_trigger,
-    };
-  });
+    seenQueries.add(item.query);
+  }
+
+  return result.data;
 }
 
 export async function loadTriggerQueries(

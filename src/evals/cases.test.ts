@@ -70,18 +70,20 @@ test('loadEvalSuite parses string and scripted assertions and verifies files', a
 });
 
 test('parseEvalSuite accepts expectations alias and numeric case ids', () => {
+  const raw = {
+    skill_name: 'demo-skill',
+    evals: [
+      {
+        id: 1,
+        prompt: 'Run demo',
+        expected_output: 'Demo output',
+        expectations: ['Output mentions demo'],
+      },
+    ],
+  };
+
   const suite = parseEvalSuite({
-    raw: {
-      skill_name: 'demo-skill',
-      evals: [
-        {
-          id: 1,
-          prompt: 'Run demo',
-          expected_output: 'Demo output',
-          expectations: ['Output mentions demo'],
-        },
-      ],
-    },
+    raw,
     expectedSkillName: 'demo-skill',
   });
 
@@ -90,76 +92,57 @@ test('parseEvalSuite accepts expectations alias and numeric case ids', () => {
 });
 
 test('parseEvalSuite rejects invalid regex, duplicate ids, and escaping paths', () => {
-  assert.throws(
-    () =>
-      parseEvalSuite({
-        raw: {
-          skill_name: 'demo-skill',
-          evals: [
-            {
-              id: 'bad-regex',
-              prompt: 'Test',
-              expected_output: 'Result',
-              assertions: [
-                { type: 'regex', path: 'out.txt', pattern: '[unclosed' },
-              ],
-            },
+  const invalidCases = [
+    {
+      skill_name: 'demo-skill',
+      evals: [
+        {
+          id: 'bad-regex',
+          prompt: 'Test',
+          expected_output: 'Result',
+          assertions: [
+            { type: 'regex', path: 'out.txt', pattern: '[unclosed' },
           ],
         },
-      }),
-    EvalError,
-  );
+      ],
+    },
+    {
+      skill_name: 'demo-skill',
+      evals: [
+        { id: 'dup', prompt: 'One', expected_output: 'One' },
+        { id: 'dup', prompt: 'Two', expected_output: 'Two' },
+      ],
+    },
+    {
+      skill_name: 'demo-skill',
+      evals: [
+        {
+          id: 'escape',
+          prompt: 'One',
+          expected_output: 'One',
+          files: ['../secret.txt'],
+        },
+      ],
+    },
+    {
+      skill_name: 'demo-skill',
+      evals: [
+        {
+          id: 'both-fields',
+          prompt: 'One',
+          expected_output: 'One',
+          assertions: ['A'],
+          expectations: ['B'],
+        },
+      ],
+    },
+  ];
 
-  assert.throws(
-    () =>
-      parseEvalSuite({
-        raw: {
-          skill_name: 'demo-skill',
-          evals: [
-            { id: 'dup', prompt: 'One', expected_output: 'One' },
-            { id: 'dup', prompt: 'Two', expected_output: 'Two' },
-          ],
-        },
-      }),
-    EvalError,
-  );
+  const attempt = (raw: unknown) => () => parseEvalSuite({ raw });
 
-  assert.throws(
-    () =>
-      parseEvalSuite({
-        raw: {
-          skill_name: 'demo-skill',
-          evals: [
-            {
-              id: 'escape',
-              prompt: 'One',
-              expected_output: 'One',
-              files: ['../secret.txt'],
-            },
-          ],
-        },
-      }),
-    EvalError,
-  );
-
-  assert.throws(
-    () =>
-      parseEvalSuite({
-        raw: {
-          skill_name: 'demo-skill',
-          evals: [
-            {
-              id: 'both-fields',
-              prompt: 'One',
-              expected_output: 'One',
-              assertions: ['A'],
-              expectations: ['B'],
-            },
-          ],
-        },
-      }),
-    EvalError,
-  );
+  for (const raw of invalidCases) {
+    assert.throws(attempt(raw), EvalError);
+  }
 });
 
 test('loadEvalSuite rejects missing fixture files on disk', async (t) => {
@@ -179,7 +162,9 @@ test('loadEvalSuite rejects missing fixture files on disk', async (t) => {
     }),
   });
 
-  await assert.rejects(() => loadEvalSuite(skillDir), EvalError);
+  const action = () => loadEvalSuite(skillDir);
+
+  await assert.rejects(action, EvalError);
 });
 
 test('loadTriggerQueries and splitTriggerQueries produce a deterministic 60/40 stratified split', async (t) => {
@@ -228,17 +213,18 @@ test('loadTriggerQueries and splitTriggerQueries produce a deterministic 60/40 s
 });
 
 test('parseTriggerQueries rejects empty arrays, duplicates, and invalid items', () => {
-  assert.throws(() => parseTriggerQueries([]), EvalError);
-  assert.throws(
-    () =>
-      parseTriggerQueries([
-        { query: 'same', should_trigger: true },
-        { query: 'same', should_trigger: false },
-      ]),
-    EvalError,
-  );
-  assert.throws(
-    () => parseTriggerQueries([{ query: '', should_trigger: true }]),
-    EvalError,
-  );
+  const invalidInputs: unknown[] = [
+    [],
+    [
+      { query: 'same', should_trigger: true },
+      { query: 'same', should_trigger: false },
+    ],
+    [{ query: '', should_trigger: true }],
+  ];
+
+  const attempt = (raw: unknown) => () => parseTriggerQueries(raw);
+
+  for (const raw of invalidInputs) {
+    assert.throws(attempt(raw), EvalError);
+  }
 });
