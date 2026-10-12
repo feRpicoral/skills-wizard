@@ -13,13 +13,13 @@ export const TOOL_IDS = [
 
 export type ToolId = (typeof TOOL_IDS)[number];
 
-export interface ArraySetting {
+interface ArraySetting {
   file: string;
   key: string;
   values: readonly string[];
 }
 
-export interface SizeLimits {
+interface SizeLimits {
   lines?: number;
   bytes?: number;
 }
@@ -40,7 +40,7 @@ export interface ToolDefinition {
   };
 }
 
-export const GEMINI_CONTEXT_FILES = ['AGENTS.md', 'GEMINI.md'] as const;
+const GEMINI_CONTEXT_FILES = ['AGENTS.md', 'GEMINI.md'] as const;
 
 const ANTIGRAVITY_RULE_LIMITS: SizeLimits = { bytes: 24_000 };
 
