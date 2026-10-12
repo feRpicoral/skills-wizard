@@ -8,6 +8,7 @@ import {
   defaultBlockIds,
   renderBlocks,
   selectBlocks,
+  withRequirements,
 } from './compose.ts';
 import type { Block, BlockLibrary } from './library.ts';
 
@@ -20,6 +21,7 @@ function block(id: string, overrides: Partial<Block> = {}): Block {
     scopes: ['global', 'project'],
     defaults: ['global'],
     variables: [],
+    requires: [],
     body: `## ${id}`,
     ...overrides,
   };
@@ -36,6 +38,7 @@ const library: BlockLibrary = {
     }),
     block('core/style', { defaults: ['global', 'project'] }),
     block('git/commits'),
+    block('git/descriptions', { requires: ['core/style'] }),
   ],
 };
 
@@ -102,4 +105,20 @@ test('composeProject renders only the block bodies', () => {
   const composed = composeProject(library, ['git/commits'], {});
 
   assert.equal(composed, '## git/commits\n');
+});
+
+test('selectBlocks rejects a block whose requirement is not selected', () => {
+  assert.throws(
+    () => selectBlocks(library, ['git/descriptions'], 'global'),
+    /git\/descriptions requires core\/style/,
+  );
+});
+
+test('withRequirements adds missing requirements in index order', () => {
+  const result = withRequirements(library, ['git/descriptions']);
+
+  assert.deepEqual(result, {
+    ids: ['core/style', 'git/descriptions'],
+    added: ['core/style'],
+  });
 });
