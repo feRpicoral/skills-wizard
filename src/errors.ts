@@ -28,3 +28,5 @@ export class ApplyError extends AgentsConfigError {}
 export class UnsafeWriteError extends AgentsConfigError {}
 
 export class CatalogError extends AgentsConfigError {}
+
+export class SourceError extends AgentsConfigError {}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { resolvePaths } from './env.ts';
+import { gitEnvironment, resolvePaths } from './env.ts';
 import { EnvironmentError } from './errors.ts';
 
 test('resolvePaths honors tool home overrides', () => {
@@ -50,4 +50,10 @@ test('resolvePaths rejects a relative cache directory', () => {
     () => resolvePaths({ HOME: '/home/me', XDG_CACHE_HOME: 'cache' }),
     EnvironmentError,
   );
+});
+
+test('gitEnvironment keeps the environment and turns off credential prompts', () => {
+  const env = gitEnvironment({ PATH: '/bin' });
+
+  assert.deepEqual(env, { PATH: '/bin', GIT_TERMINAL_PROMPT: '0' });
 });
