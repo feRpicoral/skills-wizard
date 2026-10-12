@@ -11,7 +11,12 @@ import { runInit } from './commands/init.ts';
 import { runMenu } from './commands/menu.ts';
 import { runSync } from './commands/sync.ts';
 import { createContext } from './context.ts';
-import { AgentsConfigError, CancelledError, UsageError } from './errors.ts';
+import {
+  AgentsConfigError,
+  CancelledError,
+  isSystemError,
+  UsageError,
+} from './errors.ts';
 import { isToolId, TOOL_IDS, type ToolId } from './tools/registry.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
@@ -120,12 +125,6 @@ function rejectOptions(command: Command, provided: readonly string[]): void {
   if (extra.length > 0) {
     throw new UsageError(`${flags(extra)} does not apply to ${command}`);
   }
-}
-
-function isSystemError(error: unknown): error is Error {
-  return (
-    error instanceof Error && 'code' in error && typeof error.code === 'string'
-  );
 }
 
 async function version(): Promise<string> {

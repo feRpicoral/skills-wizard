@@ -11,7 +11,7 @@ import {
   type Scope,
 } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
-import { UsageError } from '../errors.ts';
+import { AgentsConfigError, isSystemError, UsageError } from '../errors.ts';
 import { applyPlan } from '../install/apply.ts';
 import {
   conflicts,
@@ -23,6 +23,7 @@ import {
 import {
   isDirectory,
   isInside,
+  lstatIfExists,
   readTextIfExists,
   realLocation,
   statIfExists,
@@ -36,6 +37,7 @@ import {
   readManifest,
   readProjectManifest,
 } from '../state/manifest.ts';
+import { forgetProject, recordProject } from '../state/projects.ts';
 
 const run = promisify(execFile);
 
@@ -242,6 +244,31 @@ export interface ConfirmOptions {
   dryRun: boolean;
 }
 
+async function trackProject(
+  ctx: Context,
+  prompting: boolean,
+  plan: Plan,
+): Promise<void> {
+  if (plan.projectDir === undefined) return;
+  try {
+    if (await lstatIfExists(plan.manifestPath)) {
+      await recordProject(ctx.paths, plan.projectDir);
+    } else {
+      await forgetProject(ctx.paths, plan.projectDir);
+    }
+  } catch (error) {
+    if (!(error instanceof AgentsConfigError) && !isSystemError(error)) {
+      throw error;
+    }
+    notify({
+      ctx,
+      prompting,
+      message: `Could not update the list of recorded projects: ${error.message}`,
+      level: 'warn',
+    });
+  }
+}
+
 export async function confirmAndApply(
   ctx: Context,
   plan: Plan,
@@ -276,6 +303,7 @@ export async function confirmAndApply(
   }
 
   const outcome = await applyPlan(plan);
+  await trackProject(ctx, prompting, plan);
   const changed = outcome.applied.filter(
     (action) => action.change.type !== 'none',
   ).length;
