@@ -17,20 +17,32 @@ import {
   promptLinkCommand,
   promptProjectDir,
   promptScope,
+  promptSkillMode,
+  promptSkills,
   promptTools,
   promptVariables,
 } from '../prompts/selection.ts';
-import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
+import { DEFAULT_SKILL_MODE, type SkillMode } from '../skills/install.ts';
+import {
+  defaultSkillNames,
+  findSkill,
+  loadSkillLibrary,
+  type SkillLibrary,
+  unknownSkillNames,
+} from '../skills/library.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
   dropUnknownBlocks,
+  dropUnknownSkills,
+  fetchSkills,
   loadLibrary,
   notify,
   notifyLeftGit,
   readLocationManifest,
   resolveLocation,
+  warnLockedSkills,
   warnTrackedFiles,
 } from './shared.ts';
 
@@ -39,6 +51,8 @@ interface InitOptions {
   projectDir?: string;
   tools?: ToolId[];
   blocks?: string[];
+  skills?: string[];
+  skillMode?: SkillMode;
   variables: Record<string, string>;
   linkCommand?: boolean;
   keepLocal?: boolean;
@@ -65,19 +79,42 @@ function checkExplicitBlocks(
   }
 }
 
+function checkExplicitSkills(
+  library: SkillLibrary,
+  names: readonly string[],
+  scope: Scope,
+): void {
+  const unknown = unknownSkillNames(library, names);
+  if (unknown.length > 0) {
+    throw new UsageError(`Unknown skills: ${unknown.join(', ')}`);
+  }
+  const outOfScope = names.filter(
+    (name) => !findSkill(library, name)?.scopes.includes(scope),
+  );
+  if (outOfScope.length > 0) {
+    throw new UsageError(
+      `Skills not available for ${scope} scope: ${outOfScope.join(', ')}`,
+    );
+  }
+}
+
 interface ScopeSpecificOptions {
   linkCommand?: boolean | undefined;
+  skillMode?: SkillMode | undefined;
   keepLocal?: boolean | undefined;
 }
 
 function checkScopeOptions(
   scope: Scope,
-  { linkCommand, keepLocal }: ScopeSpecificOptions,
+  { linkCommand, skillMode, keepLocal }: ScopeSpecificOptions,
 ): void {
   if (scope === 'project' && linkCommand !== undefined) {
     throw new UsageError(
       '--link-command only applies to system-wide installs.',
     );
+  }
+  if (scope === 'project' && skillMode !== undefined) {
+    throw new UsageError('--skill-mode only applies to system-wide installs.');
   }
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
@@ -91,6 +128,8 @@ export async function runInit(
     projectDir: requestedProjectDir,
     tools: requestedTools,
     blocks: requestedBlocks,
+    skills: requestedSkills,
+    skillMode: requestedSkillMode,
     variables: givenVariables,
     linkCommand: requestedLinkCommand,
     keepLocal: requestedKeepLocal,
@@ -102,6 +141,7 @@ export async function runInit(
   if (!scope) throw new UsageError('Pass --global or --project <dir>.');
   checkScopeOptions(scope, {
     linkCommand: requestedLinkCommand,
+    skillMode: requestedSkillMode,
     keepLocal: requestedKeepLocal,
   });
 
@@ -175,6 +215,35 @@ export async function runInit(
     );
   }
 
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  if (requestedSkills) {
+    checkExplicitSkills(skillLibrary, requestedSkills, scope);
+  }
+  const initialSkills =
+    requestedSkills ??
+    (previous
+      ? dropUnknownSkills({
+          ctx,
+          prompting,
+          library: skillLibrary,
+          names: previous.skills,
+        })
+      : defaultSkillNames(skillLibrary, scope));
+  const skills = prompting
+    ? await promptSkills(skillLibrary, scope, initialSkills)
+    : initialSkills;
+  const previousMode = previous?.options.skillMode ?? DEFAULT_SKILL_MODE;
+  const firstParty = skills.some(
+    (name) => findSkill(skillLibrary, name)?.origin.type === 'local',
+  );
+  const skillMode =
+    scope === 'global'
+      ? (requestedSkillMode ??
+        (prompting && firstParty
+          ? await promptSkillMode(previousMode)
+          : previousMode))
+      : DEFAULT_SKILL_MODE;
+
   const previousLink = previous?.options.linkCommand ?? false;
   const linkCommand =
     scope === 'global'
@@ -204,16 +273,24 @@ export async function runInit(
         (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
       : false;
 
+  const installing = tools.length > 0 ? skills : [];
+  if (scope === 'global') await warnLockedSkills(ctx, prompting, installing);
+  const skillSources = await fetchSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: installing,
+  });
   const plan = await buildPlan({
     scope,
     selection: {
       tools,
       blocks,
-      skills: previous?.skills ?? [],
+      skills,
       variables,
       linkCommand,
       keepLocal,
-      skillMode: previous?.options.skillMode ?? DEFAULT_SKILL_MODE,
+      skillMode,
     },
     library,
     paths: ctx.paths,
@@ -221,6 +298,7 @@ export async function runInit(
     previous,
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
+    skillSources,
   });
   if (keepLocal) {
     await warnTrackedFiles({

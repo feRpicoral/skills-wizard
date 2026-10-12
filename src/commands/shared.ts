@@ -30,6 +30,10 @@ import {
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
 import { confirmApply } from '../prompts/selection.ts';
+import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
+import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
+import { readSkillLock, skillLockPath } from '../skills/lock.ts';
+import type { SourceCache } from '../skills/sources.ts';
 import {
   globalManifestPath,
   type Manifest,
@@ -206,6 +210,86 @@ export function dropUnknownBlocks({
     });
   }
   return ids.filter((id) => known.has(id));
+}
+
+interface DropUnknownSkillsParams {
+  ctx: Context;
+  prompting: boolean;
+  library: SkillLibrary;
+  names: readonly string[];
+}
+
+export function dropUnknownSkills({
+  ctx,
+  prompting,
+  library,
+  names,
+}: DropUnknownSkillsParams): string[] {
+  const unknown = unknownSkillNames(library, names);
+  if (unknown.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Skills no longer in catalog.yaml or skills/ were dropped: ${unknown.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  return names.filter((name) => !unknown.includes(name));
+}
+
+export function sourceCache(ctx: Context): SourceCache {
+  return { root: ctx.paths.sourcesDir, ...ctx.sources };
+}
+
+interface FetchSkillsParams {
+  ctx: Context;
+  prompting: boolean;
+  library: SkillLibrary;
+  names: readonly string[];
+}
+
+export async function fetchSkills({
+  ctx,
+  prompting,
+  library,
+  names,
+}: FetchSkillsParams): Promise<Map<string, SkillSource>> {
+  if (names.length === 0) return new Map();
+  const spinner = prompting ? clack.spinner() : null;
+  spinner?.start('Fetching skills');
+  const { sources, problems } = await resolveSkillSources({
+    library,
+    names,
+    cache: sourceCache(ctx),
+    fetch: true,
+  });
+  spinner?.stop('Fetched skills');
+  for (const [name, problem] of problems) {
+    notify({
+      ctx,
+      prompting,
+      message: `Skipping the ${name} skill: ${problem}`,
+      level: 'warn',
+    });
+  }
+  return sources;
+}
+
+export async function warnLockedSkills(
+  ctx: Context,
+  prompting: boolean,
+  names: readonly string[],
+): Promise<void> {
+  const locked = await readSkillLock(ctx.paths);
+  const shared = names.filter((name) => locked.has(name));
+  if (shared.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `${displayPath({ path: skillLockPath(ctx.paths), home: ctx.paths.home })} also tracks ${shared.join(', ')}; the installer that wrote it may replace these copies.`,
+      level: 'warn',
+    });
+  }
 }
 
 interface WarnTrackedFilesParams {

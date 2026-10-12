@@ -5,9 +5,12 @@ import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
 import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
+import { loadSkillLibrary } from '../skills/library.ts';
 import {
   confirmAndApply,
   dropUnknownBlocks,
+  dropUnknownSkills,
+  fetchSkills,
   loadLibrary,
   notify,
   notifyLeftGit,
@@ -55,6 +58,19 @@ export async function runSync(
       message: `Added required blocks: ${added.join(', ')}`,
     });
   }
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const skills = dropUnknownSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: previous.skills,
+  });
+  const skillSources = await fetchSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: previous.tools.length > 0 ? skills : [],
+  });
   const recordedLocal = previous.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   if (location.project && recordedLocal && !keepLocal) {
@@ -65,7 +81,7 @@ export async function runSync(
     selection: {
       tools: previous.tools,
       blocks,
-      skills: previous.skills,
+      skills,
       variables: previous.variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
@@ -77,6 +93,7 @@ export async function runSync(
     previous,
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
+    skillSources,
   });
   if (keepLocal) {
     await warnTrackedFiles({
