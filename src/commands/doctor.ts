@@ -12,6 +12,7 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
+import { scanInstalledSkills } from '../skills/collisions.ts';
 import { DEFAULT_SKILL_MODE, resolveSkillSources } from '../skills/install.ts';
 import { loadSkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import type { Manifest } from '../state/manifest.ts';
@@ -127,6 +128,36 @@ async function globalFindings(
   return findings;
 }
 
+async function skillFindings(
+  ctx: Context,
+  manifest: Manifest | null,
+): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  const home = ctx.paths.home;
+  const scan = await scanInstalledSkills(ctx.paths, manifest);
+  for (const collision of scan.collisions) {
+    const locations = collision.paths
+      .map((path) => displayPath({ path, home }))
+      .join(', ');
+    findings.push({
+      level: 'warn',
+      message: `Skill "${collision.name}" is declared in multiple locations: ${locations}`,
+    });
+  }
+  if (scan.unmanaged.length > 0) {
+    const list = scan.unmanaged
+      .map(
+        (skill) => `${skill.name} (${displayPath({ path: skill.path, home })})`,
+      )
+      .join(', ');
+    findings.push({
+      level: 'note',
+      message: `Unmanaged skills: ${list}`,
+    });
+  }
+  return findings;
+}
+
 export async function runDoctor(
   ctx: Context,
   { scope, projectDir }: DoctorOptions,
@@ -142,6 +173,18 @@ export async function runDoctor(
     ctx.print(
       `No ${scope === 'global' ? 'system-wide' : 'project'} install recorded at ${displayPath({ path: location.manifestPath, home })}.`,
     );
+    if (scope === 'global') {
+      const findings = await skillFindings(ctx, null);
+      for (const finding of findings) {
+        ctx.print(`${LEVEL_LABEL[finding.level]}  ${finding.message}`);
+      }
+      const problems = findings.filter((finding) => finding.level !== 'note');
+      if (problems.length > 0) {
+        ctx.print(
+          `${problems.length} problem${problems.length === 1 ? '' : 's'} found.`,
+        );
+      }
+    }
     return 0;
   }
 
@@ -226,7 +269,10 @@ export async function runDoctor(
   }
   findings.push(...(await symlinkFindings(ctx, manifest)));
   if (scope === 'global') {
-    findings.push(...(await globalFindings(ctx, manifest)));
+    findings.push(
+      ...(await globalFindings(ctx, manifest)),
+      ...(await skillFindings(ctx, manifest)),
+    );
   }
 
   for (const finding of findings) {
