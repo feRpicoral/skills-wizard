@@ -149,8 +149,20 @@ async function resolveManifestStatus({
   return existing === content ? 'unchanged' : 'update';
 }
 
-export async function buildPlan(input: PlanInput): Promise<Plan> {
-  const { scope, previous, manifestPath, project } = input;
+export async function buildPlan({
+  scope,
+  previous,
+  manifestPath,
+  project,
+  ...rest
+}: PlanInput): Promise<Plan> {
+  const input: PlanInput = {
+    scope,
+    previous,
+    manifestPath,
+    ...(project ? { project } : {}),
+    ...rest,
+  };
   const boundary = scope === 'project' ? project?.dir : undefined;
   await checkManifestPath({
     manifestPath,

@@ -259,8 +259,7 @@ function projectTargets({
   return targets;
 }
 
-export function targetsForPlan(input: PlanInput): Target[] {
-  return input.scope === 'global'
-    ? globalTargets(input)
-    : projectTargets(input);
+export function targetsForPlan({ scope, ...rest }: PlanInput): Target[] {
+  const input: PlanInput = { scope, ...rest };
+  return scope === 'global' ? globalTargets(input) : projectTargets(input);
 }

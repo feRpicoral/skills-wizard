@@ -37,16 +37,27 @@ interface BlockFixture {
   group?: string;
 }
 
-export function blockSource(body: string, fixture: BlockFixture = {}): string {
+export function blockSource(
+  body: string,
+  {
+    title = 'Title',
+    summary = 'Summary',
+    group,
+    scopes = ['global', 'project'],
+    defaults = ['global'],
+    variables = [],
+    requires,
+  }: BlockFixture = {},
+): string {
   const lines = [
     '---',
-    `title: ${fixture.title ?? 'Title'}`,
-    `summary: ${fixture.summary ?? 'Summary'}`,
-    ...(fixture.group ? [`group: ${fixture.group}`] : []),
-    `scopes: [${(fixture.scopes ?? ['global', 'project']).join(', ')}]`,
-    `defaults: [${(fixture.defaults ?? ['global']).join(', ')}]`,
-    `variables: [${(fixture.variables ?? []).join(', ')}]`,
-    ...(fixture.requires ? [`requires: [${fixture.requires.join(', ')}]`] : []),
+    `title: ${title}`,
+    `summary: ${summary}`,
+    ...(group ? [`group: ${group}`] : []),
+    `scopes: [${scopes.join(', ')}]`,
+    `defaults: [${defaults.join(', ')}]`,
+    `variables: [${variables.join(', ')}]`,
+    ...(requires ? [`requires: [${requires.join(', ')}]`] : []),
     '---',
     '',
     body,

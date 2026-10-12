@@ -338,11 +338,14 @@ async function resolveTargetFile({
   };
 }
 
-async function planFile(params: PlanFileParams): Promise<PlannedAction> {
-  const resolved = await resolveTargetFile(params);
+async function planFile({
+  target,
+  previous,
+  ...rest
+}: PlanFileParams): Promise<PlannedAction> {
+  const resolved = await resolveTargetFile({ target, previous, ...rest });
   if ('status' in resolved) return resolved;
 
-  const { target, previous } = params;
   switch (target.kind) {
     case 'region':
       return planRegion({ target, file: resolved, previous });

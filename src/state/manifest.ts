@@ -147,10 +147,10 @@ export async function readManifest(file: string): Promise<Manifest | null> {
 
 export async function readProjectManifest(
   file: string,
-  project: ProjectBase,
+  { dir, ...rest }: ProjectBase,
 ): Promise<ProjectManifest | null> {
   const location = await realLocation(file);
-  if (location !== null && !isInside({ dir: project.dir, path: location })) {
+  if (location !== null && !isInside({ dir, path: location })) {
     throw new ManifestError(`${file} resolves outside the project`);
   }
   const manifest = await readManifest(file);
@@ -158,7 +158,7 @@ export async function readProjectManifest(
 
   const ignored: string[] = [];
   const entries = manifest.entries.flatMap((entry) => {
-    const resolved = resolveProjectEntry(file, entry, project);
+    const resolved = resolveProjectEntry(file, entry, { dir, ...rest });
     if (resolved) return [resolved];
     ignored.push(entry.path);
     return [];

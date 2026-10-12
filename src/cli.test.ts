@@ -46,7 +46,15 @@ function manifestPath(home: string): string {
   return join(home, '.agents', 'agents-config', 'manifest.json');
 }
 
-async function addRecordedBlock(home: string, id: string): Promise<void> {
+interface RecordedBlockParams {
+  home: string;
+  id: string;
+}
+
+async function addRecordedBlock({
+  home,
+  id,
+}: RecordedBlockParams): Promise<void> {
   const manifest = JSON.parse(await readFile(manifestPath(home), 'utf8')) as {
     blocks: string[];
   };
@@ -117,7 +125,7 @@ test('an empty tool list removes everything that was installed', async (t) => {
 test('init drops recorded blocks that left the library and still installs', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock(home, 'core/removed');
+  await addRecordedBlock({ home, id: 'core/removed' });
 
   const result = await cli(home, ['init', '--global', '--yes']);
 
@@ -128,7 +136,7 @@ test('init drops recorded blocks that left the library and still installs', asyn
 test('sync drops recorded blocks that left the library and still applies', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock(home, 'core/removed');
+  await addRecordedBlock({ home, id: 'core/removed' });
 
   const result = await cli(home, ['sync', '--yes']);
 
@@ -143,7 +151,7 @@ test('sync drops recorded blocks that left the library and still applies', async
 test('doctor warns that sync will drop blocks that left the library', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock(home, 'core/removed');
+  await addRecordedBlock({ home, id: 'core/removed' });
 
   const result = await cli(home, ['doctor']);
 
