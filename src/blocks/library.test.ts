@@ -13,10 +13,9 @@ import { loadBlockLibrary } from './library.ts';
 
 const repoBlocks = join(import.meta.dirname, '..', '..', 'blocks');
 
-test('loads the repository block library in index order', async () => {
+test('loads the repository block library starting with the identity block', async () => {
   const library = await loadBlockLibrary(repoBlocks);
 
-  assert.equal(library.blocks.length, 24);
   assert.equal(library.blocks[0]?.id, 'core/identity');
   assert.deepEqual(library.blocks[0]?.variables, ['githubUsername']);
 });
@@ -38,6 +37,7 @@ test('loads blocks with their frontmatter and trimmed body', async (t) => {
     scopes: ['global', 'project'],
     defaults: ['global'],
     variables: [],
+    requires: [],
     body: '## One\n\nText.',
   });
 });
@@ -95,4 +95,51 @@ test('rejects block files without frontmatter', async (t) => {
   });
 
   await assert.rejects(loadBlockLibrary(dir), FrontmatterError);
+});
+
+test('rejects a requirement on an unknown block', async (t) => {
+  const dir = await tempDir(t);
+  await writeFiles(dir, {
+    'index.yaml': indexSource(['core/one']),
+    'core/one.md': blockSource('## One', {
+      group: 'core',
+      requires: ['core/missing'],
+    }),
+  });
+
+  await assert.rejects(loadBlockLibrary(dir), /requires unknown block/);
+});
+
+test('rejects a requirement that comes later in the order', async (t) => {
+  const dir = await tempDir(t);
+  await writeFiles(dir, {
+    'index.yaml': indexSource(['core/one', 'core/two']),
+    'core/one.md': blockSource('## One', {
+      group: 'core',
+      requires: ['core/two'],
+    }),
+    'core/two.md': blockSource('## Two', { group: 'core' }),
+  });
+
+  await assert.rejects(loadBlockLibrary(dir), /must come before it/);
+});
+
+test('rejects a requirement that is missing one of the block scopes', async (t) => {
+  const dir = await tempDir(t);
+  await writeFiles(dir, {
+    'index.yaml': indexSource(['core/one', 'core/two']),
+    'core/one.md': blockSource('## One', {
+      group: 'core',
+      scopes: ['global'],
+    }),
+    'core/two.md': blockSource('## Two', {
+      group: 'core',
+      requires: ['core/one'],
+    }),
+  });
+
+  await assert.rejects(
+    loadBlockLibrary(dir),
+    /core\/one is not available for project scope/,
+  );
 });

@@ -33,6 +33,7 @@ interface BlockFixture {
   scopes?: string[];
   defaults?: string[];
   variables?: string[];
+  requires?: string[];
   group?: string;
 }
 
@@ -45,6 +46,7 @@ export function blockSource(body: string, fixture: BlockFixture = {}): string {
     `scopes: [${(fixture.scopes ?? ['global', 'project']).join(', ')}]`,
     `defaults: [${(fixture.defaults ?? ['global']).join(', ')}]`,
     `variables: [${(fixture.variables ?? []).join(', ')}]`,
+    ...(fixture.requires ? [`requires: [${fixture.requires.join(', ')}]`] : []),
     '---',
     '',
     body,

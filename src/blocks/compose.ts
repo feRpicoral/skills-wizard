@@ -6,7 +6,7 @@ import {
   type Scope,
 } from './library.ts';
 
-export type Variables = Readonly<Record<string, string>>;
+type Variables = Readonly<Record<string, string>>;
 
 export function defaultBlockIds(library: BlockLibrary, scope: Scope): string[] {
   return library.blocks
@@ -14,13 +14,43 @@ export function defaultBlockIds(library: BlockLibrary, scope: Scope): string[] {
     .map((block) => block.id);
 }
 
+export function unknownBlockIds(
+  library: BlockLibrary,
+  ids: readonly string[],
+): string[] {
+  const known = new Set(library.blocks.map((block) => block.id));
+  return ids.filter((id) => !known.has(id));
+}
+
+export function withRequirements(
+  library: BlockLibrary,
+  ids: readonly string[],
+): { ids: string[]; added: string[] } {
+  const byId = new Map(library.blocks.map((block) => [block.id, block]));
+  const wanted = new Set(ids);
+  const pending = [...ids];
+  while (pending.length > 0) {
+    const id = pending.pop();
+    for (const required of (id && byId.get(id)?.requires) || []) {
+      if (!wanted.has(required)) {
+        wanted.add(required);
+        pending.push(required);
+      }
+    }
+  }
+
+  const ordered = library.blocks
+    .map((block) => block.id)
+    .filter((id) => wanted.has(id));
+  return { ids: ordered, added: ordered.filter((id) => !ids.includes(id)) };
+}
+
 export function selectBlocks(
   library: BlockLibrary,
   ids: readonly string[],
   scope: Scope,
 ): Block[] {
-  const known = new Set(library.blocks.map((block) => block.id));
-  const unknown = ids.filter((id) => !known.has(id));
+  const unknown = unknownBlockIds(library, ids);
   if (unknown.length > 0) {
     throw new CompositionError(`Unknown blocks: ${unknown.join(', ')}`);
   }
@@ -32,6 +62,12 @@ export function selectBlocks(
     throw new CompositionError(
       `Blocks not available for ${scope} scope: ${outOfScope.map((block) => block.id).join(', ')}`,
     );
+  }
+  for (const block of selected) {
+    const missing = block.requires.filter((required) => !wanted.has(required));
+    if (missing.length > 0) {
+      throw new CompositionError(`${block.id} requires ${missing.join(', ')}`);
+    }
   }
   return selected;
 }
@@ -53,13 +89,10 @@ export function renderBlocks(
 
   return blocks
     .map((block) =>
-      block.body.replace(PLACEHOLDER, (_match, name: string) => {
-        const value = variables[name];
-        if (value === undefined) {
-          throw new CompositionError(`Missing variable: ${name}`);
-        }
-        return value;
-      }),
+      block.body.replace(
+        PLACEHOLDER,
+        (match, name: string) => variables[name] ?? match,
+      ),
     )
     .join('\n\n');
 }
@@ -70,8 +103,7 @@ export function composeGlobal(
   variables: Variables,
 ): string {
   const blocks = selectBlocks(library, ids, 'global');
-  const rendered = renderBlocks(blocks, variables);
-  return `${library.headers.global}\n\n${rendered}\n`;
+  return `${library.headers.global}\n\n${renderBlocks(blocks, variables)}\n`;
 }
 
 export function composeProject(

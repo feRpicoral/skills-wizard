@@ -4,6 +4,7 @@ summary: Concise PR descriptions without checklists
 group: git
 scopes: [global, project]
 defaults: [global, project]
+requires: [core/no-ai-tells]
 ---
 
 ## Pull request descriptions

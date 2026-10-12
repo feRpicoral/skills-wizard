@@ -18,6 +18,7 @@ export interface Block {
   scopes: Scope[];
   defaults: Scope[];
   variables: string[];
+  requires: string[];
   body: string;
 }
 
@@ -42,6 +43,7 @@ const frontmatterSchema = z.object({
   scopes: z.array(z.enum(SCOPES)).min(1),
   defaults: z.array(z.enum(SCOPES)).default([]),
   variables: z.array(z.string()).default([]),
+  requires: z.array(z.string()).default([]),
 });
 
 export async function loadBlockLibrary(
@@ -65,7 +67,34 @@ export async function loadBlockLibrary(
   const blocks = await Promise.all(
     index.order.map((id) => loadBlock(blocksDir, id, index.groups)),
   );
+  checkRequirements(blocks, blocksDir);
   return { headers: index.headers, groups: index.groups, blocks };
+}
+
+function checkRequirements(blocks: readonly Block[], blocksDir: string) {
+  const position = new Map(blocks.map((block, index) => [block.id, index]));
+  for (const [index, block] of blocks.entries()) {
+    const file = join(blocksDir, `${block.id}.md`);
+    for (const required of block.requires) {
+      const requiredPosition = position.get(required);
+      if (requiredPosition === undefined) {
+        throw new BlockLibraryError(`${file}: requires unknown block ${required}`);
+      }
+      if (requiredPosition > index) {
+        throw new BlockLibraryError(
+          `${file}: ${required} must come before it in the order`,
+        );
+      }
+      const missingScopes = block.scopes.filter(
+        (scope) => !blocks[requiredPosition]?.scopes.includes(scope),
+      );
+      if (missingScopes.length > 0) {
+        throw new BlockLibraryError(
+          `${file}: ${required} is not available for ${missingScopes.join(', ')} scope`,
+        );
+      }
+    }
+  }
 }
 
 function parseIndex(source: string, file: string) {
