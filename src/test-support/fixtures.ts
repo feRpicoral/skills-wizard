@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
 
+import { stringify } from 'yaml';
+
 import { type Paths, resolvePaths } from '../env.ts';
 
 export async function tempDir(t: TestContext): Promise<string> {
@@ -77,4 +79,16 @@ export function indexSource(order: string[], header = '# Rules'): string {
     ...order.map((id) => `  - ${id}`),
     '',
   ].join('\n');
+}
+
+export function skillSource(
+  name: string,
+  fields: Record<string, unknown> = {},
+): string {
+  const frontmatter = stringify({
+    name,
+    description: `Handles ${name} tasks. Use when working on ${name}.`,
+    ...fields,
+  });
+  return `---\n${frontmatter}---\n\nFollow these steps.\n`;
 }
