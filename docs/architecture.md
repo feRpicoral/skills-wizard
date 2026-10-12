@@ -49,6 +49,15 @@ When a skill is installed as a copy, the tree walker leaves out `.git`, `.github
 
 `agents-config update` diffs each installed skill copy against the freshly fetched source and scans added or modified files for risky patterns (`curl`/`wget` piped to a shell, `npx -y`/`--yes`, unpinned `@latest` packages, `rm -rf`, base64 decoded into a shell, new executable files, hooks and `allowed-tools` changes) before asking for confirmation.
 
+## Skill evaluation (`src/evals/`)
+
+First-party skills under `skills/<name>/` can include an `evals/` directory (excluded when copying skills into `~/.agents/skills`):
+
+- `evals/evals.json`: test cases with `id`, `prompt`, `expected_output`, optional input `files` under `evals/files/`, and `assertions` (either natural-language strings graded by a blind LLM grader or deterministic scripted checks: `file_exists`, `file_absent`, `regex`, `json_valid`, `command`).
+- `evals/trigger_queries.json`: positive (`should_trigger: true`) and near-miss negative (`should_trigger: false`) user prompts partitioned into a deterministic 60/40 stratified `train`/`validation` split seeded by query text SHA-256.
+
+`agents-config skill eval <name>` prepares an isolated temporary git repository per run, executes `with_skill`, `without_skill` (excluding the skill at the workspace or CLI flag level without modifying `~/.agents/skills`), and optional `old_skill` (`--compare <git-ref>`) variants across `agy`, `claude`, `codex`, `gemini` or `fake` runners, grades all assertions, and writes `benchmark.json` and `report.md` under `~/.agents/agents-config/evals/<name>/iteration-<N>/`. Any string assertion where the blind grader omits supporting `evidence` is marked failed, and assertions passing 100% in both `with_skill` and baseline are flagged as non-discriminating.
+
 ## Plans and actions
 
 Each target becomes one action:
