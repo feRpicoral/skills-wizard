@@ -17,7 +17,13 @@ test('splitLines keeps each line ending so joinLines restores the text', () => {
 });
 
 test('lineEnding picks the ending most lines use', () => {
-  assert.equal(lineEnding('a\r\nb\r\nc\n'), '\r\n');
-  assert.equal(lineEnding('a\r\nb\nc\n'), '\n');
-  assert.equal(lineEnding(null), '\n');
+  const endings = ['a\r\nb\r\nc\n', 'a\r\nb\nc\n'].map(lineEnding);
+
+  assert.deepEqual(endings, ['\r\n', '\n']);
+});
+
+test('lineEnding uses LF for a new file', () => {
+  const ending = lineEnding(null);
+
+  assert.equal(ending, '\n');
 });
