@@ -16,8 +16,8 @@ import { applyPlan } from '../install/apply.ts';
 import {
   conflicts,
   describePlan,
-  displayPath,
   hasChanges,
+  planPath,
 } from '../install/describe.ts';
 import { isDirectory, readTextIfExists } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
@@ -219,7 +219,10 @@ export async function confirmAndApply(
   const changed = outcome.applied.filter(
     (action) => action.change.type !== 'none',
   ).length;
-  const summary = `Applied ${changed} change${changed === 1 ? '' : 's'}.`;
+  const summary =
+    changed === 0 && plan.manifestStatus !== 'unchanged'
+      ? 'Updated the manifest.'
+      : `Applied ${changed} change${changed === 1 ? '' : 's'}.`;
   if (prompting) clack.outro(summary);
   else ctx.print(summary);
 
@@ -227,7 +230,7 @@ export async function confirmAndApply(
     notify(
       ctx,
       prompting,
-      `Skipped ${displayPath(action.path, ctx.paths.home)}: ${action.reason ?? 'conflict'}`,
+      `Skipped ${planPath(plan, action.path, ctx.paths.home)}: ${action.reason ?? 'conflict'}`,
       'warn',
     );
   }
