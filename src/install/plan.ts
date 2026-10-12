@@ -1,4 +1,4 @@
-import { join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 import {
   composeGlobal,
@@ -154,6 +154,16 @@ async function escapes(
   return (
     boundary !== undefined && !isInside(boundary, await realLocation(path))
   );
+}
+
+async function linksTo(link: string, destination: string): Promise<boolean> {
+  const target = await readSymlink(link);
+  if (target === null) return false;
+  const [linked, expected] = await Promise.all([
+    realLocation(resolve(dirname(link), target)),
+    realLocation(destination),
+  ]);
+  return linked === expected;
 }
 
 function globalTargets(input: PlanInput): Target[] {
@@ -372,23 +382,23 @@ async function planFile(
   let writePath = target.path;
   const stats = await lstatIfExists(target.path);
   if (stats?.isSymbolicLink()) {
+    if (
+      target.kind === 'line' &&
+      target.satisfiedBy &&
+      (await linksTo(target.path, target.satisfiedBy))
+    ) {
+      return {
+        path: target.path,
+        label: `${target.label} (links to ${basename(target.satisfiedBy)})`,
+        status: 'unchanged',
+        change: NONE,
+        entry: null,
+        previous,
+      };
+    }
     const resolved = await resolveIfSymlink(target.path);
     if (resolved === null) {
       return conflict(target, previous, 'is a symlink to a missing file');
-    }
-    if (target.kind === 'line' && target.satisfiedBy) {
-      const instructions =
-        (await resolveIfSymlink(target.satisfiedBy)) ?? target.satisfiedBy;
-      if (resolved === instructions) {
-        return {
-          path: target.path,
-          label: `${target.label} (links to AGENTS.md)`,
-          status: 'unchanged',
-          change: NONE,
-          entry: null,
-          previous,
-        };
-      }
     }
     writePath = resolved;
   }
