@@ -50,7 +50,10 @@ export async function loadBlockLibrary(
   blocksDir: string,
 ): Promise<BlockLibrary> {
   const indexFile = join(blocksDir, 'index.yaml');
-  const index = parseIndex(await readFile(indexFile, 'utf8'), indexFile);
+  const index = parseIndex({
+    source: await readFile(indexFile, 'utf8'),
+    file: indexFile,
+  });
   const files = await listMarkdownFiles(blocksDir);
   const ids = new Set(index.order);
 
@@ -65,7 +68,9 @@ export async function loadBlockLibrary(
   }
 
   const blocks = await Promise.all(
-    index.order.map((id) => loadBlock(blocksDir, id, index.groups)),
+    index.order.map((id) =>
+      loadBlock({ blocksDir, id, groups: index.groups }),
+    ),
   );
   checkRequirements(blocks, blocksDir);
   return { headers: index.headers, groups: index.groups, blocks };
@@ -97,7 +102,12 @@ function checkRequirements(blocks: readonly Block[], blocksDir: string) {
   }
 }
 
-function parseIndex(source: string, file: string) {
+interface ParseIndexParams {
+  source: string;
+  file: string;
+}
+
+function parseIndex({ source, file }: ParseIndexParams) {
   const result = indexSchema.safeParse(parse(source));
   if (!result.success) {
     throw new BlockLibraryError(`${file}: ${z.prettifyError(result.error)}`);
@@ -121,11 +131,17 @@ async function listMarkdownFiles(blocksDir: string): Promise<string[]> {
     .sort();
 }
 
-async function loadBlock(
-  blocksDir: string,
-  id: string,
-  groups: Record<string, string>,
-): Promise<Block> {
+interface LoadBlockParams {
+  blocksDir: string;
+  id: string;
+  groups: Record<string, string>;
+}
+
+async function loadBlock({
+  blocksDir,
+  id,
+  groups,
+}: LoadBlockParams): Promise<Block> {
   const file = join(blocksDir, `${id}.md`);
   let source: string;
   try {
@@ -136,7 +152,7 @@ async function loadBlock(
     });
   }
 
-  const { data, body } = parseFrontmatter(source, file);
+  const { data, body } = parseFrontmatter({ source, file });
   const result = frontmatterSchema.safeParse(data);
   if (!result.success) {
     throw new BlockLibraryError(`${file}: ${z.prettifyError(result.error)}`);

@@ -13,19 +13,26 @@ interface ApplyOutcome {
   skipped: PlannedAction[];
 }
 
+interface ExecutionResult extends ApplyOutcome {
+  failure?: ApplyError;
+}
+
 async function execute(action: PlannedAction): Promise<void> {
   switch (action.change.type) {
     case 'none':
       return;
     case 'write':
-      return writeTextAtomic(
-        action.writePath ?? action.path,
-        action.change.content,
-      );
+      return writeTextAtomic({
+        path: action.writePath ?? action.path,
+        content: action.change.content,
+      });
     case 'delete':
       return removePath(action.path);
     case 'symlink':
-      return replaceSymlink(action.change.target, action.path);
+      return replaceSymlink({
+        target: action.change.target,
+        path: action.path,
+      });
   }
 }
 
@@ -42,7 +49,11 @@ async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
   const manifest = { ...plan.manifest, entries };
   const existing = await readTextIfExists(plan.manifestPath);
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
-    await writeManifest(plan.manifestPath, manifest, plan.projectDir);
+    await writeManifest({
+      file: plan.manifestPath,
+      manifest,
+      ...(plan.projectDir ? { projectDir: plan.projectDir } : {}),
+    });
   }
 }
 
@@ -50,11 +61,9 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function executeAll(
-  plan: Plan,
-  applied: PlannedAction[],
-  skipped: PlannedAction[],
-): Promise<ApplyError | undefined> {
+async function executeAll(plan: Plan): Promise<ExecutionResult> {
+  const applied: PlannedAction[] = [];
+  const skipped: PlannedAction[] = [];
   for (const action of plan.actions) {
     if (action.status === 'conflict') {
       skipped.push(action);
@@ -63,21 +72,22 @@ async function executeAll(
     try {
       await execute(action);
     } catch (error) {
-      return new ApplyError(
-        `Could not update ${action.path}: ${message(error)}`,
-        { cause: error },
-      );
+      return {
+        applied,
+        skipped,
+        failure: new ApplyError(
+          `Could not update ${action.path}: ${message(error)}`,
+          { cause: error },
+        ),
+      };
     }
     applied.push(action);
   }
-  return undefined;
+  return { applied, skipped };
 }
 
 export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
-  const applied: PlannedAction[] = [];
-  const skipped: PlannedAction[] = [];
-
-  const failure = await executeAll(plan, applied, skipped);
+  const { applied, skipped, failure } = await executeAll(plan);
 
   try {
     await recordManifest(plan, new Set(applied));

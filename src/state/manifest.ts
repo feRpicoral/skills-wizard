@@ -93,16 +93,16 @@ export function projectManifestPath(projectDir: string): string {
 function resolveProjectEntry(
   file: string,
   entry: ManifestEntry,
-  project: ProjectBase,
+  { dir, gitExcludePath }: ProjectBase,
 ): ManifestEntry | null {
   if (isAbsolute(entry.path)) {
     throw new ManifestError(`${file}: entry paths must be relative`);
   }
-  const path = resolve(project.dir, entry.path);
+  const path = resolve(dir, entry.path);
   if (entry.kind === 'exclude-region') {
-    return path === project.gitExcludePath ? { ...entry, path } : null;
+    return path === gitExcludePath ? { ...entry, path } : null;
   }
-  if (!isInside(project.dir, path)) {
+  if (!isInside({ dir, path })) {
     throw new ManifestError(`${file}: ${entry.path} is outside the project`);
   }
   return { ...entry, path };
@@ -150,7 +150,7 @@ export async function readProjectManifest(
   project: ProjectBase,
 ): Promise<ProjectManifest | null> {
   const location = await realLocation(file);
-  if (location !== null && !isInside(project.dir, location)) {
+  if (location !== null && !isInside({ dir: project.dir, path: location })) {
     throw new ManifestError(`${file} resolves outside the project`);
   }
   const manifest = await readManifest(file);
@@ -166,10 +166,19 @@ export async function readProjectManifest(
   return { manifest: { ...manifest, entries }, ignored };
 }
 
-export async function writeManifest(
-  file: string,
-  manifest: Manifest,
-  projectDir?: string,
-): Promise<void> {
-  await writeTextAtomic(file, serializeManifest(manifest, projectDir));
+interface WriteManifestParams {
+  file: string;
+  manifest: Manifest;
+  projectDir?: string;
+}
+
+export async function writeManifest({
+  file,
+  manifest,
+  projectDir,
+}: WriteManifestParams): Promise<void> {
+  await writeTextAtomic({
+    path: file,
+    content: serializeManifest(manifest, projectDir),
+  });
 }

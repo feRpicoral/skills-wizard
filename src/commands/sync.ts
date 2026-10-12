@@ -24,26 +24,35 @@ interface SyncOptions {
 
 export async function runSync(
   ctx: Context,
-  options: SyncOptions,
+  { scope, projectDir, ...confirmOptions }: SyncOptions,
 ): Promise<number> {
-  const prompting = ctx.interactive && !options.yes;
-  const location = await resolveLocation(
+  const prompting = ctx.interactive && !confirmOptions.yes;
+  const location = await resolveLocation({
     ctx,
-    options.scope,
-    options.projectDir,
-  );
+    scope,
+    ...(projectDir !== undefined ? { projectDir } : {}),
+  });
   const previous = await readLocationManifest(ctx, prompting, location);
   if (!previous) {
     throw new UsageError(
-      `Nothing recorded at ${displayPath(location.manifestPath, ctx.paths.home)}; run agents-config init first.`,
+      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init first.`,
     );
   }
 
   const library = await loadLibrary(ctx);
-  const known = dropUnknownBlocks(ctx, prompting, library, previous.blocks);
+  const known = dropUnknownBlocks({
+    ctx,
+    prompting,
+    library,
+    ids: previous.blocks,
+  });
   const { ids: blocks, added } = withRequirements(library, known);
   if (added.length > 0) {
-    notify(ctx, prompting, `Added required blocks: ${added.join(', ')}`);
+    notify({
+      ctx,
+      prompting,
+      message: `Added required blocks: ${added.join(', ')}`,
+    });
   }
   const recordedLocal = previous.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
@@ -51,7 +60,7 @@ export async function runSync(
     notifyLeftGit(ctx, prompting, location.project.dir);
   }
   const plan = await buildPlan({
-    scope: options.scope,
+    scope,
     selection: {
       tools: previous.tools,
       blocks,
@@ -66,8 +75,15 @@ export async function runSync(
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
   });
-  if (keepLocal) await warnTrackedFiles(ctx, prompting, plan, location.project);
+  if (keepLocal) {
+    await warnTrackedFiles({
+      ctx,
+      prompting,
+      plan,
+      ...(location.project ? { project: location.project } : {}),
+    });
+  }
 
-  const result = await confirmAndApply(ctx, plan, options);
+  const result = await confirmAndApply(ctx, plan, confirmOptions);
   return result.code;
 }

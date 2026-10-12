@@ -7,13 +7,18 @@ interface FrontmatterDocument {
   body: string;
 }
 
+interface ParseFrontmatterParams {
+  source: string;
+  file: string;
+}
+
 const extract = fm as unknown as typeof fm.default;
 const OPENING = '---\n';
 
-export function parseFrontmatter(
-  source: string,
-  file: string,
-): FrontmatterDocument {
+export function parseFrontmatter({
+  source,
+  file,
+}: ParseFrontmatterParams): FrontmatterDocument {
   const text = source.replace(/\r\n/g, '\n');
   if (!text.startsWith(OPENING)) {
     throw new FrontmatterError(`${file}: missing YAML frontmatter`);
