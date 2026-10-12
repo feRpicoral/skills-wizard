@@ -3,3 +3,4 @@ coverage/
 .yarn/
 yarn.lock
 blocks/
+**/evals/files/
