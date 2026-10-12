@@ -66,8 +66,10 @@ export async function promptBlocks(
     string,
     { value: string; label: string; hint: string }[]
   > = {};
-  for (const block of library.blocks) {
-    if (!block.scopes.includes(scope)) continue;
+  const available = library.blocks.filter((block) =>
+    block.scopes.includes(scope),
+  );
+  for (const block of available) {
     const group = library.groups[block.group] ?? block.group;
     (groups[group] ??= []).push({
       value: block.id,
@@ -80,7 +82,9 @@ export async function promptBlocks(
     await clack.groupMultiselect<string>({
       message: 'Which blocks should the instructions include?',
       options: groups,
-      initialValues: [...initial],
+      initialValues: initial.filter((id) =>
+        available.some((block) => block.id === id),
+      ),
       required: false,
     }),
   );

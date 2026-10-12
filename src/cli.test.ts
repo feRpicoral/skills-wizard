@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { lstat, writeFile } from 'node:fs/promises';
+import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -42,6 +42,18 @@ const INSTALL = [
   'githubUsername=octocat',
 ];
 
+function manifestPath(home: string): string {
+  return join(home, '.agents', 'agents-config', 'manifest.json');
+}
+
+async function addRecordedBlock(home: string, id: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(manifestPath(home), 'utf8')) as {
+    blocks: string[];
+  };
+  manifest.blocks.push(id);
+  await writeFile(manifestPath(home), JSON.stringify(manifest));
+}
+
 test('init --dry-run prints the plan and writes nothing', async (t) => {
   const home = await tempDir(t);
 
@@ -49,6 +61,19 @@ test('init --dry-run prints the plan and writes nothing', async (t) => {
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /create\s+~\/\.codex\/AGENTS\.md/);
+  await assert.rejects(lstat(join(home, '.codex')), { code: 'ENOENT' });
+});
+
+test('init without a terminal and without --yes writes nothing', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(
+    home,
+    INSTALL.filter((arg) => arg !== '--yes'),
+  );
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /Re-run with --yes/);
   await assert.rejects(lstat(join(home, '.codex')), { code: 'ENOENT' });
 });
 
@@ -76,6 +101,45 @@ test('sync reapplies a recorded install after a file was edited', async (t) => {
   assert.match(sync.stdout, /update\s+~\/\.codex\/AGENTS\.md/);
 });
 
+test('an empty tool list removes everything that was installed', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+
+  const result = await cli(home, ['init', '--global', '--yes', '--tools', '']);
+
+  assert.equal(result.code, 0);
+  await assert.rejects(lstat(join(home, '.codex', 'AGENTS.md')), {
+    code: 'ENOENT',
+  });
+  await assert.rejects(lstat(manifestPath(home)), { code: 'ENOENT' });
+});
+
+test('init drops recorded blocks that left the library and still installs', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await addRecordedBlock(home, 'core/removed');
+
+  const result = await cli(home, ['init', '--global', '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /no longer in the library.*core\/removed/);
+});
+
+test('sync drops recorded blocks that left the library and still applies', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await addRecordedBlock(home, 'core/removed');
+
+  const result = await cli(home, ['sync', '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /no longer in the library.*core\/removed/);
+  assert.doesNotMatch(
+    await readFile(manifestPath(home), 'utf8'),
+    /core\/removed/,
+  );
+});
+
 test('rejects unknown tools with a usage error', async (t) => {
   const home = await tempDir(t);
 
@@ -89,6 +153,15 @@ test('rejects unknown tools with a usage error', async (t) => {
 
   assert.equal(result.code, 2);
   assert.match(result.stderr, /Unknown tools: nope/);
+});
+
+test('rejects options that do not apply to the command', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, ['sync', '--tools', 'codex']);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--tools does not apply to sync/);
 });
 
 test('sync without a recorded install is a usage error', async (t) => {

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { stat } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { basename, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import * as clack from '@clack/prompts';
@@ -19,13 +19,14 @@ import {
   displayPath,
   hasChanges,
 } from '../install/describe.ts';
-import { readTextIfExists } from '../install/fs.ts';
-import type { Plan } from '../install/plan.ts';
+import { isDirectory, readTextIfExists } from '../install/fs.ts';
+import type { Plan, ProjectContext } from '../install/plan.ts';
 import { confirmApply } from '../prompts/selection.ts';
 import {
   globalManifestPath,
   type Manifest,
   projectManifestPath,
+  readManifest,
 } from '../state/manifest.ts';
 
 const run = promisify(execFile);
@@ -33,10 +34,22 @@ const run = promisify(execFile);
 export interface Location {
   scope: Scope;
   manifestPath: string;
-  baseDir?: string;
-  projectDir?: string;
-  projectTitle?: string;
-  gitExcludePath?: string;
+  project?: ProjectContext;
+}
+
+export function notify(
+  ctx: Context,
+  prompting: boolean,
+  message: string,
+  level: 'info' | 'warn' = 'info',
+): void {
+  if (!prompting) {
+    ctx.print(message);
+  } else if (level === 'warn') {
+    clack.log.warn(message);
+  } else {
+    clack.log.info(message);
+  }
 }
 
 export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
@@ -44,31 +57,36 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
 }
 
 async function projectTitle(projectDir: string): Promise<string> {
-  const manifest = await readTextIfExists(join(projectDir, 'package.json'));
-  if (manifest !== null) {
-    try {
-      const parsed = JSON.parse(manifest) as { name?: unknown };
-      if (typeof parsed.name === 'string' && parsed.name.trim()) {
-        return parsed.name.trim();
-      }
-    } catch {
-      return basename(projectDir);
-    }
+  const packageJson = await readTextIfExists(join(projectDir, 'package.json'));
+  if (packageJson === null) return basename(projectDir);
+  try {
+    const { name } = JSON.parse(packageJson) as { name?: unknown };
+    return typeof name === 'string' && name.trim()
+      ? name.trim()
+      : basename(projectDir);
+  } catch {
+    return basename(projectDir);
   }
-  return basename(projectDir);
 }
 
-async function gitExcludePath(projectDir: string): Promise<string | undefined> {
+async function git(projectDir: string, args: string[]): Promise<string | null> {
   try {
-    const { stdout } = await run(
-      'git',
-      ['rev-parse', '--git-path', 'info/exclude'],
-      { cwd: projectDir },
-    );
-    return resolve(projectDir, stdout.trim());
+    const { stdout } = await run('git', args, { cwd: projectDir });
+    return stdout.trim();
   } catch {
-    return undefined;
+    return null;
   }
+}
+
+async function gitContext(projectDir: string): Promise<ProjectContext['git']> {
+  const root = await git(projectDir, ['rev-parse', '--show-toplevel']);
+  const excludePath = await git(projectDir, [
+    'rev-parse',
+    '--git-path',
+    'info/exclude',
+  ]);
+  if (!root || !excludePath) return undefined;
+  return { root, excludePath: resolve(projectDir, excludePath) };
 }
 
 export async function resolveLocation(
@@ -80,84 +98,129 @@ export async function resolveLocation(
     return { scope, manifestPath: globalManifestPath(ctx.paths) };
   }
 
-  const projectDir = resolve(ctx.cwd, projectDirOption ?? '.');
-  const stats = await stat(projectDir).catch(() => null);
-  if (!stats?.isDirectory()) {
-    throw new UsageError(`${projectDir} is not a directory`);
+  const requested = resolve(ctx.cwd, projectDirOption ?? '.');
+  if (!(await isDirectory(requested))) {
+    throw new UsageError(`${requested} is not a directory`);
   }
-  const excludePath = await gitExcludePath(projectDir);
+  const dir = await realpath(requested);
+  const repository = await gitContext(dir);
   return {
     scope,
-    manifestPath: projectManifestPath(projectDir),
-    baseDir: projectDir,
-    projectDir,
-    projectTitle: await projectTitle(projectDir),
-    ...(excludePath ? { gitExcludePath: excludePath } : {}),
+    manifestPath: projectManifestPath(dir),
+    project: {
+      dir,
+      title: await projectTitle(dir),
+      ...(repository ? { git: repository } : {}),
+    },
   };
 }
 
-export function knownBlocks(
+export async function readLocationManifest(
+  location: Location,
+): Promise<Manifest | null> {
+  const project = location.project;
+  return readManifest(
+    location.manifestPath,
+    project
+      ? {
+          dir: project.dir,
+          ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
+        }
+      : undefined,
+  );
+}
+
+export function dropUnknownBlocks(
+  ctx: Context,
+  prompting: boolean,
   library: BlockLibrary,
-  manifest: Manifest,
-): { blocks: string[]; dropped: string[] } {
+  ids: readonly string[],
+): string[] {
   const known = new Set(library.blocks.map((block) => block.id));
-  return {
-    blocks: manifest.blocks.filter((id) => known.has(id)),
-    dropped: manifest.blocks.filter((id) => !known.has(id)),
-  };
+  const dropped = ids.filter((id) => !known.has(id));
+  if (dropped.length > 0) {
+    notify(
+      ctx,
+      prompting,
+      `Blocks no longer in the library were dropped: ${dropped.join(', ')}`,
+      'warn',
+    );
+  }
+  return ids.filter((id) => known.has(id));
 }
 
-function report(ctx: Context, interactive: boolean, message: string) {
-  if (interactive) clack.log.info(message);
-  else ctx.print(message);
+export async function warnTrackedFiles(
+  ctx: Context,
+  prompting: boolean,
+  plan: Plan,
+  project: ProjectContext | undefined,
+): Promise<void> {
+  if (!project?.git) return;
+  const root = project.git.root;
+  const candidates = plan.actions
+    .filter((action) => action.path.startsWith(project.dir))
+    .map((action) => relative(root, action.path));
+  if (candidates.length === 0) return;
+
+  const tracked = await git(root, ['ls-files', '--', ...candidates]);
+  if (tracked) {
+    notify(
+      ctx,
+      prompting,
+      `Already tracked by git, so keeping them local has no effect: ${tracked.split('\n').join(', ')}`,
+      'warn',
+    );
+  }
 }
 
 export async function confirmAndApply(
   ctx: Context,
   plan: Plan,
-  location: Location,
-  options: { interactive: boolean; dryRun: boolean },
+  options: { yes: boolean; dryRun: boolean },
 ): Promise<{ code: number; applied: boolean }> {
-  const lines = describePlan(plan, ctx.paths.home, location.projectDir);
-  if (options.interactive) {
+  const prompting = ctx.interactive && !options.yes;
+  const lines = describePlan(plan, ctx.paths.home);
+  if (prompting) {
     clack.note(lines.join('\n') || 'Nothing to do', 'Plan');
   } else {
-    lines.forEach((line) => ctx.print(line));
+    lines.forEach((entry) => ctx.print(entry));
   }
 
   if (options.dryRun) {
-    report(ctx, options.interactive, 'Dry run: nothing was written.');
+    notify(ctx, prompting, 'Dry run: nothing was written.');
     return { code: 0, applied: false };
   }
-
   const blocked = conflicts(plan);
   if (!hasChanges(plan) && blocked.length === 0) {
-    await applyPlan(plan, location.manifestPath, location.baseDir);
-    report(ctx, options.interactive, 'Everything is up to date.');
-    return { code: 0, applied: true };
+    notify(ctx, prompting, 'Everything is up to date.');
+    return { code: 0, applied: false };
   }
-
-  if (options.interactive && !(await confirmApply())) {
-    report(ctx, true, 'Nothing was written.');
+  if (!ctx.interactive && !options.yes) {
+    ctx.print(
+      'Re-run with --yes to apply these changes, or --dry-run to preview them.',
+    );
+    return { code: 1, applied: false };
+  }
+  if (prompting && !(await confirmApply())) {
+    notify(ctx, true, 'Nothing was written.');
     return { code: 1, applied: false };
   }
 
-  const outcome = await applyPlan(
-    plan,
-    location.manifestPath,
-    location.baseDir,
-  );
+  const outcome = await applyPlan(plan);
   const changed = outcome.applied.filter(
     (action) => action.change.type !== 'none',
   ).length;
-  const summary = `Applied ${changed} change${changed === 1 ? '' : 's'}; manifest at ${displayPath(location.manifestPath, ctx.paths.home)}.`;
-  if (options.interactive) clack.outro(summary);
+  const summary = `Applied ${changed} change${changed === 1 ? '' : 's'}.`;
+  if (prompting) clack.outro(summary);
   else ctx.print(summary);
 
   for (const action of outcome.skipped) {
-    const message = `Skipped ${displayPath(action.path, ctx.paths.home)}: ${action.reason ?? 'conflict'}`;
-    if (options.interactive) clack.log.warn(message);
-    else ctx.print(message);
+    notify(
+      ctx,
+      prompting,
+      `Skipped ${displayPath(action.path, ctx.paths.home)}: ${action.reason ?? 'conflict'}`,
+      'warn',
+    );
   }
   return { code: outcome.skipped.length > 0 ? 1 : 0, applied: true };
 }
