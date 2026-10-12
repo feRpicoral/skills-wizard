@@ -54,7 +54,7 @@ async function executeAll(
   plan: Plan,
   applied: PlannedAction[],
   skipped: PlannedAction[],
-): Promise<void> {
+): Promise<ApplyError | undefined> {
   for (const action of plan.actions) {
     if (action.status === 'conflict') {
       skipped.push(action);
@@ -63,26 +63,21 @@ async function executeAll(
     try {
       await execute(action);
     } catch (error) {
-      throw new ApplyError(
+      return new ApplyError(
         `Could not update ${action.path}: ${message(error)}`,
         { cause: error },
       );
     }
     applied.push(action);
   }
+  return undefined;
 }
 
 export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   const applied: PlannedAction[] = [];
   const skipped: PlannedAction[] = [];
 
-  let failure: ApplyError | undefined;
-  try {
-    await executeAll(plan, applied, skipped);
-  } catch (error) {
-    if (!(error instanceof ApplyError)) throw error;
-    failure = error;
-  }
+  const failure = await executeAll(plan, applied, skipped);
 
   try {
     await recordManifest(plan, new Set(applied));
