@@ -18,3 +18,5 @@ export class ManagedRegionError extends AgentsConfigError {}
 export class JsonMergeError extends AgentsConfigError {}
 
 export class ManifestError extends AgentsConfigError {}
+
+export class CancelledError extends AgentsConfigError {}
