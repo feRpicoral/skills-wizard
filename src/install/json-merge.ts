@@ -2,14 +2,13 @@ import { JsonMergeError } from '../errors.ts';
 
 export type JsonObject = Record<string, unknown>;
 
+const DEFAULT_INDENT = 2;
+
 function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function parseJsonObject(
-  content: string | null,
-  file: string,
-): JsonObject {
+export function parseJsonObject(content: string | null): JsonObject {
   if (content === null || content.trim() === '') return {};
 
   let parsed: unknown;
@@ -17,20 +16,19 @@ export function parseJsonObject(
     parsed = JSON.parse(content);
   } catch (error) {
     throw new JsonMergeError(
-      `${file} is not plain JSON (comments or syntax errors); edit it by hand`,
+      'not plain JSON (comments or syntax errors); edit it by hand',
       { cause: error },
     );
   }
   if (!isObject(parsed)) {
-    throw new JsonMergeError(`${file} must contain a JSON object`);
+    throw new JsonMergeError('must contain a JSON object');
   }
   return parsed;
 }
 
-function parentOf(
+function locate(
   doc: JsonObject,
   keyPath: string,
-  file: string,
   create: boolean,
 ): { parent: JsonObject; key: string } | null {
   const keys = keyPath.split('.');
@@ -49,68 +47,61 @@ function parentOf(
     } else if (next === undefined) {
       return null;
     } else {
-      throw new JsonMergeError(`${file}: "${key}" is not an object`);
+      throw new JsonMergeError(`"${key}" is not an object`);
     }
   }
   return { parent: current, key: last };
 }
 
-function stringValues(value: unknown, keyPath: string, file: string): string[] {
+function stringValues(value: unknown, keyPath: string): string[] {
   if (value === undefined) return [];
   if (typeof value === 'string') return [value];
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
     return value;
   }
   throw new JsonMergeError(
-    `${file}: "${keyPath}" must be a string or a list of strings`,
+    `"${keyPath}" must be a string or a list of strings`,
   );
+}
+
+export interface EnsureResult {
+  doc: JsonObject;
+  added: string[];
+  wasString: boolean;
 }
 
 export function ensureArrayValues(
   doc: JsonObject,
   keyPath: string,
   values: readonly string[],
-  file: string,
-): { doc: JsonObject; added: string[] } {
+): EnsureResult {
   const next = structuredClone(doc);
-  const location = parentOf(next, keyPath, file, true);
+  const location = locate(next, keyPath, true);
   if (!location) throw new JsonMergeError(`invalid key path "${keyPath}"`);
 
-  const current = stringValues(location.parent[location.key], keyPath, file);
+  const original = location.parent[location.key];
+  const current = stringValues(original, keyPath);
   const added = values.filter((value) => !current.includes(value));
-  location.parent[location.key] = [...current, ...added];
-  return { doc: next, added };
-}
-
-export function hasArrayValues(
-  doc: JsonObject,
-  keyPath: string,
-  values: readonly string[],
-  file: string,
-): boolean {
-  const location = parentOf(doc, keyPath, file, false);
-  if (!location) return false;
-  const current = stringValues(location.parent[location.key], keyPath, file);
-  return values.every((value) => current.includes(value));
+  if (added.length > 0) location.parent[location.key] = [...current, ...added];
+  return { doc: next, added, wasString: typeof original === 'string' };
 }
 
 export function removeArrayValues(
   doc: JsonObject,
   keyPath: string,
   values: readonly string[],
-  file: string,
+  restoreString: boolean,
 ): JsonObject {
   const next = structuredClone(doc);
-  const location = parentOf(next, keyPath, file, false);
+  const location = locate(next, keyPath, false);
   if (!location) return next;
 
-  const remaining = stringValues(
-    location.parent[location.key],
-    keyPath,
-    file,
-  ).filter((value) => !values.includes(value));
+  const remaining = stringValues(location.parent[location.key], keyPath).filter(
+    (value) => !values.includes(value),
+  );
   if (remaining.length > 0) {
-    location.parent[location.key] = remaining;
+    location.parent[location.key] =
+      restoreString && remaining.length === 1 ? remaining[0] : remaining;
     return next;
   }
 
@@ -136,6 +127,16 @@ function pruneEmptyObjects(doc: JsonObject, keys: string[]): JsonObject {
   return doc;
 }
 
-export function serializeJson(doc: JsonObject): string {
-  return `${JSON.stringify(doc, null, 2)}\n`;
+function detectIndent(content: string | null): string | number {
+  const match = content ? /^([ \t]+)"/m.exec(content) : null;
+  return match?.[1] ?? DEFAULT_INDENT;
+}
+
+export function serializeJson(
+  doc: JsonObject,
+  existing: string | null,
+): string {
+  const eol = existing?.includes('\r\n') ? '\r\n' : '\n';
+  const text = JSON.stringify(doc, null, detectIndent(existing));
+  return `${text.replace(/\n/g, eol)}${eol}`;
 }
