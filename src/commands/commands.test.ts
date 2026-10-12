@@ -21,9 +21,13 @@ import { runUpdate } from './update.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 
+interface TestContextOptions {
+  url?: (repo: string) => string;
+}
+
 async function testContext(
   t: TestContext,
-  options: { url?: (repo: string) => string } = {},
+  { url }: TestContextOptions = {},
 ): Promise<{ ctx: Context; repoRoot: string; output: string[] }> {
   const paths = await tempPaths(t);
   const repoRoot = await tempDir(t);
@@ -71,7 +75,7 @@ async function testContext(
     searchPath: [],
     interactive: false,
     sources: {
-      url: options.url ?? (() => 'file:///nowhere.git'),
+      url: url ?? (() => 'file:///nowhere.git'),
       env: isolatedGitEnv(paths.home),
       now: () => new Date('2026-01-02T03:04:05Z'),
     },

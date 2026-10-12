@@ -32,7 +32,12 @@ import {
 } from '../test-support/fixtures.ts';
 import type { ToolId } from '../tools/registry.ts';
 import { applyPlan } from './apply.ts';
-import { buildPlan, type ProjectContext, type Selection } from './plan.ts';
+import {
+  buildPlan,
+  type Plan,
+  type ProjectContext,
+  type Selection,
+} from './plan.ts';
 
 const run = promisify(execFile);
 const REPO = '/repo';
@@ -60,11 +65,17 @@ function selection(
   };
 }
 
-async function localSkill(
-  root: string,
-  name: string,
-  files: Record<string, string> = {},
-): Promise<SkillSource> {
+interface LocalSkillOptions {
+  root: string;
+  name: string;
+  files?: Record<string, string>;
+}
+
+async function localSkill({
+  root,
+  name,
+  files = {},
+}: LocalSkillOptions): Promise<SkillSource> {
   const dir = join(root, 'skills', name);
   await writeFiles(dir, { 'SKILL.md': skillSource(name), ...files });
   return {
@@ -86,35 +97,42 @@ interface GlobalRun {
   adopt?: { names: Set<string>; backupDir: string };
 }
 
-async function installGlobal(paths: Paths, options: GlobalRun) {
+async function installGlobal(
+  paths: Paths,
+  { tools, skills, selected, overrides, adopt }: GlobalRun,
+) {
   const manifestPath = globalManifestPath(paths);
-  const map = sources(...options.skills);
+  const map = sources(...skills);
   const plan = await buildPlan({
     scope: 'global',
-    selection: selection(
-      options.tools,
-      options.selected ?? [...map.keys()],
-      options.overrides,
-    ),
+    selection: selection(tools, selected ?? [...map.keys()], overrides),
     library,
     paths,
     repoRoot: REPO,
     previous: await readManifest(manifestPath),
     manifestPath,
     skillSources: map,
-    ...(options.adopt ? { adopt: options.adopt } : {}),
+    ...(adopt ? { adopt } : {}),
   });
   const outcome = await applyPlan(plan);
   return { plan, outcome };
 }
 
-async function installProject(
-  paths: Paths,
-  project: ProjectContext,
-  tools: ToolId[],
-  skills: SkillSource[],
-  overrides: Partial<Selection> = {},
-) {
+interface InstallProjectParams {
+  paths: Paths;
+  project: ProjectContext;
+  tools: ToolId[];
+  skills: SkillSource[];
+  overrides?: Partial<Selection>;
+}
+
+async function installProject({
+  paths,
+  project,
+  tools,
+  skills,
+  overrides = {},
+}: InstallProjectParams) {
   const manifestPath = projectManifestPath(project.dir);
   const stored = await readProjectManifest(manifestPath, {
     dir: project.dir,
@@ -136,9 +154,9 @@ async function installProject(
   return plan;
 }
 
-function statuses(plan: { actions: { path: string; status: string }[] }) {
+function statuses({ actions }: Plan) {
   return Object.fromEntries(
-    plan.actions.map((action) => [action.path, action.status]),
+    actions.map((action) => [action.path, action.status]),
   );
 }
 
@@ -148,7 +166,7 @@ async function manifestOf(paths: Paths): Promise<Manifest | null> {
 
 test('a global install copies the skill once and links it for tools that need links', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
 
   await installGlobal(paths, {
     tools: ['claude-code', 'antigravity', 'codex'],
@@ -172,7 +190,7 @@ test('a global install copies the skill once and links it for tools that need li
 
 test('the manifest records where a skill came from and the hash of the copy', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
 
   await installGlobal(paths, { tools: ['codex'], skills: [skill] });
 
@@ -186,7 +204,7 @@ test('the manifest records where a skill came from and the hash of the copy', as
 
 test('a second install with the same source plans no changes', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await installGlobal(paths, { tools: ['claude-code'], skills: [skill] });
 
   const { plan } = await installGlobal(paths, {
@@ -201,7 +219,7 @@ test('a second install with the same source plans no changes', async (t) => {
 test('a changed source updates the installed copy', async (t) => {
   const paths = await tempPaths(t);
   const root = await tempDir(t);
-  const skill = await localSkill(root, 'notes');
+  const skill = await localSkill({ root, name: 'notes' });
   await installGlobal(paths, { tools: ['codex'], skills: [skill] });
   await writeFiles(skill.dir, { 'references/new.md': 'new\n' });
 
@@ -222,7 +240,7 @@ test('a changed source updates the installed copy', async (t) => {
 
 test('a skill folder agents-config does not own is a conflict and stays untouched', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'mine\n' });
 
   const { plan } = await installGlobal(paths, {
@@ -250,7 +268,7 @@ test('a skill folder agents-config does not own is a conflict and stays untouche
 
 test('a link that already points at an unmanaged skill folder is not taken over', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'mine\n' });
   await mkdir(join(paths.claudeHome, 'skills'), { recursive: true });
   await symlink(
@@ -270,7 +288,7 @@ test('a link that already points at an unmanaged skill folder is not taken over'
 test('a copy edited after install is a conflict and is not overwritten', async (t) => {
   const paths = await tempPaths(t);
   const root = await tempDir(t);
-  const skill = await localSkill(root, 'notes');
+  const skill = await localSkill({ root, name: 'notes' });
   await installGlobal(paths, { tools: ['codex'], skills: [skill] });
   await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'edited\n' });
   await writeFiles(skill.dir, { 'references/new.md': 'new\n' });
@@ -296,7 +314,7 @@ test('a copy edited after install is a conflict and is not overwritten', async (
 
 test('adopting backs up the unmanaged folder and links before replacing them', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await writeFiles(paths.home, {
     '.agents/skills/notes/SKILL.md': 'mine\n',
     '.claude/skills/notes/SKILL.md': 'old copy\n',
@@ -329,7 +347,7 @@ test('adopting backs up the unmanaged folder and links before replacing them', a
 
 test('deselecting a skill removes the copy and its links', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await installGlobal(paths, {
     tools: ['claude-code', 'antigravity-cli'],
     skills: [skill],
@@ -361,7 +379,7 @@ test('deselecting a skill removes the copy and its links', async (t) => {
 
 test('deselecting a skill whose copy was edited leaves the copy in place', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await installGlobal(paths, { tools: ['codex'], skills: [skill] });
   await writeFiles(paths.skillsDir, { 'notes/extra.md': 'mine\n' });
 
@@ -380,7 +398,7 @@ test('deselecting a skill whose copy was edited leaves the copy in place', async
 
 test('an unavailable source keeps the installed skill and its links', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await installGlobal(paths, { tools: ['claude-code'], skills: [skill] });
 
   const { plan } = await installGlobal(paths, {
@@ -404,7 +422,7 @@ test('an unavailable source keeps the installed skill and its links', async (t) 
 
 test('link mode links first-party skills to their source and copy mode replaces the link', async (t) => {
   const paths = await tempPaths(t);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await installGlobal(paths, {
     tools: ['codex'],
     skills: [skill],
@@ -421,7 +439,7 @@ test('link mode links first-party skills to their source and copy mode replaces 
 test('link mode still copies third-party skills', async (t) => {
   const paths = await tempPaths(t);
   const skill: SkillSource = {
-    ...(await localSkill(await tempDir(t), 'notes')),
+    ...(await localSkill({ root: await tempDir(t), name: 'notes' })),
     linkable: false,
   };
 
@@ -438,11 +456,11 @@ test('setup runs in the installed copy and a failure is reported without stoppin
   const paths = await tempPaths(t);
   const root = await tempDir(t);
   const ready: SkillSource = {
-    ...(await localSkill(root, 'ready')),
+    ...(await localSkill({ root, name: 'ready' })),
     setup: 'echo done > setup.log',
   };
   const broken: SkillSource = {
-    ...(await localSkill(root, 'broken')),
+    ...(await localSkill({ root, name: 'broken' })),
     setup: 'echo missing tool >&2; exit 3',
   };
 
@@ -470,9 +488,14 @@ test('setup runs in the installed copy and a failure is reported without stoppin
 test('a project install copies skills and links them relatively for Claude Code', async (t) => {
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
 
-  await installProject(paths, { dir, title: 'app' }, ['claude-code'], [skill]);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+    skills: [skill],
+  });
 
   const link = join(dir, '.claude', 'skills', 'notes');
   assert.equal(await readlink(link), '../../.agents/skills/notes');
@@ -491,18 +514,18 @@ test('a project never copies skills through a skills folder linked outside it', 
   const paths = await tempPaths(t);
   const outside = await realpath(await tempDir(t));
   const dir = await realpath(await tempDir(t));
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await mkdir(join(dir, '.agents'));
   await symlink(outside, join(dir, '.agents', 'skills'));
   await mkdir(join(dir, '.claude'));
   await symlink(outside, join(dir, '.claude', 'skills'));
 
-  const plan = await installProject(
+  const plan = await installProject({
     paths,
-    { dir, title: 'app' },
-    ['claude-code'],
-    [skill],
-  );
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+    skills: [skill],
+  });
 
   assert.equal(
     statuses(plan)[join(dir, '.agents', 'skills', 'notes')],
@@ -520,15 +543,19 @@ test('keep-local excludes the project skill folders and links', async (t) => {
   const root = await tempDir(t);
   await run('git', ['init', '-q'], { cwd: root });
   const dir = await realpath(root);
-  const skill = await localSkill(await tempDir(t), 'notes');
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   const project: ProjectContext = {
     dir,
     title: 'app',
     git: { root: dir, excludePath: join(dir, '.git', 'info', 'exclude') },
   };
 
-  await installProject(paths, project, ['claude-code'], [skill], {
-    keepLocal: true,
+  await installProject({
+    paths,
+    project,
+    tools: ['claude-code'],
+    skills: [skill],
+    overrides: { keepLocal: true },
   });
 
   const exclude = await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8');
