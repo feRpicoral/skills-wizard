@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
 
@@ -8,23 +8,28 @@ import { ManifestError } from '../errors.ts';
 import { readTextIfExists, writeTextAtomic } from '../install/fs.ts';
 import { TOOL_IDS } from '../tools/registry.ts';
 
+export const MANIFEST_VERSION = 1;
+
 const pathField = z.string().min(1);
 
-export const manifestEntrySchema = z.discriminatedUnion('kind', [
+const entrySchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('region'),
     path: pathField,
     createdFile: z.boolean(),
+    preamble: z.string().optional(),
   }),
   z.object({
     kind: z.literal('exclude-region'),
     path: pathField,
+    id: z.string().min(1),
     createdFile: z.boolean(),
   }),
   z.object({
     kind: z.literal('line'),
     path: pathField,
     line: z.string().min(1),
+    added: z.boolean(),
     createdFile: z.boolean(),
   }),
   z.object({
@@ -32,6 +37,7 @@ export const manifestEntrySchema = z.discriminatedUnion('kind', [
     path: pathField,
     key: z.string().min(1),
     added: z.array(z.string()),
+    wasString: z.boolean(),
     createdFile: z.boolean(),
   }),
   z.object({
@@ -41,10 +47,10 @@ export const manifestEntrySchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-export type ManifestEntry = z.infer<typeof manifestEntrySchema>;
+export type ManifestEntry = z.infer<typeof entrySchema>;
 
 const manifestSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(MANIFEST_VERSION),
   scope: z.enum(SCOPES),
   tools: z.array(z.enum(TOOL_IDS)),
   blocks: z.array(z.string()),
@@ -55,11 +61,15 @@ const manifestSchema = z.object({
       keepLocal: z.boolean().optional(),
     })
     .default({}),
-  entries: z.array(manifestEntrySchema),
-  updatedAt: z.string(),
+  entries: z.array(entrySchema),
 });
 
 export type Manifest = z.infer<typeof manifestSchema>;
+
+export interface ProjectBase {
+  dir: string;
+  gitExcludePath?: string;
+}
 
 export function globalManifestPath(paths: Paths): string {
   return join(paths.stateDir, 'manifest.json');
@@ -69,22 +79,50 @@ export function projectManifestPath(projectDir: string): string {
   return join(projectDir, '.agents', 'agents-config.json');
 }
 
-function mapPaths(
+function isInside(dir: string, path: string): boolean {
+  return path.startsWith(`${dir}${sep}`);
+}
+
+function resolveProjectEntry(
+  file: string,
+  entry: ManifestEntry,
+  project: ProjectBase,
+): ManifestEntry {
+  if (isAbsolute(entry.path)) {
+    throw new ManifestError(`${file}: entry paths must be relative`);
+  }
+  const path = resolve(project.dir, entry.path);
+  if (entry.kind === 'exclude-region') {
+    if (path !== project.gitExcludePath) {
+      throw new ManifestError(
+        `${file}: the git exclude entry does not belong to this repository`,
+      );
+    }
+  } else if (!isInside(project.dir, path)) {
+    throw new ManifestError(`${file}: ${entry.path} is outside the project`);
+  }
+  return { ...entry, path };
+}
+
+export function serializeManifest(
   manifest: Manifest,
-  convert: (path: string) => string,
-): Manifest {
-  return {
-    ...manifest,
-    entries: manifest.entries.map((entry) => ({
-      ...entry,
-      path: convert(entry.path),
-    })),
-  };
+  projectDir?: string,
+): string {
+  const stored = projectDir
+    ? {
+        ...manifest,
+        entries: manifest.entries.map((entry) => ({
+          ...entry,
+          path: relative(projectDir, entry.path),
+        })),
+      }
+    : manifest;
+  return `${JSON.stringify(stored, null, 2)}\n`;
 }
 
 export async function readManifest(
   file: string,
-  baseDir?: string,
+  project?: ProjectBase,
 ): Promise<Manifest | null> {
   const content = await readTextIfExists(file);
   if (content === null) return null;
@@ -100,19 +138,19 @@ export async function readManifest(
     throw new ManifestError(`${file}: ${z.prettifyError(result.error)}`);
   }
 
-  if (!baseDir) return result.data;
-  return mapPaths(result.data, (path) =>
-    isAbsolute(path) ? path : resolve(baseDir, path),
-  );
+  if (!project) return result.data;
+  return {
+    ...result.data,
+    entries: result.data.entries.map((entry) =>
+      resolveProjectEntry(file, entry, project),
+    ),
+  };
 }
 
 export async function writeManifest(
   file: string,
   manifest: Manifest,
-  baseDir?: string,
+  projectDir?: string,
 ): Promise<void> {
-  const stored = baseDir
-    ? mapPaths(manifest, (path) => relative(baseDir, path))
-    : manifest;
-  await writeTextAtomic(file, `${JSON.stringify(stored, null, 2)}\n`);
+  await writeTextAtomic(file, serializeManifest(manifest, projectDir));
 }
