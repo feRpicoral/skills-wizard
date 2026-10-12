@@ -8,7 +8,7 @@ import {
 } from './fs.ts';
 import type { Plan, PlannedAction } from './plan.ts';
 
-export interface ApplyOutcome {
+interface ApplyOutcome {
   applied: PlannedAction[];
   skipped: PlannedAction[];
 }

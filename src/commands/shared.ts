@@ -32,7 +32,7 @@ import {
 
 const run = promisify(execFile);
 
-export interface Location {
+interface Location {
   scope: Scope;
   manifestPath: string;
   project?: ProjectContext;

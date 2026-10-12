@@ -2,7 +2,7 @@ import { parse } from 'yaml';
 
 import { FrontmatterError } from './errors.ts';
 
-export interface FrontmatterDocument {
+interface FrontmatterDocument {
   data: unknown;
   body: string;
 }

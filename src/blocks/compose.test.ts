@@ -6,7 +6,6 @@ import {
   composeGlobal,
   composeProject,
   defaultBlockIds,
-  renderBlocks,
   selectBlocks,
   withRequirements,
 } from './compose.ts';
@@ -75,20 +74,17 @@ test('defaultBlockIds returns the blocks that default to a scope', () => {
   assert.deepEqual(ids, ['core/style']);
 });
 
-test('renderBlocks substitutes variables and joins bodies with a blank line', () => {
-  const rendered = renderBlocks(
-    selectBlocks(library, ['core/identity', 'core/style'], 'global'),
-    { githubUsername: 'octocat' },
-  );
+test('composeGlobal substitutes variables and joins bodies with a blank line', () => {
+  const composed = composeGlobal(library, ['core/identity', 'core/style'], {
+    githubUsername: 'octocat',
+  });
 
-  assert.equal(rendered, 'GitHub username: octocat\n\n## core/style');
+  assert.equal(composed, '# Rules\n\nGitHub username: octocat\n\n## core/style\n');
 });
 
-test('renderBlocks fails when a required variable is missing or blank', () => {
-  const blocks = selectBlocks(library, ['core/identity'], 'global');
-
+test('composeGlobal fails when a required variable is missing or blank', () => {
   assert.throws(
-    () => renderBlocks(blocks, { githubUsername: ' ' }),
+    () => composeGlobal(library, ['core/identity'], { githubUsername: ' ' }),
     /Missing variables: githubUsername/,
   );
 });

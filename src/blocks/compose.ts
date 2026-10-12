@@ -76,7 +76,7 @@ export function requiredVariables(blocks: readonly Block[]): string[] {
   return [...new Set(blocks.flatMap((block) => block.variables))];
 }
 
-export function renderBlocks(
+function renderBlocks(
   blocks: readonly Block[],
   variables: Variables,
 ): string {
