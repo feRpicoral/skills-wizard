@@ -1,0 +1,82 @@
+[
+  {
+    "query": "We just spent 20 minutes figuring out the right flags to migrate our Prisma schema safely in staging. Can you turn that workflow into a reusable skill under skills/prisma-safe-migrate?",
+    "should_trigger": true
+  },
+  {
+    "query": "Scaffold a new reference-heavy skill in skills/openapi-conventions with starter evals and split the pagination and error payload rules into references/.",
+    "should_trigger": true
+  },
+  {
+    "query": "Our skills/docker-multi-stage/SKILL.md is 620 lines long and fails strict skill validation because of unknown frontmatter keys. Refactor it to follow progressive disclosure.",
+    "should_trigger": true
+  },
+  {
+    "query": "Write a SKILL.md description for our new changelog-generator skill so it triggers on release prep prompts but does not trigger on git commit message questions.",
+    "should_trigger": true
+  },
+  {
+    "query": "Create a new scripted skill skills/svg-icon-optimizer that bundles a non-interactive Node script under scripts/ and documents when to use it.",
+    "should_trigger": true
+  },
+  {
+    "query": "Help me design a first-party Agent Skill for configuring Vitest workspaces, including SKILL.md frontmatter, reference files, and 3 starter eval cases.",
+    "should_trigger": true
+  },
+  {
+    "query": "I have a draft SKILL.md with chained links from references/overview.md to references/details.md and a README.md in the skill folder. Clean it up to meet the Agent Skills spec.",
+    "should_trigger": true
+  },
+  {
+    "query": "What fields are allowed in SKILL.md YAML frontmatter under strict validation and how should I structure the description field?",
+    "should_trigger": true
+  },
+  {
+    "query": "Package our team's GraphQL schema deprecation checklist into a new skill at skills/graphql-deprecation with references/examples.md.",
+    "should_trigger": true
+  },
+  {
+    "query": "Use yarn agents-config skill new to scaffold a basic skill for Tailwind v4 migration and fill out the SKILL.md workflow and starter trigger_queries.json.",
+    "should_trigger": true
+  },
+  {
+    "query": "Run the benchmark suite for skills/eslint-configuration with 3 runs per variant and tell me the pass-rate delta between with_skill and without_skill.",
+    "should_trigger": false
+  },
+  {
+    "query": "Compute trigger precision, recall, and false positive rate on the validation split of skills/prettier-configuration/evals/trigger_queries.json.",
+    "should_trigger": false
+  },
+  {
+    "query": "Regenerate report.md from ~/.agents/agents-config/evals/eslint-configuration/iteration-2/benchmark.json and list any non-discriminating assertions.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a new global instruction block under blocks/engineering/error-handling.md and register it in blocks/index.yaml.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up ESLint v9 flat config in eslint.config.mjs for our TypeScript monorepo with simple-import-sort.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add the upstream anthropics/skills pdf skill to catalog.yaml pinned to its latest commit SHA.",
+    "should_trigger": false
+  },
+  {
+    "query": "Run yarn agents-config init --global --yes to install our configured instruction blocks and skills for Claude Code and Codex.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write unit tests in src/install/plan.test.ts to verify symlink replacement when switching from copy to link mode.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure Prettier in .prettierrc with singleQuote: true and add a .prettierignore for build artifacts.",
+    "should_trigger": false
+  },
+  {
+    "query": "Check why yarn agents-config doctor reports that ~/.claude/CLAUDE.md is out of date.",
+    "should_trigger": false
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServiceConfig",
+  "type": "object",
+  "properties": {
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "host": { "type": "string" }
+  },
+  "required": ["port"]
+}
