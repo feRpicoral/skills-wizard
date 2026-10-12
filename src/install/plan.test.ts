@@ -536,3 +536,19 @@ test('a project file recreated after deletion is removed with its heading', asyn
 
   await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
 });
+
+test('a CLAUDE.md link to an AGENTS.md that does not exist yet needs no import line', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await symlink('AGENTS.md', join(dir, 'CLAUDE.md'));
+
+  const plan = await installProject(paths, { dir, title: 'app' }, [
+    'claude-code',
+  ]);
+
+  const claude = plan.actions.find(
+    (action) => action.path === join(dir, 'CLAUDE.md'),
+  );
+  assert.equal(claude?.status, 'unchanged');
+  assert.match(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), /^# app\n/);
+});
