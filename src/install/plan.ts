@@ -353,6 +353,15 @@ function wasCreated(existing: string | null, previous: ManifestEntry | null) {
     : false;
 }
 
+function regionPreamble(
+  target: Extract<FileTarget, { kind: 'region' }>,
+  existing: string | null,
+  previous: ManifestEntry | null,
+): string | undefined {
+  if (existing === null) return target.preamble;
+  return previous?.kind === 'region' ? previous.preamble : undefined;
+}
+
 async function planFile(
   target: FileTarget,
   previous: ManifestEntry | null,
@@ -396,35 +405,29 @@ async function planFile(
     case 'region':
     case 'exclude-region': {
       try {
-        const next =
-          target.kind === 'region'
-            ? upsertRegion(existing, target.body, {
-                markers: MARKDOWN_MARKERS,
-                ...(target.preamble ? { preamble: target.preamble } : {}),
-              })
-            : upsertRegion(existing, target.body, {
-                markers: excludeMarkers(target.id),
-              });
-        const preamble =
-          target.kind === 'region' && previous?.kind === 'region'
-            ? previous.preamble
-            : target.kind === 'region' && existing === null
-              ? target.preamble
-              : undefined;
-        const entry: ManifestEntry =
-          target.kind === 'region'
-            ? {
-                kind: 'region',
-                path: target.path,
-                createdFile,
-                ...(preamble ? { preamble } : {}),
-              }
-            : {
-                kind: 'exclude-region',
-                path: target.path,
-                id: target.id,
-                createdFile,
-              };
+        if (target.kind === 'exclude-region') {
+          const next = upsertRegion(existing, target.body, {
+            markers: excludeMarkers(target.id),
+          });
+          const entry: ManifestEntry = {
+            kind: 'exclude-region',
+            path: target.path,
+            id: target.id,
+            createdFile,
+          };
+          return writeAction(target, file, next, entry, previous);
+        }
+        const next = upsertRegion(existing, target.body, {
+          markers: MARKDOWN_MARKERS,
+          ...(target.preamble ? { preamble: target.preamble } : {}),
+        });
+        const preamble = regionPreamble(target, existing, previous);
+        const entry: ManifestEntry = {
+          kind: 'region',
+          path: target.path,
+          createdFile,
+          ...(preamble ? { preamble } : {}),
+        };
         return writeAction(target, file, next, entry, previous);
       } catch (error) {
         if (error instanceof ManagedRegionError) {

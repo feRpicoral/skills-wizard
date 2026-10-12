@@ -516,3 +516,16 @@ test('a directory where an instructions file belongs is a conflict', async (t) =
   assert.equal(plan.actions[0]?.status, 'conflict');
   assert.equal(plan.actions[0]?.reason, 'is a directory');
 });
+
+test('a project file recreated after deletion is removed with its heading', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'AGENTS.md': '# Team\n' });
+  await installProject(paths, { dir, title: 'app' }, ['codex']);
+  await rm(join(dir, 'AGENTS.md'));
+  await installProject(paths, { dir, title: 'app' }, ['codex']);
+
+  await installProject(paths, { dir, title: 'app' }, []);
+
+  await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
+});
