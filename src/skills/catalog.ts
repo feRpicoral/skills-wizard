@@ -10,7 +10,7 @@ import { isSkillName } from './validate.ts';
 
 const CATALOG_FILE = 'catalog.yaml';
 const REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
-const WHOLE_REPOSITORY = '.';
+export const WHOLE_REPOSITORY = '.';
 
 function isRepositoryPath(path: string): boolean {
   if (path === WHOLE_REPOSITORY) return true;

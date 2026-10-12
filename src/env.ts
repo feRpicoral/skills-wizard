@@ -15,7 +15,7 @@ export interface Paths {
   localBin: string;
 }
 
-type Environment = Readonly<Record<string, string | undefined>>;
+export type Environment = Readonly<Record<string, string | undefined>>;
 
 function directory(env: Environment, name: string): string | undefined {
   const value = env[name]?.trim();
@@ -47,4 +47,8 @@ export function resolvePaths(env: Environment = process.env): Paths {
 
 export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
+}
+
+export function gitEnvironment(env: Environment = process.env): Environment {
+  return { ...env, GIT_TERMINAL_PROMPT: '0' };
 }
