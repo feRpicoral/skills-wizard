@@ -13,7 +13,9 @@ nvm use && corepack enable && yarn install
 yarn agents-config
 ```
 
-With no command, the CLI opens an interactive menu. The system-wide flow can link an `agents-config` command into `~/.local/bin`, so it runs from any directory.
+With no command, the CLI opens an interactive menu. The system-wide flow can link an `agents-config` command into `~/.local/bin`, so it runs from any directory once `~/.local/bin` is on your `PATH`.
+
+Without a terminal, commands print the plan and only write when you pass `--yes`.
 
 ## Commands
 
@@ -46,6 +48,7 @@ flowchart LR
 
 ## Adding or editing a block
 
-1. Create `blocks/<group>/<id>.md` with frontmatter: `title`, `summary`, `group`, `scopes`, `defaults` and, if needed, `variables`.
+1. Create `blocks/<group>/<id>.md` with frontmatter: `title`, `summary`, `group`, `scopes`, `defaults` and, if needed, `variables` and `requires` (blocks it depends on, listed earlier in the order).
 2. Add its id to `blocks/index.yaml` where it should appear in the composed file.
-3. Run `yarn test`, then `agents-config sync` to update installed copies.
+3. Run `yarn test`.
+4. Run `agents-config init` and select the new block. `sync` only re-renders the blocks an install already recorded, so it picks up edits to existing blocks but never adds new ones.
