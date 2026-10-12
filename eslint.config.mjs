@@ -26,6 +26,18 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      '@typescript-eslint/no-floating-promises': [
+        'error',
+        {
+          allowForKnownSafeCalls: [
+            {
+              from: 'package',
+              package: 'node:test',
+              name: ['test', 'describe', 'suite', 'it'],
+            },
+          ],
+        },
+      ],
     },
   },
   {
