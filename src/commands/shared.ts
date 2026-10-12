@@ -19,7 +19,13 @@ import {
   hasChanges,
   planPath,
 } from '../install/describe.ts';
-import { isDirectory, readTextIfExists } from '../install/fs.ts';
+import {
+  isDirectory,
+  isInside,
+  readTextIfExists,
+  realLocation,
+  statIfExists,
+} from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
 import { confirmApply } from '../prompts/selection.ts';
 import {
@@ -57,8 +63,18 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
 }
 
+async function readProjectFile(
+  projectDir: string,
+  name: string,
+): Promise<string | null> {
+  const location = await realLocation(join(projectDir, name));
+  if (location === null || !isInside(projectDir, location)) return null;
+  if (!(await statIfExists(location))?.isFile()) return null;
+  return readTextIfExists(location);
+}
+
 async function projectTitle(projectDir: string): Promise<string> {
-  const packageJson = await readTextIfExists(join(projectDir, 'package.json'));
+  const packageJson = await readProjectFile(projectDir, 'package.json');
   if (packageJson === null) return basename(projectDir);
   try {
     const { name } = JSON.parse(packageJson) as { name?: unknown };

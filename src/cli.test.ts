@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, lstat, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, lstat, readFile, symlink, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
@@ -217,5 +217,26 @@ test('names of built-in object properties are unknown commands', async (t) => {
   assert.deepEqual(
     results.map((result) => result.code),
     [2, 2, 2],
+  );
+});
+
+test('a package.json that links outside the project is not read for the title', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await symlink('/dev/zero', join(project, 'package.json'));
+
+  const result = await cli(home, [
+    'init',
+    '--project',
+    project,
+    '--yes',
+    '--tools',
+    'codex',
+  ]);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    await readFile(join(project, 'AGENTS.md'), 'utf8'),
+    new RegExp(`^# ${basename(project)}\n`),
   );
 });
