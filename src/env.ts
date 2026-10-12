@@ -6,6 +6,8 @@ import { EnvironmentError } from './errors.ts';
 export interface Paths {
   home: string;
   stateDir: string;
+  skillsDir: string;
+  sourcesDir: string;
   claudeHome: string;
   codexHome: string;
   geminiHome: string;
@@ -28,10 +30,13 @@ function directory(env: Environment, name: string): string | undefined {
 
 export function resolvePaths(env: Environment = process.env): Paths {
   const home = directory(env, 'HOME') ?? homedir();
+  const cache = directory(env, 'XDG_CACHE_HOME') ?? join(home, '.cache');
 
   return {
     home,
     stateDir: join(home, '.agents', 'agents-config'),
+    skillsDir: join(home, '.agents', 'skills'),
+    sourcesDir: join(cache, 'agents-config', 'sources'),
     claudeHome: directory(env, 'CLAUDE_CONFIG_DIR') ?? join(home, '.claude'),
     codexHome: directory(env, 'CODEX_HOME') ?? join(home, '.codex'),
     geminiHome: join(home, '.gemini'),

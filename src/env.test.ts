@@ -10,17 +10,26 @@ test('resolvePaths honors tool home overrides', () => {
     CODEX_HOME: '/codex',
     CLAUDE_CONFIG_DIR: '/claude',
     COPILOT_HOME: '/copilot',
+    XDG_CACHE_HOME: '/cache',
   });
 
   assert.deepEqual(paths, {
     home: '/home/me',
     stateDir: '/home/me/.agents/agents-config',
+    skillsDir: '/home/me/.agents/skills',
+    sourcesDir: '/cache/agents-config/sources',
     claudeHome: '/claude',
     codexHome: '/codex',
     geminiHome: '/home/me/.gemini',
     copilotHome: '/copilot',
     localBin: '/home/me/.local/bin',
   });
+});
+
+test('resolvePaths keeps the source cache in ~/.cache by default', () => {
+  const paths = resolvePaths({ HOME: '/home/me', XDG_CACHE_HOME: '' });
+
+  assert.equal(paths.sourcesDir, '/home/me/.cache/agents-config/sources');
 });
 
 test('resolvePaths treats empty values as unset', () => {
@@ -32,6 +41,13 @@ test('resolvePaths treats empty values as unset', () => {
 test('resolvePaths rejects relative tool homes', () => {
   assert.throws(
     () => resolvePaths({ HOME: '/home/me', CLAUDE_CONFIG_DIR: 'relative' }),
+    EnvironmentError,
+  );
+});
+
+test('resolvePaths rejects a relative cache directory', () => {
+  assert.throws(
+    () => resolvePaths({ HOME: '/home/me', XDG_CACHE_HOME: 'cache' }),
     EnvironmentError,
   );
 });
