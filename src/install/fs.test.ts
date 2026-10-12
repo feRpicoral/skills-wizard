@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
-import { chmod, readdir, readFile, stat, symlink } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  symlink,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
-import { writeTextAtomic } from './fs.ts';
+import { fsErrorReason, realLocation, writeTextAtomic } from './fs.ts';
 
 test('writeTextAtomic keeps the mode of the file it replaces', async (t) => {
   const dir = await tempDir(t);
@@ -36,4 +44,33 @@ test('writeTextAtomic leaves no temporary file behind when it fails', async (t) 
   await assert.rejects(writeTextAtomic(join(dir, 'target'), 'new\n'));
 
   assert.deepEqual(await readdir(dir), ['target']);
+});
+
+test('realLocation resolves linked parent directories of a missing file', async (t) => {
+  const dir = await realpath(await tempDir(t));
+  await mkdir(join(dir, 'elsewhere'));
+  await symlink(join(dir, 'elsewhere'), join(dir, 'linked'));
+
+  const location = await realLocation(join(dir, 'linked', 'new', 'file.md'));
+
+  assert.equal(location, join(dir, 'elsewhere', 'new', 'file.md'));
+});
+
+test('realLocation follows a symlinked file to its target', async (t) => {
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'real.md': 'real\n' });
+  await symlink('real.md', join(dir, 'link.md'));
+
+  const location = await realLocation(join(dir, 'link.md'));
+
+  assert.equal(location, join(dir, 'real.md'));
+});
+
+test('fsErrorReason describes the errors planning turns into conflicts', async (t) => {
+  const dir = await tempDir(t);
+
+  const error = await readFile(dir).catch((caught: unknown) => caught);
+
+  assert.equal(fsErrorReason(error), 'is a directory');
+  assert.equal(fsErrorReason(new Error('plain')), undefined);
 });

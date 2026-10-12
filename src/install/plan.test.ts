@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import {
   lstat,
   mkdir,
+  readdir,
   readFile,
   readlink,
   realpath,
@@ -15,7 +16,7 @@ import { promisify } from 'node:util';
 
 import type { BlockLibrary } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
-import { ApplyError } from '../errors.ts';
+import { ApplyError, ManifestError } from '../errors.ts';
 import {
   globalManifestPath,
   type Manifest,
@@ -436,4 +437,82 @@ test('keep-local patterns are relative to the repository root, one region per pr
     exclude,
     /# BEGIN:agents-config packages\/web\n\/packages\/web\/AGENTS\.md/,
   );
+});
+
+test('project installs never write through links that leave the project', async (t) => {
+  const paths = await tempPaths(t);
+  const outside = await realpath(await tempDir(t));
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(outside, { gitconfig: '[user]\n', zshrc: 'export A=1\n' });
+  await symlink(join(outside, 'gitconfig'), join(dir, 'AGENTS.md'));
+  await symlink(join(outside, 'zshrc'), join(dir, 'CLAUDE.md'));
+
+  const plan = await installProject(paths, { dir, title: 'app' }, [
+    'claude-code',
+  ]);
+
+  assert.deepEqual(
+    plan.actions.map((action) => action.status),
+    ['conflict', 'conflict'],
+  );
+  assert.equal(await readFile(join(outside, 'gitconfig'), 'utf8'), '[user]\n');
+  assert.equal(await readFile(join(outside, 'zshrc'), 'utf8'), 'export A=1\n');
+});
+
+test('project installs never write into a linked directory outside the project', async (t) => {
+  const paths = await tempPaths(t);
+  const outside = await realpath(await tempDir(t));
+  const dir = await realpath(await tempDir(t));
+  await symlink(outside, join(dir, '.gemini'));
+
+  const plan = await installProject(paths, { dir, title: 'app' }, [
+    'gemini-cli',
+  ]);
+
+  const settings = plan.actions.find(
+    (action) => action.path === join(dir, '.gemini', 'settings.json'),
+  );
+  assert.equal(settings?.status, 'conflict');
+  assert.deepEqual(await readdir(outside), []);
+});
+
+test('removing a project install leaves files behind links that leave the project', async (t) => {
+  const paths = await tempPaths(t);
+  const outside = await realpath(await tempDir(t));
+  const dir = await realpath(await tempDir(t));
+  await installProject(paths, { dir, title: 'app' }, ['claude-code']);
+  await writeFiles(outside, { zshrc: '@AGENTS.md\n\nexport A=1\n' });
+  await rm(join(dir, 'CLAUDE.md'));
+  await symlink(join(outside, 'zshrc'), join(dir, 'CLAUDE.md'));
+
+  await installProject(paths, { dir, title: 'app' }, []);
+
+  assert.equal(
+    await readFile(join(outside, 'zshrc'), 'utf8'),
+    '@AGENTS.md\n\nexport A=1\n',
+  );
+});
+
+test('a project whose manifest directory links outside the project is refused', async (t) => {
+  const paths = await tempPaths(t);
+  const outside = await realpath(await tempDir(t));
+  const dir = await realpath(await tempDir(t));
+  await symlink(outside, join(dir, '.agents'));
+
+  await assert.rejects(
+    installProject(paths, { dir, title: 'app' }, ['codex']),
+    ManifestError,
+  );
+
+  assert.deepEqual(await readdir(outside), []);
+});
+
+test('a directory where an instructions file belongs is a conflict', async (t) => {
+  const paths = await tempPaths(t);
+  await mkdir(join(paths.codexHome, 'AGENTS.md'), { recursive: true });
+
+  const plan = await installGlobal(paths, ['codex']);
+
+  assert.equal(plan.actions[0]?.status, 'conflict');
+  assert.equal(plan.actions[0]?.reason, 'is a directory');
 });
