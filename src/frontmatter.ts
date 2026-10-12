@@ -1,4 +1,4 @@
-import { parse } from 'yaml';
+import fm from 'front-matter';
 
 import { FrontmatterError } from './errors.ts';
 
@@ -7,8 +7,8 @@ interface FrontmatterDocument {
   body: string;
 }
 
+const extract = fm as unknown as typeof fm.default;
 const OPENING = '---\n';
-const CLOSING = /\n---(\n|$)/;
 
 export function parseFrontmatter(
   source: string,
@@ -19,21 +19,18 @@ export function parseFrontmatter(
     throw new FrontmatterError(`${file}: missing YAML frontmatter`);
   }
 
-  const rest = text.slice(OPENING.length);
-  const closing = CLOSING.exec(rest);
-  if (!closing) {
-    throw new FrontmatterError(`${file}: unterminated YAML frontmatter`);
-  }
-
-  let data: unknown;
+  let parsed: ReturnType<typeof extract<unknown>>;
   try {
-    data = parse(rest.slice(0, closing.index));
+    parsed = extract<unknown>(text);
   } catch (error) {
     throw new FrontmatterError(`${file}: invalid YAML frontmatter`, {
       cause: error,
     });
   }
 
-  const body = rest.slice(closing.index + closing[0].length);
-  return { data, body: body.replace(/^\n+/, '') };
+  if (parsed.frontmatter === undefined) {
+    throw new FrontmatterError(`${file}: unterminated YAML frontmatter`);
+  }
+
+  return { data: parsed.attributes, body: parsed.body.replace(/^\n+/, '') };
 }
