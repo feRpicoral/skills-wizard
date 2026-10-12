@@ -23,6 +23,12 @@ export function displayPath(path: string, home: string): string {
     : path;
 }
 
+export function planPath(plan: Plan, path: string, home: string): string {
+  return plan.projectDir && path.startsWith(`${plan.projectDir}${sep}`)
+    ? relative(plan.projectDir, path)
+    : displayPath(path, home);
+}
+
 function line(
   status: ActionStatus | ManifestStatus,
   path: string,
@@ -32,10 +38,7 @@ function line(
 }
 
 export function describePlan(plan: Plan, home: string): string[] {
-  const show = (path: string) =>
-    plan.projectDir && path.startsWith(`${plan.projectDir}${sep}`)
-      ? relative(plan.projectDir, path)
-      : displayPath(path, home);
+  const show = (path: string) => planPath(plan, path, home);
 
   const lines = plan.actions.map((action) => {
     const target = action.writePath ? ` -> ${show(action.writePath)}` : '';
