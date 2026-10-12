@@ -2,11 +2,13 @@ import * as clack from '@clack/prompts';
 
 import type { Context } from '../context.ts';
 import { unwrap } from '../prompts/selection.ts';
+import { runAdopt } from './adopt.ts';
 import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
 import { runSync } from './sync.ts';
+import { runUpdate } from './update.ts';
 
-type MenuChoice = 'global' | 'project' | 'sync' | 'doctor';
+type MenuChoice = 'global' | 'project' | 'sync' | 'update' | 'adopt' | 'doctor';
 
 export async function runMenu(ctx: Context): Promise<number> {
   clack.intro('agents-config');
@@ -17,6 +19,8 @@ export async function runMenu(ctx: Context): Promise<number> {
         { value: 'global', label: 'Set up system-wide instructions' },
         { value: 'project', label: 'Set up a project' },
         { value: 'sync', label: 'Sync the system-wide install' },
+        { value: 'update', label: 'Update installed third-party skills' },
+        { value: 'adopt', label: 'Adopt existing unmanaged skills' },
         { value: 'doctor', label: 'Check the system-wide install' },
       ],
     }),
@@ -33,6 +37,10 @@ export async function runMenu(ctx: Context): Promise<number> {
       });
     case 'sync':
       return runSync(ctx, { scope: 'global', yes: false, dryRun: false });
+    case 'update':
+      return runUpdate(ctx, { yes: false, dryRun: false });
+    case 'adopt':
+      return runAdopt(ctx, { names: [], yes: false, dryRun: false });
     case 'doctor':
       return runDoctor(ctx, { scope: 'global' });
   }

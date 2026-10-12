@@ -202,6 +202,27 @@ export async function promptKeepLocal(initial: boolean): Promise<boolean> {
   return choice === 'local';
 }
 
+export interface AdoptChoice {
+  name: string;
+  hint: string;
+}
+
+export async function promptAdoptSkills(
+  choices: readonly AdoptChoice[],
+): Promise<string[]> {
+  return unwrap(
+    await clack.multiselect<string>({
+      message: 'Which unmanaged skills should agents-config take over?',
+      options: choices.map((choice) => ({
+        value: choice.name,
+        label: choice.name,
+        hint: choice.hint,
+      })),
+      required: false,
+    }),
+  );
+}
+
 export async function confirmApply(): Promise<boolean> {
   return unwrap(
     await clack.confirm({

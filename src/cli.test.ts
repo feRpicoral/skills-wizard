@@ -353,3 +353,23 @@ test('rejects a skill mode for project installs', async (t) => {
   assert.equal(result.code, 2);
   assert.match(result.stderr, /--skill-mode only applies to system-wide/);
 });
+
+test('rejects disallowed flags on update, adopt and skill validate', async (t) => {
+  const home = await tempDir(t);
+
+  const [updateResult, adoptResult, skillResult] = await Promise.all([
+    cli(home, ['update', '--global']),
+    cli(home, ['adopt', '--project', home]),
+    cli(home, ['skill', 'unknown']),
+  ]);
+
+  assert.equal(updateResult.code, 2);
+  assert.match(updateResult.stderr, /--global does not apply to update/);
+  assert.equal(adoptResult.code, 2);
+  assert.match(adoptResult.stderr, /--project does not apply to adopt/);
+  assert.equal(skillResult.code, 2);
+  assert.match(
+    skillResult.stderr,
+    /Usage: agents-config skill validate \[path\.\.\.\] \[--catalog\]/,
+  );
+});
