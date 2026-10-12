@@ -206,3 +206,16 @@ test('a keep-local project copied out of its repository still syncs', async (t) 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /belong to another repository/);
 });
+
+test('names of built-in object properties are unknown commands', async (t) => {
+  const home = await tempDir(t);
+
+  const results = await Promise.all(
+    ['toString', '__proto__', 'constructor'].map((name) => cli(home, [name])),
+  );
+
+  assert.deepEqual(
+    results.map((result) => result.code),
+    [2, 2, 2],
+  );
+});

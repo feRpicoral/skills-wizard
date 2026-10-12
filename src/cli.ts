@@ -30,7 +30,7 @@ Options:
   --global              System-wide scope (default for sync and doctor)
   --project <dir>       Project scope
   --tools <ids>         Comma-separated tools: ${TOOL_IDS.join(', ')}
-                        (an empty list removes everything installed)
+                        (an empty list removes what was installed for every tool)
   --blocks <ids>        Comma-separated block ids, for example core/no-ai-tells
   --var <name=value>    Block variable, repeatable
   --link-command        Link the agents-config command into ~/.local/bin
@@ -56,7 +56,11 @@ const OPTIONS = {
 
 type OptionName = keyof typeof OPTIONS;
 
-const ALLOWED: Record<string, readonly OptionName[]> = {
+const COMMANDS = ['init', 'sync', 'doctor'] as const;
+
+type Command = (typeof COMMANDS)[number];
+
+const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
   init: [
     'global',
     'project',
@@ -71,6 +75,14 @@ const ALLOWED: Record<string, readonly OptionName[]> = {
   sync: ['global', 'project', 'yes', 'dry-run'],
   doctor: ['global', 'project'],
 };
+
+function isCommand(value: string): value is Command {
+  return (COMMANDS as readonly string[]).includes(value);
+}
+
+function flags(names: readonly string[]): string {
+  return names.map((name) => `--${name}`).join(', ');
+}
 
 function parseList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
@@ -102,14 +114,18 @@ function parseVariables(values: string[] | undefined): Record<string, string> {
   return variables;
 }
 
-function rejectOptions(command: string, provided: readonly string[]): void {
-  const allowed: readonly string[] = ALLOWED[command] ?? [];
+function rejectOptions(command: Command, provided: readonly string[]): void {
+  const allowed: readonly string[] = ALLOWED[command];
   const extra = provided.filter((name) => !allowed.includes(name));
   if (extra.length > 0) {
-    throw new UsageError(
-      `${extra.map((name) => `--${name}`).join(', ')} does not apply to ${command}`,
-    );
+    throw new UsageError(`${flags(extra)} does not apply to ${command}`);
   }
+}
+
+function isSystemError(error: unknown): error is Error {
+  return (
+    error instanceof Error && 'code' in error && typeof error.code === 'string'
+  );
 }
 
 async function version(): Promise<string> {
@@ -158,7 +174,12 @@ async function main(argv: string[]): Promise<number> {
   const command = positionals[0];
   if (command === undefined || command === 'help') {
     if (command === undefined && terminal) {
-      rejectOptions('menu', Object.keys(values));
+      const provided = Object.keys(values);
+      if (provided.length > 0) {
+        throw new UsageError(
+          `${flags(provided)} must follow a command such as init`,
+        );
+      }
       return runMenu(
         createContext({
           repoRoot: REPO_ROOT,
@@ -170,7 +191,7 @@ async function main(argv: string[]): Promise<number> {
     print(HELP);
     return 0;
   }
-  if (!(command in ALLOWED)) {
+  if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
   }
   rejectOptions(command, Object.keys(values));
@@ -217,7 +238,7 @@ async function main(argv: string[]): Promise<number> {
         dryRun,
         ...projectDir,
       });
-    default:
+    case 'doctor':
       return runDoctor(ctx, { scope: scope ?? 'global', ...projectDir });
   }
 }
@@ -233,7 +254,7 @@ try {
       `${styleText('red', error.message)}\nRun agents-config --help for usage.\n`,
     );
     process.exitCode = 2;
-  } else if (error instanceof AgentsConfigError) {
+  } else if (error instanceof AgentsConfigError || isSystemError(error)) {
     process.stderr.write(`${styleText('red', error.message)}\n`);
     process.exitCode = 1;
   } else {
