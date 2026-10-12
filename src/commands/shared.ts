@@ -148,12 +148,11 @@ export async function resolveLocation({
 export async function readLocationManifest(
   ctx: Context,
   prompting: boolean,
-  location: Location,
+  { manifestPath, project }: Location,
 ): Promise<Manifest | null> {
-  const project = location.project;
-  if (!project) return readManifest(location.manifestPath);
+  if (!project) return readManifest(manifestPath);
 
-  const result = await readProjectManifest(location.manifestPath, {
+  const result = await readProjectManifest(manifestPath, {
     dir: project.dir,
     ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
   });

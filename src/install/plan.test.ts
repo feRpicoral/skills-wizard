@@ -101,12 +101,19 @@ async function installGlobal(
   return plan;
 }
 
-async function installProject(
-  paths: Paths,
-  project: ProjectContext,
-  tools: ToolId[],
-  overrides: Partial<Selection> = {},
-): Promise<Plan> {
+interface InstallProjectParams {
+  paths: Paths;
+  project: ProjectContext;
+  tools: ToolId[];
+  overrides?: Partial<Selection>;
+}
+
+async function installProject({
+  paths,
+  project,
+  tools,
+  overrides = {},
+}: InstallProjectParams): Promise<Plan> {
   const manifestPath = projectManifestPath(project.dir);
   const stored = await readProjectManifest(manifestPath, {
     dir: project.dir,
@@ -135,7 +142,15 @@ async function manifestOf(paths: Paths): Promise<Manifest | null> {
   return readManifest(globalManifestPath(paths));
 }
 
-async function gitProject(root: string, subdir = ''): Promise<ProjectContext> {
+interface GitProjectParams {
+  root: string;
+  subdir?: string;
+}
+
+async function gitProject({
+  root,
+  subdir = '',
+}: GitProjectParams): Promise<ProjectContext> {
   await run('git', ['init', '-q'], { cwd: root });
   const realRoot = await realpath(root);
   const dir = join(realRoot, subdir);
@@ -359,10 +374,11 @@ test('project installs append after existing regions and prepend the import line
     'CLAUDE.md': '# Claude only\n',
   });
 
-  await installProject(paths, { dir, title: 'app' }, [
-    'claude-code',
-    'gemini-cli',
-  ]);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code', 'gemini-cli'],
+  });
 
   assert.equal(
     await readFile(join(dir, 'AGENTS.md'), 'utf8'),
@@ -378,11 +394,17 @@ test('an import line that already existed is kept when Claude Code is deselected
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));
   await writeFiles(dir, { 'CLAUDE.md': '@AGENTS.md\n' });
-  await installProject(paths, { dir, title: 'app' }, ['claude-code']);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
 
-  const plan = await installProject(paths, { dir, title: 'app' }, [
-    'gemini-cli',
-  ]);
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['gemini-cli'],
+  });
 
   const claude = plan.actions.find(
     (action) => action.path === join(dir, 'CLAUDE.md'),
@@ -398,9 +420,11 @@ test('a CLAUDE.md that links to AGENTS.md needs no import line', async (t) => {
   await writeFiles(dir, { 'AGENTS.md': '# Team\n' });
   await symlink('AGENTS.md', join(dir, 'CLAUDE.md'));
 
-  const plan = await installProject(paths, { dir, title: 'app' }, [
-    'claude-code',
-  ]);
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
 
   const claude = plan.actions.find(
     (action) => action.path === join(dir, 'CLAUDE.md'),
@@ -413,12 +437,17 @@ test('a CLAUDE.md that links to AGENTS.md needs no import line', async (t) => {
 test('removing a project install deletes the files it created', async (t) => {
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));
-  await installProject(paths, { dir, title: 'app' }, [
-    'claude-code',
-    'gemini-cli',
-  ]);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code', 'gemini-cli'],
+  });
 
-  await installProject(paths, { dir, title: 'app' }, []);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
 
   await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
   await assert.rejects(lstat(join(dir, 'CLAUDE.md')), { code: 'ENOENT' });
@@ -428,11 +457,21 @@ test('removing a project install deletes the files it created', async (t) => {
 test('keep-local patterns are relative to the repository root, one region per project', async (t) => {
   const paths = await tempPaths(t);
   const root = await tempDir(t);
-  const app = await gitProject(root, 'packages/app');
-  const web = await gitProject(root, 'packages/web');
+  const app = await gitProject({ root, subdir: 'packages/app' });
+  const web = await gitProject({ root, subdir: 'packages/web' });
 
-  await installProject(paths, app, ['codex'], { keepLocal: true });
-  await installProject(paths, web, ['codex'], { keepLocal: true });
+  await installProject({
+    paths,
+    project: app,
+    tools: ['codex'],
+    overrides: { keepLocal: true },
+  });
+  await installProject({
+    paths,
+    project: web,
+    tools: ['codex'],
+    overrides: { keepLocal: true },
+  });
 
   const exclude = await readFile(
     join(app.git?.root ?? '', '.git', 'info', 'exclude'),
@@ -456,9 +495,11 @@ test('project installs never write through links that leave the project', async 
   await symlink(join(outside, 'gitconfig'), join(dir, 'AGENTS.md'));
   await symlink(join(outside, 'zshrc'), join(dir, 'CLAUDE.md'));
 
-  const plan = await installProject(paths, { dir, title: 'app' }, [
-    'claude-code',
-  ]);
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
 
   assert.deepEqual(
     plan.actions.map((action) => action.status),
@@ -474,9 +515,11 @@ test('project installs never write into a linked directory outside the project',
   const dir = await realpath(await tempDir(t));
   await symlink(outside, join(dir, '.gemini'));
 
-  const plan = await installProject(paths, { dir, title: 'app' }, [
-    'gemini-cli',
-  ]);
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['gemini-cli'],
+  });
 
   const settings = plan.actions.find(
     (action) => action.path === join(dir, '.gemini', 'settings.json'),
@@ -489,12 +532,20 @@ test('removing a project install leaves files behind links that leave the projec
   const paths = await tempPaths(t);
   const outside = await realpath(await tempDir(t));
   const dir = await realpath(await tempDir(t));
-  await installProject(paths, { dir, title: 'app' }, ['claude-code']);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
   await writeFiles(outside, { zshrc: '@AGENTS.md\n\nexport A=1\n' });
   await rm(join(dir, 'CLAUDE.md'));
   await symlink(join(outside, 'zshrc'), join(dir, 'CLAUDE.md'));
 
-  await installProject(paths, { dir, title: 'app' }, []);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
 
   assert.equal(
     await readFile(join(outside, 'zshrc'), 'utf8'),
@@ -509,7 +560,11 @@ test('a project whose manifest directory links outside the project is refused', 
   await symlink(outside, join(dir, '.agents'));
 
   await assert.rejects(
-    installProject(paths, { dir, title: 'app' }, ['codex']),
+    installProject({
+      paths,
+      project: { dir, title: 'app' },
+      tools: ['codex'],
+    }),
     ManifestError,
   );
 
@@ -530,11 +585,23 @@ test('a project file recreated after deletion is removed with its heading', asyn
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));
   await writeFiles(dir, { 'AGENTS.md': '# Team\n' });
-  await installProject(paths, { dir, title: 'app' }, ['codex']);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
   await rm(join(dir, 'AGENTS.md'));
-  await installProject(paths, { dir, title: 'app' }, ['codex']);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
 
-  await installProject(paths, { dir, title: 'app' }, []);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
 
   await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
 });
@@ -544,9 +611,11 @@ test('a CLAUDE.md link to an AGENTS.md that does not exist yet needs no import l
   const dir = await realpath(await tempDir(t));
   await symlink('AGENTS.md', join(dir, 'CLAUDE.md'));
 
-  const plan = await installProject(paths, { dir, title: 'app' }, [
-    'claude-code',
-  ]);
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
 
   const claude = plan.actions.find(
     (action) => action.path === join(dir, 'CLAUDE.md'),
@@ -560,9 +629,11 @@ test('a dangling link on the way to a target is a conflict', async (t) => {
   const dir = await realpath(await tempDir(t));
   await symlink(join(dir, 'missing'), join(dir, '.gemini'));
 
-  const plan = await installProject(paths, { dir, title: 'app' }, [
-    'gemini-cli',
-  ]);
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['gemini-cli'],
+  });
 
   const settings = plan.actions.find(
     (action) => action.path === join(dir, '.gemini', 'settings.json'),
@@ -577,7 +648,11 @@ test('a manifest directory that is a dangling link stops before any write', asyn
   await symlink(join(dir, 'missing'), join(dir, '.agents'));
 
   await assert.rejects(
-    installProject(paths, { dir, title: 'app' }, ['codex']),
+    installProject({
+      paths,
+      project: { dir, title: 'app' },
+      tools: ['codex'],
+    }),
     /links to a missing location/,
   );
 
