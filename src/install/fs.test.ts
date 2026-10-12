@@ -21,7 +21,7 @@ test('writeTextAtomic keeps the mode of the file it replaces', async (t) => {
   await writeFiles(dir, { 'settings.json': '{}\n' });
   await chmod(file, 0o600);
 
-  await writeTextAtomic(file, '{"a":1}\n');
+  await writeTextAtomic({ path: file, content: '{"a":1}\n' });
 
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.equal(await readFile(file, 'utf8'), '{"a":1}\n');
@@ -33,7 +33,7 @@ test('writeTextAtomic refuses to replace a symlink', async (t) => {
   await symlink(join(dir, 'real.md'), join(dir, 'link.md'));
 
   await assert.rejects(
-    writeTextAtomic(join(dir, 'link.md'), 'new\n'),
+    writeTextAtomic({ path: join(dir, 'link.md'), content: 'new\n' }),
     UnsafeWriteError,
   );
 });
@@ -42,7 +42,9 @@ test('writeTextAtomic leaves no temporary file behind when it fails', async (t) 
   const dir = await tempDir(t);
   await writeFiles(dir, { 'target/keep.md': 'keep\n' });
 
-  await assert.rejects(writeTextAtomic(join(dir, 'target'), 'new\n'));
+  await assert.rejects(
+    writeTextAtomic({ path: join(dir, 'target'), content: 'new\n' }),
+  );
 
   assert.deepEqual(await readdir(dir), ['target']);
 });

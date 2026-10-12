@@ -46,7 +46,13 @@ function locate(lines: readonly Line[], markers: Markers): Bounds | null {
   return { begin, end };
 }
 
-function regionText(body: string, markers: Markers, eol: string): string {
+interface RegionTextParams {
+  body: string;
+  markers: Markers;
+  eol: string;
+}
+
+function regionText({ body, markers, eol }: RegionTextParams): string {
   return [
     markers.begin,
     ...body.replace(/\n+$/, '').split(/\r?\n/),
@@ -54,18 +60,25 @@ function regionText(body: string, markers: Markers, eol: string): string {
   ].join(eol);
 }
 
-export function upsertRegion(
-  existing: string | null,
-  body: string,
-  options: { markers?: Markers; preamble?: string } = {},
-): string {
-  const markers = options.markers ?? MARKDOWN_MARKERS;
+interface UpsertRegionParams {
+  existing: string | null;
+  body: string;
+  markers?: Markers;
+  preamble?: string;
+}
+
+export function upsertRegion({
+  existing,
+  body,
+  markers = MARKDOWN_MARKERS,
+  preamble,
+}: UpsertRegionParams): string {
   const eol = lineEnding(existing);
-  const region = regionText(body, markers, eol);
+  const region = regionText({ body, markers, eol });
 
   if (existing === null || existing.trim() === '') {
-    const preamble = options.preamble ? `${options.preamble}${eol}${eol}` : '';
-    return `${preamble}${region}${eol}`;
+    const prefix = preamble ? `${preamble}${eol}${eol}` : '';
+    return `${prefix}${region}${eol}`;
   }
 
   const lines = splitLines(existing);

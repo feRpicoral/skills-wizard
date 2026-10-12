@@ -9,17 +9,23 @@ export interface Context {
   print: (line?: string) => void;
 }
 
-export function createContext(options: {
+interface CreateContextParams {
   repoRoot: string;
   cwd: string;
   interactive: boolean;
-}): Context {
+}
+
+export function createContext({
+  repoRoot,
+  cwd,
+  interactive,
+}: CreateContextParams): Context {
   return {
     paths: resolvePaths(),
-    repoRoot: options.repoRoot,
-    cwd: options.cwd,
+    repoRoot,
+    cwd,
     searchPath: resolveSearchPath(),
-    interactive: options.interactive,
+    interactive,
     print: (line = '') => {
       process.stdout.write(`${line}\n`);
     },

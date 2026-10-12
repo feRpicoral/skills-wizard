@@ -64,17 +64,23 @@ function stringValues(value: unknown, keyPath: string): string[] {
   );
 }
 
+interface EnsureArrayValuesParams {
+  doc: JsonObject;
+  keyPath: string;
+  values: readonly string[];
+}
+
 interface EnsureResult {
   doc: JsonObject;
   added: string[];
   wasString: boolean;
 }
 
-export function ensureArrayValues(
-  doc: JsonObject,
-  keyPath: string,
-  values: readonly string[],
-): EnsureResult {
+export function ensureArrayValues({
+  doc,
+  keyPath,
+  values,
+}: EnsureArrayValuesParams): EnsureResult {
   const next = structuredClone(doc);
   const keys = parseKeyPath(next, keyPath);
   const original = getProperty(next, keys);
@@ -84,12 +90,19 @@ export function ensureArrayValues(
   return { doc: next, added, wasString: typeof original === 'string' };
 }
 
-export function removeArrayValues(
-  doc: JsonObject,
-  keyPath: string,
-  values: readonly string[],
-  restoreString: boolean,
-): JsonObject {
+interface RemoveArrayValuesParams {
+  doc: JsonObject;
+  keyPath: string;
+  values: readonly string[];
+  restoreString: boolean;
+}
+
+export function removeArrayValues({
+  doc,
+  keyPath,
+  values,
+  restoreString,
+}: RemoveArrayValuesParams): JsonObject {
   const next = structuredClone(doc);
   const keys = parseKeyPath(next, keyPath);
   if (!hasProperty(next, keys)) return next;

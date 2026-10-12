@@ -84,7 +84,12 @@ export async function resolveIfSymlink(path: string): Promise<string | null> {
   }
 }
 
-export function isInside(dir: string, path: string): boolean {
+interface InsideCheckParams {
+  dir: string;
+  path: string;
+}
+
+export function isInside({ dir, path }: InsideCheckParams): boolean {
   return path.startsWith(`${dir}${sep}`);
 }
 
@@ -105,10 +110,15 @@ export async function realLocation(path: string): Promise<string | null> {
   }
 }
 
-export async function writeTextAtomic(
-  path: string,
-  content: string,
-): Promise<void> {
+interface WriteTextParams {
+  path: string;
+  content: string;
+}
+
+export async function writeTextAtomic({
+  path,
+  content,
+}: WriteTextParams): Promise<void> {
   const existing = await lstatIfExists(path);
   if (existing?.isSymbolicLink()) {
     throw new UnsafeWriteError(`refusing to replace the symlink at ${path}`);
@@ -119,10 +129,15 @@ export async function writeTextAtomic(
   await writeFileAtomic(path, content, mode === undefined ? {} : { mode });
 }
 
-export async function replaceSymlink(
-  target: string,
-  path: string,
-): Promise<void> {
+interface ReplaceSymlinkParams {
+  target: string;
+  path: string;
+}
+
+export async function replaceSymlink({
+  target,
+  path,
+}: ReplaceSymlinkParams): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await rm(path, { force: true });
   await symlink(target, path);

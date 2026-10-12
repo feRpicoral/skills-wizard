@@ -50,7 +50,7 @@ test('project manifests store entry paths relative to the project', async (t) =>
     },
   ]);
 
-  await writeManifest(file, original, project);
+  await writeManifest({ file, manifest: original, projectDir: project });
   const stored = JSON.parse(await readFile(file, 'utf8')) as Manifest;
   const restored = await readProjectManifest(file, { dir: project });
 

@@ -13,10 +13,15 @@ async function anyExists(paths: readonly string[]): Promise<boolean> {
   return false;
 }
 
-async function onSearchPath(
-  bins: readonly string[],
-  searchPath: readonly string[],
-): Promise<boolean> {
+interface SearchPathCheck {
+  bins: readonly string[];
+  searchPath: readonly string[];
+}
+
+async function onSearchPath({
+  bins,
+  searchPath,
+}: SearchPathCheck): Promise<boolean> {
   const path = searchPath.join(delimiter);
   if (!path) return false;
   for (const bin of bins) {
@@ -34,7 +39,7 @@ export async function detectTools(
     const { dirs, bins } = TOOLS[id].detect;
     if (
       (await anyExists(dirs(paths))) ||
-      (await onSearchPath(bins, searchPath))
+      (await onSearchPath({ bins, searchPath }))
     ) {
       detected.push(id);
     }

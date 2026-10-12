@@ -50,7 +50,7 @@ async function symlinkFindings(
     if (!(await statIfExists(entry.path))) {
       findings.push({
         level: 'error',
-        message: `${displayPath(entry.path, ctx.paths.home)} points to a missing target`,
+        message: `${displayPath({ path: entry.path, home: ctx.paths.home })} points to a missing target`,
       });
     }
   }
@@ -63,6 +63,7 @@ async function globalFindings(
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   const home = ctx.paths.home;
+  const show = (path: string) => displayPath({ path, home });
   const owned = new Set(
     manifest.entries
       .filter((entry) => entry.kind === 'region')
@@ -75,7 +76,7 @@ async function globalFindings(
     if (shadow && (await lstatIfExists(shadow))) {
       findings.push({
         level: 'warn',
-        message: `${displayPath(shadow, home)} overrides the installed ${tool.label} instructions`,
+        message: `${show(shadow)} overrides the installed ${tool.label} instructions`,
       });
     }
 
@@ -90,13 +91,13 @@ async function globalFindings(
     if (limits.lines !== undefined && lines > limits.lines) {
       findings.push({
         level: 'note',
-        message: `${displayPath(path, home)} has ${lines} lines; ${tool.label} recommends keeping memory files under ${limits.lines}`,
+        message: `${show(path)} has ${lines} lines; ${tool.label} recommends keeping memory files under ${limits.lines}`,
       });
     }
     if (limits.bytes !== undefined && bytes > limits.bytes) {
       findings.push({
         level: 'warn',
-        message: `${displayPath(path, home)} has ${bytes} bytes; ${tool.label} truncates rule files above ${limits.bytes}`,
+        message: `${show(path)} has ${bytes} bytes; ${tool.label} truncates rule files above ${limits.bytes}`,
       });
     }
   }
@@ -115,7 +116,7 @@ async function globalFindings(
       if (await lstatIfExists(extra)) {
         findings.push({
           level: 'warn',
-          message: `${displayPath(extra, home)} is loaded in addition to ${displayPath(shared, home)}`,
+          message: `${show(extra)} is loaded in addition to ${show(shared)}`,
         });
       }
     }
@@ -125,18 +126,18 @@ async function globalFindings(
 
 export async function runDoctor(
   ctx: Context,
-  options: DoctorOptions,
+  { scope, projectDir }: DoctorOptions,
 ): Promise<number> {
-  const location = await resolveLocation(
+  const location = await resolveLocation({
     ctx,
-    options.scope,
-    options.projectDir,
-  );
+    scope,
+    ...(projectDir !== undefined ? { projectDir } : {}),
+  });
   const manifest = await readLocationManifest(ctx, false, location);
   const home = ctx.paths.home;
   if (!manifest) {
     ctx.print(
-      `No ${options.scope === 'global' ? 'system-wide' : 'project'} install recorded at ${displayPath(location.manifestPath, home)}.`,
+      `No ${scope === 'global' ? 'system-wide' : 'project'} install recorded at ${displayPath({ path: location.manifestPath, home })}.`,
     );
     return 0;
   }
@@ -161,7 +162,7 @@ export async function runDoctor(
     });
   }
   const plan = await buildPlan({
-    scope: options.scope,
+    scope,
     selection: {
       tools: manifest.tools,
       blocks,
@@ -178,7 +179,7 @@ export async function runDoctor(
   });
 
   for (const action of plan.actions) {
-    const where = planPath(plan, action.path, home);
+    const where = planPath({ plan, path: action.path, home });
     if (action.status === 'conflict') {
       findings.push({
         level:
@@ -195,7 +196,7 @@ export async function runDoctor(
     }
   }
   findings.push(...(await symlinkFindings(ctx, manifest)));
-  if (options.scope === 'global') {
+  if (scope === 'global') {
     findings.push(...(await globalFindings(ctx, manifest)));
   }
 

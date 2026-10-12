@@ -24,7 +24,7 @@ interface SizeLimits {
   bytes?: number;
 }
 
-interface ToolDefinition {
+export interface ToolDefinition {
   id: ToolId;
   label: string;
   detect: { dirs: (paths: Paths) => string[]; bins: readonly string[] };

@@ -17,40 +17,59 @@ const STATUS_WIDTH = Math.max(
   ...Object.keys(STATUS_FORMAT).map((status) => status.length),
 );
 
-export function displayPath(path: string, home: string): string {
+interface DisplayPathParams {
+  path: string;
+  home: string;
+}
+
+export function displayPath({ path, home }: DisplayPathParams): string {
   return path === home || path.startsWith(`${home}${sep}`)
     ? `~${path.slice(home.length)}`
     : path;
 }
 
-export function planPath(plan: Plan, path: string, home: string): string {
-  return plan.projectDir && path.startsWith(`${plan.projectDir}${sep}`)
-    ? relative(plan.projectDir, path)
-    : displayPath(path, home);
+interface PlanPathParams {
+  plan: Plan;
+  path: string;
+  home: string;
 }
 
-function line(
-  status: ActionStatus | ManifestStatus,
-  path: string,
-  label: string,
-): string {
+export function planPath({ plan, path, home }: PlanPathParams): string {
+  return plan.projectDir && path.startsWith(`${plan.projectDir}${sep}`)
+    ? relative(plan.projectDir, path)
+    : displayPath({ path, home });
+}
+
+interface PlanLineParams {
+  status: ActionStatus | ManifestStatus;
+  path: string;
+  label: string;
+}
+
+function line({ status, path, label }: PlanLineParams): string {
   return `${styleText(STATUS_FORMAT[status], status.padEnd(STATUS_WIDTH))}  ${path}  ${styleText('dim', label)}`;
 }
 
 export function describePlan(plan: Plan, home: string): string[] {
-  const show = (path: string) => planPath(plan, path, home);
+  const show = (path: string) => planPath({ plan, path, home });
 
   const lines = plan.actions.map((action) => {
     const target = action.writePath ? ` -> ${show(action.writePath)}` : '';
     const reason = action.reason ? ` (${action.reason})` : '';
-    return line(
-      action.status,
-      `${show(action.path)}${target}`,
-      `${action.label}${reason}`,
-    );
+    return line({
+      status: action.status,
+      path: `${show(action.path)}${target}`,
+      label: `${action.label}${reason}`,
+    });
   });
   if (plan.manifestStatus !== 'unchanged') {
-    lines.push(line(plan.manifestStatus, show(plan.manifestPath), 'manifest'));
+    lines.push(
+      line({
+        status: plan.manifestStatus,
+        path: show(plan.manifestPath),
+        label: 'manifest',
+      }),
+    );
   }
   return lines;
 }

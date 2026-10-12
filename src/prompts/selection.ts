@@ -48,7 +48,10 @@ export async function promptTools(
         label: TOOLS[id].label,
         hint:
           scope === 'global'
-            ? displayPath(TOOLS[id].global.instructions(paths), paths.home)
+            ? displayPath({
+                path: TOOLS[id].global.instructions(paths),
+                home: paths.home,
+              })
             : undefined,
       })),
       initialValues: [...initial],
@@ -113,7 +116,7 @@ export async function promptLinkCommand(
 ): Promise<boolean> {
   return unwrap(
     await clack.confirm({
-      message: `Link the agents-config command into ${displayPath(paths.localBin, paths.home)}?`,
+      message: `Link the agents-config command into ${displayPath({ path: paths.localBin, home: paths.home })}?`,
       initialValue: initial,
     }),
   );

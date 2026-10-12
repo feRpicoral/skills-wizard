@@ -25,7 +25,11 @@ test('parseJsonObject refuses files with comments', () => {
 });
 
 test('ensureArrayValues creates the key path when it is absent', () => {
-  const result = ensureArrayValues({ theme: 'dark' }, KEY, VALUES);
+  const result = ensureArrayValues({
+    doc: { theme: 'dark' },
+    keyPath: KEY,
+    values: VALUES,
+  });
 
   assert.deepEqual(result, {
     doc: { theme: 'dark', context: { fileName: ['AGENTS.md', 'GEMINI.md'] } },
@@ -35,11 +39,11 @@ test('ensureArrayValues creates the key path when it is absent', () => {
 });
 
 test('ensureArrayValues converts a string and appends only missing values', () => {
-  const result = ensureArrayValues(
-    { context: { fileName: 'GEMINI.md' } },
-    KEY,
-    VALUES,
-  );
+  const result = ensureArrayValues({
+    doc: { context: { fileName: 'GEMINI.md' } },
+    keyPath: KEY,
+    values: VALUES,
+  });
 
   assert.deepEqual(result, {
     doc: { context: { fileName: ['GEMINI.md', 'AGENTS.md'] } },
@@ -50,29 +54,34 @@ test('ensureArrayValues converts a string and appends only missing values', () =
 
 test('ensureArrayValues rejects a value that is not a string list', () => {
   assert.throws(
-    () => ensureArrayValues({ context: { fileName: 3 } }, KEY, VALUES),
+    () =>
+      ensureArrayValues({
+        doc: { context: { fileName: 3 } },
+        keyPath: KEY,
+        values: VALUES,
+      }),
     /must be a string or a list of strings/,
   );
 });
 
 test('removeArrayValues removes values and prunes empty parents', () => {
-  const doc = removeArrayValues(
-    { theme: 'dark', context: { fileName: ['AGENTS.md'] } },
-    KEY,
-    ['AGENTS.md'],
-    false,
-  );
+  const doc = removeArrayValues({
+    doc: { theme: 'dark', context: { fileName: ['AGENTS.md'] } },
+    keyPath: KEY,
+    values: ['AGENTS.md'],
+    restoreString: false,
+  });
 
   assert.deepEqual(doc, { theme: 'dark' });
 });
 
 test('removeArrayValues restores a value that was originally a string', () => {
-  const doc = removeArrayValues(
-    { context: { fileName: ['GEMINI.md', 'AGENTS.md'] } },
-    KEY,
-    ['AGENTS.md'],
-    true,
-  );
+  const doc = removeArrayValues({
+    doc: { context: { fileName: ['GEMINI.md', 'AGENTS.md'] } },
+    keyPath: KEY,
+    values: ['AGENTS.md'],
+    restoreString: true,
+  });
 
   assert.deepEqual(doc, { context: { fileName: 'GEMINI.md' } });
 });

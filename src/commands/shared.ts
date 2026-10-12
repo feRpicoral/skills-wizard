@@ -45,12 +45,19 @@ interface Location {
   project?: ProjectContext;
 }
 
-export function notify(
-  ctx: Context,
-  prompting: boolean,
-  message: string,
-  level: 'info' | 'warn' = 'info',
-): void {
+interface NotifyParams {
+  ctx: Context;
+  prompting: boolean;
+  message: string;
+  level?: 'info' | 'warn';
+}
+
+export function notify({
+  ctx,
+  prompting,
+  message,
+  level = 'info',
+}: NotifyParams): void {
   if (!prompting) {
     ctx.print(message);
   } else if (level === 'warn') {
@@ -64,18 +71,17 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
 }
 
-async function readProjectFile(
-  projectDir: string,
-  name: string,
-): Promise<string | null> {
-  const location = await realLocation(join(projectDir, name));
-  if (location === null || !isInside(projectDir, location)) return null;
+async function readPackageJson(projectDir: string): Promise<string | null> {
+  const location = await realLocation(join(projectDir, 'package.json'));
+  if (location === null || !isInside({ dir: projectDir, path: location })) {
+    return null;
+  }
   if (!(await statIfExists(location))?.isFile()) return null;
   return readTextIfExists(location);
 }
 
 async function projectTitle(projectDir: string): Promise<string> {
-  const packageJson = await readProjectFile(projectDir, 'package.json');
+  const packageJson = await readPackageJson(projectDir);
   if (packageJson === null) return basename(projectDir);
   try {
     const { name } = JSON.parse(packageJson) as { name?: unknown };
@@ -107,16 +113,22 @@ async function gitContext(projectDir: string): Promise<ProjectContext['git']> {
   return { root, excludePath: resolve(projectDir, excludePath) };
 }
 
-export async function resolveLocation(
-  ctx: Context,
-  scope: Scope,
-  projectDirOption?: string,
-): Promise<Location> {
+interface ResolveLocationParams {
+  ctx: Context;
+  scope: Scope;
+  projectDir?: string;
+}
+
+export async function resolveLocation({
+  ctx,
+  scope,
+  projectDir,
+}: ResolveLocationParams): Promise<Location> {
   if (scope === 'global') {
     return { scope, manifestPath: globalManifestPath(ctx.paths) };
   }
 
-  const requested = resolve(ctx.cwd, projectDirOption ?? '.');
+  const requested = resolve(ctx.cwd, projectDir ?? '.');
   if (!(await isDirectory(requested))) {
     throw new UsageError(`${requested} is not a directory`);
   }
@@ -146,12 +158,12 @@ export async function readLocationManifest(
     ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
   });
   for (const path of result?.ignored ?? []) {
-    notify(
+    notify({
       ctx,
       prompting,
-      `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`,
-      'warn',
-    );
+      message: `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`,
+      level: 'warn',
+    });
   }
   return result?.manifest ?? null;
 }
@@ -161,39 +173,53 @@ export function notifyLeftGit(
   prompting: boolean,
   projectDir: string,
 ): void {
-  notify(
+  notify({
     ctx,
     prompting,
-    `${displayPath(projectDir, ctx.paths.home)} is no longer in a git repository, so its files are no longer kept local.`,
-    'warn',
-  );
+    message: `${displayPath({ path: projectDir, home: ctx.paths.home })} is no longer in a git repository, so its files are no longer kept local.`,
+    level: 'warn',
+  });
 }
 
-export function dropUnknownBlocks(
-  ctx: Context,
-  prompting: boolean,
-  library: BlockLibrary,
-  ids: readonly string[],
-): string[] {
+interface DropUnknownBlocksParams {
+  ctx: Context;
+  prompting: boolean;
+  library: BlockLibrary;
+  ids: readonly string[];
+}
+
+export function dropUnknownBlocks({
+  ctx,
+  prompting,
+  library,
+  ids,
+}: DropUnknownBlocksParams): string[] {
   const known = new Set(library.blocks.map((block) => block.id));
   const dropped = ids.filter((id) => !known.has(id));
   if (dropped.length > 0) {
-    notify(
+    notify({
       ctx,
       prompting,
-      `Blocks no longer in the library were dropped: ${dropped.join(', ')}`,
-      'warn',
-    );
+      message: `Blocks no longer in the library were dropped: ${dropped.join(', ')}`,
+      level: 'warn',
+    });
   }
   return ids.filter((id) => known.has(id));
 }
 
-export async function warnTrackedFiles(
-  ctx: Context,
-  prompting: boolean,
-  plan: Plan,
-  project: ProjectContext | undefined,
-): Promise<void> {
+interface WarnTrackedFilesParams {
+  ctx: Context;
+  prompting: boolean;
+  plan: Plan;
+  project?: ProjectContext;
+}
+
+export async function warnTrackedFiles({
+  ctx,
+  prompting,
+  plan,
+  project,
+}: WarnTrackedFilesParams): Promise<void> {
   if (!project?.git) return;
   const root = project.git.root;
   const candidates = plan.actions
@@ -203,21 +229,26 @@ export async function warnTrackedFiles(
 
   const tracked = await git(root, ['ls-files', '--', ...candidates]);
   if (tracked) {
-    notify(
+    notify({
       ctx,
       prompting,
-      `Already tracked by git, so keeping them local has no effect: ${tracked.split('\n').join(', ')}`,
-      'warn',
-    );
+      message: `Already tracked by git, so keeping them local has no effect: ${tracked.split('\n').join(', ')}`,
+      level: 'warn',
+    });
   }
+}
+
+export interface ConfirmOptions {
+  yes: boolean;
+  dryRun: boolean;
 }
 
 export async function confirmAndApply(
   ctx: Context,
   plan: Plan,
-  options: { yes: boolean; dryRun: boolean },
+  { yes, dryRun }: ConfirmOptions,
 ): Promise<{ code: number; applied: boolean }> {
-  const prompting = ctx.interactive && !options.yes;
+  const prompting = ctx.interactive && !yes;
   const lines = describePlan(plan, ctx.paths.home);
   if (prompting) {
     clack.note(lines.join('\n') || 'Nothing to do', 'Plan');
@@ -225,23 +256,23 @@ export async function confirmAndApply(
     lines.forEach((entry) => ctx.print(entry));
   }
 
-  if (options.dryRun) {
-    notify(ctx, prompting, 'Dry run: nothing was written.');
+  if (dryRun) {
+    notify({ ctx, prompting, message: 'Dry run: nothing was written.' });
     return { code: 0, applied: false };
   }
   const blocked = conflicts(plan);
   if (!hasChanges(plan) && blocked.length === 0) {
-    notify(ctx, prompting, 'Everything is up to date.');
+    notify({ ctx, prompting, message: 'Everything is up to date.' });
     return { code: 0, applied: false };
   }
-  if (!ctx.interactive && !options.yes) {
+  if (!ctx.interactive && !yes) {
     ctx.print(
       'Re-run with --yes to apply these changes, or --dry-run to preview them.',
     );
     return { code: 1, applied: false };
   }
   if (prompting && !(await confirmApply())) {
-    notify(ctx, true, 'Nothing was written.');
+    notify({ ctx, prompting: true, message: 'Nothing was written.' });
     return { code: 1, applied: false };
   }
 
@@ -257,12 +288,12 @@ export async function confirmAndApply(
   else ctx.print(summary);
 
   for (const action of outcome.skipped) {
-    notify(
+    notify({
       ctx,
       prompting,
-      `Skipped ${planPath(plan, action.path, ctx.paths.home)}: ${action.reason ?? 'conflict'}`,
-      'warn',
-    );
+      message: `Skipped ${planPath({ plan, path: action.path, home: ctx.paths.home })}: ${action.reason ?? 'conflict'}`,
+      level: 'warn',
+    });
   }
   return { code: outcome.skipped.length > 0 ? 1 : 0, applied: true };
 }
