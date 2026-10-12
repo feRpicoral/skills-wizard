@@ -46,6 +46,8 @@ const INSTALL = [
   '--yes',
   '--tools',
   'codex',
+  '--skills',
+  '',
   '--var',
   'githubUsername=octocat',
 ];
@@ -303,4 +305,51 @@ test('a project install is recorded and removing it drops the record', async (t)
 
   assert.deepEqual(JSON.parse(recorded), { version: 1, projects: [project] });
   await assert.rejects(lstat(projectsPath(home)), { code: 'ENOENT' });
+});
+
+test('rejects an unknown skill mode', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, [...INSTALL, '--skill-mode', 'mirror']);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--skill-mode must be one of copy, link/);
+});
+
+test('rejects skills that are not in the catalog or skills/', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, [
+    'init',
+    '--global',
+    '--yes',
+    '--tools',
+    'codex',
+    '--skills',
+    'not-a-skill',
+    '--var',
+    'githubUsername=octocat',
+  ]);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /Unknown skills: not-a-skill/);
+});
+
+test('rejects a skill mode for project installs', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+
+  const result = await cli(home, [
+    'init',
+    '--project',
+    project,
+    '--yes',
+    '--tools',
+    'codex',
+    '--skill-mode',
+    'link',
+  ]);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--skill-mode only applies to system-wide/);
 });

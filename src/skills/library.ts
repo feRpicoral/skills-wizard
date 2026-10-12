@@ -9,14 +9,15 @@ import {
   catalogPath,
   loadCatalog,
 } from './catalog.ts';
-import { SKILL_FILE } from './validate.ts';
+import { isSkillName, SKILL_FILE } from './validate.ts';
 
 const FIRST_PARTY_DIR = 'skills';
 const FIRST_PARTY_GROUP = 'First-party';
 const ALL_SCOPES: readonly Scope[] = ['global', 'project'];
 
 export type SkillOrigin =
-  { type: 'catalog'; entry: CatalogEntry } | { type: 'local'; dir: string };
+  | { type: 'catalog'; entry: CatalogEntry }
+  | { type: 'local'; dir: string; path: string };
 
 export interface SkillDefinition {
   name: string;
@@ -39,7 +40,7 @@ async function firstPartySkills(repoRoot: string): Promise<SkillDefinition[]> {
   const dir = firstPartyDir(repoRoot);
   const skills: SkillDefinition[] = [];
   for (const entry of (await readDirIfExists(dir)) ?? []) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (!entry.isDirectory() || !isSkillName(entry.name)) continue;
     const skillDir = join(dir, entry.name);
     if (!(await lstatIfExists(join(skillDir, SKILL_FILE)))) continue;
     skills.push({
@@ -47,7 +48,11 @@ async function firstPartySkills(repoRoot: string): Promise<SkillDefinition[]> {
       group: FIRST_PARTY_GROUP,
       scopes: [...ALL_SCOPES],
       defaults: [],
-      origin: { type: 'local', dir: skillDir },
+      origin: {
+        type: 'local',
+        dir: skillDir,
+        path: `${FIRST_PARTY_DIR}/${entry.name}`,
+      },
     });
   }
   return skills.sort((a, b) => a.name.localeCompare(b.name));

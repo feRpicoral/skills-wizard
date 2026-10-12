@@ -5,6 +5,8 @@ import { variableMessage } from '../blocks/variables.ts';
 import type { Paths } from '../env.ts';
 import { CancelledError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
+import type { SkillMode } from '../skills/install.ts';
+import type { SkillDefinition, SkillLibrary } from '../skills/library.ts';
 import { TOOL_IDS, type ToolId, TOOLS } from '../tools/registry.ts';
 
 export function unwrap<T>(value: T | symbol): Exclude<T, symbol> {
@@ -89,6 +91,66 @@ export async function promptBlocks(
         available.some((block) => block.id === id),
       ),
       required: false,
+    }),
+  );
+}
+
+function skillHint(skill: SkillDefinition): string {
+  if (skill.origin.type === 'local') return skill.origin.path;
+  const { repo, note } = skill.origin.entry;
+  return note ? `${repo}: ${note}` : repo;
+}
+
+export async function promptSkills(
+  library: SkillLibrary,
+  scope: Scope,
+  initial: readonly string[],
+): Promise<string[]> {
+  const available = library.skills.filter((skill) =>
+    skill.scopes.includes(scope),
+  );
+  if (available.length === 0) return [];
+  const groups: Record<
+    string,
+    { value: string; label: string; hint: string }[]
+  > = {};
+  for (const skill of available) {
+    (groups[skill.group] ??= []).push({
+      value: skill.name,
+      label: skill.name,
+      hint: skillHint(skill),
+    });
+  }
+
+  return unwrap(
+    await clack.groupMultiselect<string>({
+      message: 'Which skills should be installed?',
+      options: groups,
+      initialValues: initial.filter((name) =>
+        available.some((skill) => skill.name === name),
+      ),
+      required: false,
+    }),
+  );
+}
+
+export async function promptSkillMode(initial: SkillMode): Promise<SkillMode> {
+  return unwrap(
+    await clack.select<SkillMode>({
+      message: 'How should first-party skills be installed?',
+      options: [
+        {
+          value: 'copy',
+          label: 'Copy them',
+          hint: 'a snapshot that changes only on sync',
+        },
+        {
+          value: 'link',
+          label: 'Link them',
+          hint: 'edits in skills/ apply right away',
+        },
+      ],
+      initialValue: initial,
     }),
   );
 }

@@ -17,6 +17,7 @@ import {
   isSystemError,
   UsageError,
 } from './errors.ts';
+import { SKILL_MODES, type SkillMode } from './skills/install.ts';
 import { isToolId, TOOL_IDS, type ToolId } from './tools/registry.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
@@ -37,6 +38,9 @@ Options:
   --tools <ids>         Comma-separated tools: ${TOOL_IDS.join(', ')}
                         (an empty list removes what was installed for every tool)
   --blocks <ids>        Comma-separated block ids, for example core/no-ai-tells
+  --skills <names>      Comma-separated skills from catalog.yaml or skills/
+                        (an empty list removes every installed skill)
+  --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --var <name=value>    Block variable, repeatable
   --link-command        Link the agents-config command into ~/.local/bin
   --local               Project scope: keep the files out of git
@@ -50,6 +54,8 @@ const OPTIONS = {
   project: { type: 'string' },
   tools: { type: 'string' },
   blocks: { type: 'string' },
+  skills: { type: 'string' },
+  'skill-mode': { type: 'string' },
   var: { type: 'string', multiple: true },
   'link-command': { type: 'boolean' },
   local: { type: 'boolean' },
@@ -71,6 +77,8 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'project',
     'tools',
     'blocks',
+    'skills',
+    'skill-mode',
     'var',
     'link-command',
     'local',
@@ -105,6 +113,17 @@ function parseTools(value: string | undefined): ToolId[] | undefined {
     throw new UsageError(`Unknown tools: ${unknown.join(', ')}`);
   }
   return ids.filter(isToolId);
+}
+
+function parseSkillMode(value: string | undefined): SkillMode | undefined {
+  if (value === undefined) return undefined;
+  const mode = SKILL_MODES.find((candidate) => candidate === value);
+  if (!mode) {
+    throw new UsageError(
+      `--skill-mode must be one of ${SKILL_MODES.join(', ')}, got "${value}"`,
+    );
+  }
+  return mode;
 }
 
 function parseVariables(values: string[] | undefined): Record<string, string> {
@@ -216,6 +235,8 @@ async function main(argv: string[]): Promise<number> {
       if (terminal && !yes) clack.intro('agents-config');
       const tools = parseTools(values.tools);
       const blocks = parseList(values.blocks);
+      const skills = parseList(values.skills);
+      const skillMode = parseSkillMode(values['skill-mode']);
       return runInit(ctx, {
         variables: parseVariables(values.var),
         yes,
@@ -224,6 +245,8 @@ async function main(argv: string[]): Promise<number> {
         ...projectDir,
         ...(tools ? { tools } : {}),
         ...(blocks ? { blocks } : {}),
+        ...(skills ? { skills } : {}),
+        ...(skillMode ? { skillMode } : {}),
         ...(values['link-command'] !== undefined
           ? { linkCommand: values['link-command'] }
           : {}),

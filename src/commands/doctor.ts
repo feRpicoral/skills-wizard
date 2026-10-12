@@ -12,13 +12,15 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
-import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
+import { DEFAULT_SKILL_MODE, resolveSkillSources } from '../skills/install.ts';
+import { loadSkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, TOOLS } from '../tools/registry.ts';
 import {
   loadLibrary,
   readLocationManifest,
   resolveLocation,
+  sourceCache,
 } from './shared.ts';
 
 interface DoctorOptions {
@@ -162,12 +164,35 @@ export async function runDoctor(
       message: `Required blocks missing from the install: ${added.join(', ')}; agents-config sync will add them`,
     });
   }
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const unknownSkills = unknownSkillNames(skillLibrary, manifest.skills);
+  if (unknownSkills.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `Skills no longer in catalog.yaml or skills/: ${unknownSkills.join(', ')}; agents-config sync will remove them`,
+    });
+  }
+  const skills = manifest.skills.filter(
+    (name) => !unknownSkills.includes(name),
+  );
+  const resolution = await resolveSkillSources({
+    library: skillLibrary,
+    names: skills,
+    cache: sourceCache(ctx),
+    fetch: false,
+  });
+  for (const [name, problem] of resolution.problems) {
+    findings.push({
+      level: 'note',
+      message: `Skipped checking the ${name} skill: ${problem}`,
+    });
+  }
   const plan = await buildPlan({
     scope,
     selection: {
       tools: manifest.tools,
       blocks,
-      skills: manifest.skills,
+      skills,
       variables: manifest.variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal: manifest.options.keepLocal ?? false,
@@ -179,6 +204,7 @@ export async function runDoctor(
     previous: manifest,
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
+    skillSources: resolution.sources,
   });
 
   for (const action of plan.actions) {

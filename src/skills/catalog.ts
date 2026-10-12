@@ -95,3 +95,10 @@ export async function loadCatalog(file: string): Promise<Catalog> {
   checkEntries(result.data, file);
   return result.data;
 }
+
+export function repositoryPaths(catalog: Catalog, repo: string): string[] {
+  const paths = catalog.skills
+    .filter((entry) => entry.repo === repo)
+    .map((entry) => entry.path);
+  return [...new Set(paths)].sort();
+}
