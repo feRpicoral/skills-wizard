@@ -20,6 +20,7 @@ import {
   promptTools,
   promptVariables,
 } from '../prompts/selection.ts';
+import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
@@ -205,7 +206,15 @@ export async function runInit(
 
   const plan = await buildPlan({
     scope,
-    selection: { tools, blocks, variables, linkCommand, keepLocal },
+    selection: {
+      tools,
+      blocks,
+      skills: previous?.skills ?? [],
+      variables,
+      linkCommand,
+      keepLocal,
+      skillMode: previous?.options.skillMode ?? DEFAULT_SKILL_MODE,
+    },
     library,
     paths: ctx.paths,
     repoRoot: ctx.repoRoot,

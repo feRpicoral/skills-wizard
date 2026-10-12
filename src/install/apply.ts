@@ -1,4 +1,10 @@
-import { ApplyError } from '../errors.ts';
+import { ApplyError, SetupError } from '../errors.ts';
+import { runSetup } from '../skills/setup.ts';
+import {
+  removeTree,
+  replaceWithCopy,
+  replaceWithLink,
+} from '../skills/tree.ts';
 import { serializeManifest, writeManifest } from '../state/manifest.ts';
 import {
   readTextIfExists,
@@ -8,13 +14,15 @@ import {
 } from './fs.ts';
 import type { Plan, PlannedAction } from './plan.ts';
 
+interface SetupFailure {
+  path: string;
+  message: string;
+}
+
 interface ApplyOutcome {
   applied: PlannedAction[];
   skipped: PlannedAction[];
-}
-
-interface ExecutionResult extends ApplyOutcome {
-  failure?: ApplyError;
+  setupFailures: SetupFailure[];
 }
 
 async function execute(action: PlannedAction): Promise<void> {
@@ -33,6 +41,33 @@ async function execute(action: PlannedAction): Promise<void> {
         target: action.change.target,
         path: action.path,
       });
+    case 'copy-tree':
+      return replaceWithCopy({
+        source: action.change.source,
+        destination: action.path,
+        ...(action.change.backup ? { backup: action.change.backup } : {}),
+      });
+    case 'link-tree':
+      return replaceWithLink({
+        target: action.change.target,
+        destination: action.path,
+        ...(action.change.backup ? { backup: action.change.backup } : {}),
+      });
+    case 'delete-tree':
+      return removeTree(action.path);
+  }
+}
+
+async function setUp(
+  action: PlannedAction,
+  failures: SetupFailure[],
+): Promise<void> {
+  if (action.change.type !== 'copy-tree' || !action.change.setup) return;
+  try {
+    await runSetup({ dir: action.path, command: action.change.setup });
+  } catch (error) {
+    if (!(error instanceof SetupError)) throw error;
+    failures.push({ path: action.path, message: error.message });
   }
 }
 
@@ -61,33 +96,34 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function executeAll(plan: Plan): Promise<ExecutionResult> {
-  const applied: PlannedAction[] = [];
-  const skipped: PlannedAction[] = [];
+async function executeAll(
+  plan: Plan,
+  outcome: ApplyOutcome,
+): Promise<ApplyError | undefined> {
   for (const action of plan.actions) {
     if (action.status === 'conflict') {
-      skipped.push(action);
+      outcome.skipped.push(action);
       continue;
     }
     try {
       await execute(action);
     } catch (error) {
-      return {
-        applied,
-        skipped,
-        failure: new ApplyError(
-          `Could not update ${action.path}: ${message(error)}`,
-          { cause: error },
-        ),
-      };
+      return new ApplyError(
+        `Could not update ${action.path}: ${message(error)}`,
+        { cause: error },
+      );
     }
-    applied.push(action);
+    outcome.applied.push(action);
+    await setUp(action, outcome.setupFailures);
   }
-  return { applied, skipped };
+  return undefined;
 }
 
 export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
-  const { applied, skipped, failure } = await executeAll(plan);
+  const outcome: ApplyOutcome = { applied: [], skipped: [], setupFailures: [] };
+  const { applied } = outcome;
+
+  const failure = await executeAll(plan, outcome);
 
   try {
     await recordManifest(plan, new Set(applied));
@@ -111,5 +147,5 @@ export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   }
   if (failure !== undefined) throw failure;
 
-  return { applied, skipped };
+  return outcome;
 }

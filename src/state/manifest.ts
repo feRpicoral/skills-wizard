@@ -12,11 +12,33 @@ import {
   statIfExists,
   writeTextAtomic,
 } from '../install/fs.ts';
+import { SKILL_MODES } from '../skills/install.ts';
+import { isSkillName } from '../skills/validate.ts';
 import { TOOL_IDS } from '../tools/registry.ts';
 
 export const MANIFEST_VERSION = 1;
 
 const pathField = z.string().min(1);
+
+const skillName = z.string().refine(isSkillName, 'must be a valid skill name');
+
+const skillSourceSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('catalog'),
+    repo: z.string().min(1),
+    path: z.string().min(1),
+    ref: z.string().min(1).optional(),
+    commit: z.string().min(1),
+  }),
+  z.object({ type: z.literal('local'), path: z.string().min(1) }),
+]);
+
+export type SkillSourceRecord = z.infer<typeof skillSourceSchema>;
+
+const skillInstallSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('copy'), hash: z.string().min(1) }),
+  z.object({ mode: z.literal('link'), target: pathField }),
+]);
 
 const entrySchema = z.discriminatedUnion('kind', [
   z.object({
@@ -51,6 +73,13 @@ const entrySchema = z.discriminatedUnion('kind', [
     path: pathField,
     target: pathField,
   }),
+  z.object({
+    kind: z.literal('skill'),
+    path: pathField,
+    name: skillName,
+    source: skillSourceSchema,
+    install: skillInstallSchema,
+  }),
 ]);
 
 export type ManifestEntry = z.infer<typeof entrySchema>;
@@ -60,11 +89,13 @@ const manifestSchema = z.object({
   scope: z.enum(SCOPES),
   tools: z.array(z.enum(TOOL_IDS)),
   blocks: z.array(z.string()),
+  skills: z.array(skillName).default([]),
   variables: z.record(z.string(), z.string()),
   options: z
     .object({
       linkCommand: z.boolean().optional(),
       keepLocal: z.boolean().optional(),
+      skillMode: z.enum(SKILL_MODES).optional(),
     })
     .default({}),
   entries: z.array(entrySchema),

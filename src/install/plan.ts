@@ -1,20 +1,23 @@
 import { requiredVariables, selectBlocks } from '../blocks/compose.ts';
+import type { Scope } from '../blocks/library.ts';
 import {
   type Manifest,
   MANIFEST_VERSION,
   type ManifestEntry,
   serializeManifest,
 } from '../state/manifest.ts';
-import { planTarget } from './file-actions.ts';
+import { planFile } from './file-actions.ts';
 import { readTextIfExists } from './fs.ts';
 import { planRemoval } from './removal.ts';
 import {
   type ActionStatus,
   checkManifestPath,
+  conflict,
   guarded,
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
+import { planSkill, planSymlink } from './skill-actions.ts';
 import {
   keyOf,
   type PlanInput,
@@ -36,15 +39,41 @@ export interface Plan {
   projectDir?: string;
 }
 
+interface DispatchTargetParams {
+  target: Target;
+  previous: ManifestEntry | null;
+  scope: Scope;
+  boundary?: string;
+}
+
+function dispatchTarget({
+  target,
+  previous,
+  scope,
+  boundary,
+}: DispatchTargetParams): Promise<PlannedAction> {
+  const location = boundary ? { boundary } : {};
+  switch (target.kind) {
+    case 'symlink':
+      return planSymlink({ target, previous, ...location });
+    case 'skill':
+      return planSkill({ target, previous, scope, ...location });
+    default:
+      return planFile({ target, previous, ...location });
+  }
+}
+
 interface PlanTargetActionsParams {
   targets: readonly Target[];
   previousEntries: ReadonlyMap<string, ManifestEntry>;
+  scope: Scope;
   boundary?: string;
 }
 
 async function planTargetActions({
   targets,
   previousEntries,
+  scope,
   boundary,
 }: PlanTargetActionsParams): Promise<{
   actions: PlannedAction[];
@@ -52,22 +81,38 @@ async function planTargetActions({
 }> {
   const actions: PlannedAction[] = [];
   const plannedKeys = new Set<string>();
+  const blockedSkills = new Set<string>();
   for (const target of targets) {
     const key = keyOf(target);
     plannedKeys.add(key);
     const previous = previousEntries.get(key) ?? null;
-    actions.push(
-      await guarded({
-        target,
-        previous,
-        plan: () =>
-          planTarget({
+    if (target.kind === 'symlink' && target.skill !== undefined) {
+      if (blockedSkills.has(target.skill)) {
+        actions.push(
+          conflict({
             target,
             previous,
-            ...(boundary ? { boundary } : {}),
+            reason: `waits for the ${target.skill} skill folder`,
           }),
-      }),
-    );
+        );
+        continue;
+      }
+    }
+    const action = await guarded({
+      target,
+      previous,
+      plan: () =>
+        dispatchTarget({
+          target,
+          previous,
+          scope,
+          ...(boundary ? { boundary } : {}),
+        }),
+    });
+    if (target.kind === 'skill' && action.status === 'conflict') {
+      blockedSkills.add(target.name);
+    }
+    actions.push(action);
   }
   return { actions, plannedKeys };
 }
@@ -118,10 +163,14 @@ function composeManifestMetadata({
     scope,
     tools: [...selection.tools],
     blocks: blocks.map((block) => block.id),
+    skills: [...selection.skills],
     variables,
     options:
       scope === 'global'
-        ? { linkCommand: selection.linkCommand }
+        ? {
+            linkCommand: selection.linkCommand,
+            skillMode: selection.skillMode,
+          }
         : { keepLocal: selection.keepLocal },
   };
 }
@@ -175,6 +224,7 @@ export async function buildPlan({
   const { actions: targetActions, plannedKeys } = await planTargetActions({
     targets: targetsForPlan(input),
     previousEntries,
+    scope,
     ...(boundary ? { boundary } : {}),
   });
   const removalActions = await planRemovalActions({

@@ -1,0 +1,537 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  stat,
+  symlink,
+} from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
+import { test } from 'node:test';
+import { promisify } from 'node:util';
+
+import type { BlockLibrary } from '../blocks/library.ts';
+import type { Paths } from '../env.ts';
+import type { SkillSource } from '../skills/install.ts';
+import {
+  globalManifestPath,
+  type Manifest,
+  projectManifestPath,
+  readManifest,
+  readProjectManifest,
+} from '../state/manifest.ts';
+import {
+  skillSource,
+  tempDir,
+  tempPaths,
+  writeFiles,
+} from '../test-support/fixtures.ts';
+import type { ToolId } from '../tools/registry.ts';
+import { applyPlan } from './apply.ts';
+import { buildPlan, type ProjectContext, type Selection } from './plan.ts';
+
+const run = promisify(execFile);
+const REPO = '/repo';
+
+const library: BlockLibrary = {
+  headers: { global: '# Rules' },
+  groups: {},
+  blocks: [],
+};
+
+function selection(
+  tools: ToolId[],
+  skills: string[],
+  overrides: Partial<Selection> = {},
+): Selection {
+  return {
+    tools,
+    blocks: [],
+    skills,
+    variables: {},
+    linkCommand: false,
+    keepLocal: false,
+    skillMode: 'copy',
+    ...overrides,
+  };
+}
+
+async function localSkill(
+  root: string,
+  name: string,
+  files: Record<string, string> = {},
+): Promise<SkillSource> {
+  const dir = join(root, 'skills', name);
+  await writeFiles(dir, { 'SKILL.md': skillSource(name), ...files });
+  return {
+    dir,
+    record: { type: 'local', path: `skills/${name}` },
+    linkable: true,
+  };
+}
+
+function sources(...skills: SkillSource[]): Map<string, SkillSource> {
+  return new Map(skills.map((skill) => [basename(skill.dir), skill]));
+}
+
+interface GlobalRun {
+  tools: ToolId[];
+  skills: SkillSource[];
+  selected?: string[];
+  overrides?: Partial<Selection>;
+  adopt?: { names: Set<string>; backupDir: string };
+}
+
+async function installGlobal(paths: Paths, options: GlobalRun) {
+  const manifestPath = globalManifestPath(paths);
+  const map = sources(...options.skills);
+  const plan = await buildPlan({
+    scope: 'global',
+    selection: selection(
+      options.tools,
+      options.selected ?? [...map.keys()],
+      options.overrides,
+    ),
+    library,
+    paths,
+    repoRoot: REPO,
+    previous: await readManifest(manifestPath),
+    manifestPath,
+    skillSources: map,
+    ...(options.adopt ? { adopt: options.adopt } : {}),
+  });
+  const outcome = await applyPlan(plan);
+  return { plan, outcome };
+}
+
+async function installProject(
+  paths: Paths,
+  project: ProjectContext,
+  tools: ToolId[],
+  skills: SkillSource[],
+  overrides: Partial<Selection> = {},
+) {
+  const manifestPath = projectManifestPath(project.dir);
+  const stored = await readProjectManifest(manifestPath, {
+    dir: project.dir,
+    ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
+  });
+  const map = sources(...skills);
+  const plan = await buildPlan({
+    scope: 'project',
+    selection: selection(tools, [...map.keys()], overrides),
+    library,
+    paths,
+    repoRoot: REPO,
+    previous: stored?.manifest ?? null,
+    manifestPath,
+    project,
+    skillSources: map,
+  });
+  await applyPlan(plan);
+  return plan;
+}
+
+function statuses(plan: { actions: { path: string; status: string }[] }) {
+  return Object.fromEntries(
+    plan.actions.map((action) => [action.path, action.status]),
+  );
+}
+
+async function manifestOf(paths: Paths): Promise<Manifest | null> {
+  return readManifest(globalManifestPath(paths));
+}
+
+test('a global install copies the skill once and links it for tools that need links', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+
+  await installGlobal(paths, {
+    tools: ['claude-code', 'antigravity', 'codex'],
+    skills: [skill],
+  });
+
+  const canonical = join(paths.skillsDir, 'notes');
+  assert.ok((await stat(join(canonical, 'SKILL.md'))).isFile());
+  assert.equal(
+    await readlink(join(paths.claudeHome, 'skills', 'notes')),
+    canonical,
+  );
+  assert.equal(
+    await readlink(join(paths.geminiHome, 'config', 'skills', 'notes')),
+    canonical,
+  );
+  await assert.rejects(lstat(join(paths.codexHome, 'skills')), {
+    code: 'ENOENT',
+  });
+});
+
+test('the manifest records where a skill came from and the hash of the copy', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+
+  const manifest = await manifestOf(paths);
+  const entry = manifest?.entries.find((item) => item.kind === 'skill');
+  assert.deepEqual(manifest?.skills, ['notes']);
+  assert.ok(entry?.kind === 'skill' && entry.install.mode === 'copy');
+  assert.match(entry.install.hash, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(entry.source, { type: 'local', path: 'skills/notes' });
+});
+
+test('a second install with the same source plans no changes', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await installGlobal(paths, { tools: ['claude-code'], skills: [skill] });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['claude-code'],
+    skills: [skill],
+  });
+
+  assert.ok(plan.actions.every((action) => action.status === 'unchanged'));
+  assert.equal(plan.manifestStatus, 'unchanged');
+});
+
+test('a changed source updates the installed copy', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const skill = await localSkill(root, 'notes');
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  await writeFiles(skill.dir, { 'references/new.md': 'new\n' });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+  });
+
+  assert.equal(statuses(plan)[join(paths.skillsDir, 'notes')], 'update');
+  assert.equal(
+    await readFile(
+      join(paths.skillsDir, 'notes', 'references', 'new.md'),
+      'utf8',
+    ),
+    'new\n',
+  );
+});
+
+test('a skill folder agents-config does not own is a conflict and stays untouched', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'mine\n' });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['claude-code'],
+    skills: [skill],
+  });
+
+  const canonical = plan.actions.find(
+    (action) => action.path === join(paths.skillsDir, 'notes'),
+  );
+  assert.equal(canonical?.status, 'conflict');
+  assert.match(canonical?.reason ?? '', /run agents-config adopt notes/);
+  assert.equal(
+    statuses(plan)[join(paths.claudeHome, 'skills', 'notes')],
+    'conflict',
+  );
+  assert.equal(
+    await readFile(join(paths.skillsDir, 'notes', 'SKILL.md'), 'utf8'),
+    'mine\n',
+  );
+  await assert.rejects(lstat(join(paths.claudeHome, 'skills', 'notes')), {
+    code: 'ENOENT',
+  });
+});
+
+test('a link that already points at an unmanaged skill folder is not taken over', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'mine\n' });
+  await mkdir(join(paths.claudeHome, 'skills'), { recursive: true });
+  await symlink(
+    join(paths.skillsDir, 'notes'),
+    join(paths.claudeHome, 'skills', 'notes'),
+  );
+
+  await installGlobal(paths, { tools: ['claude-code'], skills: [skill] });
+
+  const manifest = await manifestOf(paths);
+  assert.deepEqual(
+    manifest?.entries.filter((entry) => entry.kind === 'symlink'),
+    [],
+  );
+});
+
+test('a copy edited after install is a conflict and is not overwritten', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const skill = await localSkill(root, 'notes');
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'edited\n' });
+  await writeFiles(skill.dir, { 'references/new.md': 'new\n' });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+  });
+
+  const canonical = plan.actions.find(
+    (action) => action.path === join(paths.skillsDir, 'notes'),
+  );
+  assert.equal(canonical?.status, 'conflict');
+  assert.equal(
+    canonical?.reason,
+    'changed outside agents-config, left in place',
+  );
+  assert.equal(
+    await readFile(join(paths.skillsDir, 'notes', 'SKILL.md'), 'utf8'),
+    'edited\n',
+  );
+});
+
+test('adopting backs up the unmanaged folder and links before replacing them', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await writeFiles(paths.home, {
+    '.agents/skills/notes/SKILL.md': 'mine\n',
+    '.claude/skills/notes/SKILL.md': 'old copy\n',
+  });
+  const backupDir = join(paths.stateDir, 'backups', '2026-01-01T00-00-00Z');
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['claude-code'],
+    skills: [skill],
+    adopt: { names: new Set(['notes']), backupDir },
+  });
+
+  assert.deepEqual(
+    plan.actions.map((action) => action.status),
+    ['create', 'update', 'update'],
+  );
+  assert.equal(
+    await readFile(join(backupDir, '.agents/skills/notes/SKILL.md'), 'utf8'),
+    'mine\n',
+  );
+  assert.equal(
+    await readFile(join(backupDir, '.claude/skills/notes/SKILL.md'), 'utf8'),
+    'old copy\n',
+  );
+  assert.equal(
+    await readlink(join(paths.claudeHome, 'skills', 'notes')),
+    join(paths.skillsDir, 'notes'),
+  );
+});
+
+test('deselecting a skill removes the copy and its links', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await installGlobal(paths, {
+    tools: ['claude-code', 'antigravity-cli'],
+    skills: [skill],
+  });
+
+  await installGlobal(paths, {
+    tools: ['claude-code', 'antigravity-cli'],
+    skills: [skill],
+    selected: [],
+  });
+
+  await assert.rejects(lstat(join(paths.skillsDir, 'notes')), {
+    code: 'ENOENT',
+  });
+  await assert.rejects(lstat(join(paths.claudeHome, 'skills', 'notes')), {
+    code: 'ENOENT',
+  });
+  await assert.rejects(
+    lstat(join(paths.geminiHome, 'antigravity-cli', 'skills', 'notes')),
+    { code: 'ENOENT' },
+  );
+  assert.deepEqual(
+    (await manifestOf(paths))?.entries.filter(
+      (entry) => entry.kind === 'skill' || entry.kind === 'symlink',
+    ),
+    [],
+  );
+});
+
+test('deselecting a skill whose copy was edited leaves the copy in place', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  await writeFiles(paths.skillsDir, { 'notes/extra.md': 'mine\n' });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    selected: [],
+  });
+
+  assert.equal(statuses(plan)[join(paths.skillsDir, 'notes')], 'unchanged');
+  assert.equal(
+    await readFile(join(paths.skillsDir, 'notes', 'extra.md'), 'utf8'),
+    'mine\n',
+  );
+});
+
+test('an unavailable source keeps the installed skill and its links', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await installGlobal(paths, { tools: ['claude-code'], skills: [skill] });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['claude-code'],
+    skills: [],
+    selected: ['notes'],
+  });
+
+  assert.equal(
+    plan.actions.find(
+      (action) => action.path === join(paths.skillsDir, 'notes'),
+    )?.reason,
+    'source unavailable, left as it is',
+  );
+  assert.ok(
+    (
+      await stat(join(paths.claudeHome, 'skills', 'notes', 'SKILL.md'))
+    ).isFile(),
+  );
+});
+
+test('link mode links first-party skills to their source and copy mode replaces the link', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    overrides: { skillMode: 'link' },
+  });
+  const linked = await readlink(join(paths.skillsDir, 'notes'));
+
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+
+  assert.equal(linked, skill.dir);
+  assert.ok((await lstat(join(paths.skillsDir, 'notes'))).isDirectory());
+});
+
+test('link mode still copies third-party skills', async (t) => {
+  const paths = await tempPaths(t);
+  const skill: SkillSource = {
+    ...(await localSkill(await tempDir(t), 'notes')),
+    linkable: false,
+  };
+
+  await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    overrides: { skillMode: 'link' },
+  });
+
+  assert.ok((await lstat(join(paths.skillsDir, 'notes'))).isDirectory());
+});
+
+test('setup runs in the installed copy and a failure is reported without stopping the install', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const ready: SkillSource = {
+    ...(await localSkill(root, 'ready')),
+    setup: 'echo done > setup.log',
+  };
+  const broken: SkillSource = {
+    ...(await localSkill(root, 'broken')),
+    setup: 'echo missing tool >&2; exit 3',
+  };
+
+  const { plan, outcome } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [broken, ready],
+  });
+
+  assert.match(
+    plan.actions.find((action) => action.path.endsWith('ready'))?.label ?? '',
+    /then runs "echo done > setup.log"/,
+  );
+  assert.equal(
+    await readFile(join(paths.skillsDir, 'ready', 'setup.log'), 'utf8'),
+    'done\n',
+  );
+  assert.deepEqual(outcome.setupFailures, [
+    {
+      path: join(paths.skillsDir, 'broken'),
+      message: '"echo missing tool >&2; exit 3" failed: missing tool',
+    },
+  ]);
+});
+
+test('a project install copies skills and links them relatively for Claude Code', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  const skill = await localSkill(await tempDir(t), 'notes');
+
+  await installProject(paths, { dir, title: 'app' }, ['claude-code'], [skill]);
+
+  const link = join(dir, '.claude', 'skills', 'notes');
+  assert.equal(await readlink(link), '../../.agents/skills/notes');
+  assert.equal(
+    resolve(dirname(link), await readlink(link)),
+    join(dir, '.agents', 'skills', 'notes'),
+  );
+  assert.ok((await stat(join(link, 'SKILL.md'))).isFile());
+  assert.match(
+    await readFile(projectManifestPath(dir), 'utf8'),
+    /"path": "\.agents\/skills\/notes"/,
+  );
+});
+
+test('a project never copies skills through a skills folder linked outside it', async (t) => {
+  const paths = await tempPaths(t);
+  const outside = await realpath(await tempDir(t));
+  const dir = await realpath(await tempDir(t));
+  const skill = await localSkill(await tempDir(t), 'notes');
+  await mkdir(join(dir, '.agents'));
+  await symlink(outside, join(dir, '.agents', 'skills'));
+  await mkdir(join(dir, '.claude'));
+  await symlink(outside, join(dir, '.claude', 'skills'));
+
+  const plan = await installProject(
+    paths,
+    { dir, title: 'app' },
+    ['claude-code'],
+    [skill],
+  );
+
+  assert.equal(
+    statuses(plan)[join(dir, '.agents', 'skills', 'notes')],
+    'conflict',
+  );
+  assert.equal(
+    statuses(plan)[join(dir, '.claude', 'skills', 'notes')],
+    'conflict',
+  );
+  assert.deepEqual(await readdir(outside), []);
+});
+
+test('keep-local excludes the project skill folders and links', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  await run('git', ['init', '-q'], { cwd: root });
+  const dir = await realpath(root);
+  const skill = await localSkill(await tempDir(t), 'notes');
+  const project: ProjectContext = {
+    dir,
+    title: 'app',
+    git: { root: dir, excludePath: join(dir, '.git', 'info', 'exclude') },
+  };
+
+  await installProject(paths, project, ['claude-code'], [skill], {
+    keepLocal: true,
+  });
+
+  const exclude = await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8');
+  assert.match(exclude, /^\/\.agents\/skills\/notes$/m);
+  assert.match(exclude, /^\/\.claude\/skills\/notes$/m);
+});

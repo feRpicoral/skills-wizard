@@ -30,3 +30,5 @@ export class UnsafeWriteError extends AgentsConfigError {}
 export class CatalogError extends AgentsConfigError {}
 
 export class SourceError extends AgentsConfigError {}
+
+export class SetupError extends AgentsConfigError {}

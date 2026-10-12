@@ -30,6 +30,7 @@ export interface ToolDefinition {
   detect: { dirs: (paths: Paths) => string[]; bins: readonly string[] };
   global: {
     instructions: (paths: Paths) => string;
+    skills?: (paths: Paths) => string;
     settings?: (paths: Paths) => ArraySetting;
     shadowedBy?: (paths: Paths) => string;
     limits?: SizeLimits;
@@ -37,6 +38,7 @@ export interface ToolDefinition {
   project: {
     importLine?: { file: string; line: string };
     settings?: ArraySetting;
+    skills?: string;
   };
 }
 
@@ -60,6 +62,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     },
     global: {
       instructions: sharedGeminiInstructions,
+      skills: (paths) => join(paths.geminiHome, 'config', 'skills'),
       limits: ANTIGRAVITY_RULE_LIMITS,
     },
     project: {},
@@ -73,6 +76,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     },
     global: {
       instructions: sharedGeminiInstructions,
+      skills: (paths) => join(paths.geminiHome, 'antigravity-cli', 'skills'),
       limits: ANTIGRAVITY_RULE_LIMITS,
     },
     project: {},
@@ -103,9 +107,13 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     detect: { dirs: (paths) => [paths.claudeHome], bins: ['claude'] },
     global: {
       instructions: (paths) => join(paths.claudeHome, 'CLAUDE.md'),
+      skills: (paths) => join(paths.claudeHome, 'skills'),
       limits: { lines: 200 },
     },
-    project: { importLine: { file: 'CLAUDE.md', line: '@AGENTS.md' } },
+    project: {
+      importLine: { file: 'CLAUDE.md', line: '@AGENTS.md' },
+      skills: join('.claude', 'skills'),
+    },
   },
   codex: {
     id: 'codex',

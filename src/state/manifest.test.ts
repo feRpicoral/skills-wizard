@@ -26,6 +26,7 @@ function manifest(entries: Manifest['entries']): Manifest {
     scope: 'project',
     tools: ['claude-code'],
     blocks: ['core/no-ai-tells'],
+    skills: [],
     variables: {},
     options: { keepLocal: false },
     entries,
@@ -152,4 +153,19 @@ test('a manifest path that is not a regular file is refused', async (t) => {
   await mkdir(file);
 
   await assert.rejects(readManifest(file), /is not a regular file/);
+});
+
+test('a recorded skill name must follow the skill naming rules', async (t) => {
+  const project = await realpath(await tempDir(t));
+  const file = projectManifestPath(project);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    JSON.stringify({ ...manifest([]), skills: ['../../outside'] }),
+  );
+
+  await assert.rejects(
+    readProjectManifest(file, { dir: project }),
+    /must be a valid skill name/,
+  );
 });

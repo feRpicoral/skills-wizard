@@ -12,6 +12,7 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
+import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, TOOLS } from '../tools/registry.ts';
 import {
@@ -166,9 +167,11 @@ export async function runDoctor(
     selection: {
       tools: manifest.tools,
       blocks,
+      skills: manifest.skills,
       variables: manifest.variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal: manifest.options.keepLocal ?? false,
+      skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
     },
     library,
     paths: ctx.paths,
