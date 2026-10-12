@@ -48,14 +48,14 @@ Each target becomes one action:
 | `remove`    | Content the CLI added is removed because it is no longer selected           |
 | `conflict`  | The file cannot be changed safely, so it is left untouched                  |
 
-Conflicts come from malformed markers, JSON files with comments or invalid syntax, unmanaged files at a path the CLI wants to own (for example `~/.local/bin/agents-config`), paths that are directories or unreadable, and project files whose real location is outside the project.
+Conflicts come from malformed markers, JSON files with comments or invalid syntax, unmanaged files at a path the CLI wants to own (for example `~/.local/bin/agents-config`), paths that are directories, special files or unreadable, links to missing locations, and project files whose real location is outside the project.
 
 ## Writers
 
 - **Managed region.** Text between `<!-- BEGIN:agents-config -->` and `<!-- END:agents-config -->`. A file without markers gets the region appended after its content. Duplicate or unmatched markers are a conflict. Lines outside the region keep their own line endings, and new lines use the ending most of the file uses.
 - **Import line.** A single line such as `@AGENTS.md`, prepended to an existing `CLAUDE.md`. A `CLAUDE.md` that is a link to `AGENTS.md` needs no import line and is left alone, even before `AGENTS.md` exists.
 - **JSON array values.** Adds values to a key such as `context.fileName` and removes only the values the CLI added. A string value is converted to a list and restored on removal. Files with comments are refused.
-- **Exclude region.** `# BEGIN:agents-config <dir>` markers in the repository's `info/exclude`, one region per project, with patterns relative to the repository root.
+- **Exclude region.** `# BEGIN:agents-config <dir>` markers in the repository's `info/exclude`, one region per project, with patterns relative to the repository root. When a project kept local is no longer in a git repository, the option is dropped with a notice.
 - **Symlink.** Replaced only when the manifest owns it and it still points where the CLI left it. A link someone retargeted is left alone.
 
 A target that is itself a symlink, such as a `CLAUDE.md` linked from a dotfiles repository, is written through: the CLI edits the file the link points to and keeps the link. In a project, this only happens when the real location, with every link resolved, is inside the project. A committed link or linked directory that leads elsewhere is a conflict, so a repository cannot point the CLI at files such as `~/.zshrc`. The git exclude file is the one exception, because git itself reports where it is.
@@ -69,7 +69,7 @@ Writes are atomic: content goes to a temporary file, which is then renamed over 
 | System-wide | `~/.agents/agents-config/manifest.json` | Absolute                         |
 | Project     | `<project>/.agents/agents-config.json`  | Relative, so it can be committed |
 
-A manifest stores the selection (tools, blocks, variables, options) and one entry per owned path. After an apply, the manifest records every action that actually ran, so if an action fails, the files already written stay tracked. A project manifest is rejected when an entry points outside the project or when the manifest itself would be written outside it. Git exclude entries recorded for another repository, which happens when a project is moved or copied, are ignored with a warning and never touched.
+A manifest stores the selection (tools, blocks, variables, options) and one entry per owned path. After an apply, the manifest records every action that actually ran, so if an action fails, the files already written stay tracked. The manifest must be a regular file: a symlinked manifest, or one inside a link to a missing location, stops the run before anything is written. If the manifest cannot be written after other changes were applied, the error lists those changes. A project manifest is rejected when an entry points outside the project or when the manifest itself would be read or written outside it. Git exclude entries recorded for another repository, which happens when a project is moved or copied, are ignored with a warning and never touched.
 
 ## Ownership rules
 
