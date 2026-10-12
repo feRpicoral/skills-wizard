@@ -2,11 +2,14 @@ import {
   defaultBlockIds,
   requiredVariables,
   selectBlocks,
+  unknownBlockIds,
+  withRequirements,
 } from '../blocks/compose.ts';
-import type { Scope } from '../blocks/library.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
+import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
 import {
   promptBlocks,
@@ -17,13 +20,19 @@ import {
   promptTools,
   promptVariables,
 } from '../prompts/selection.ts';
-import { readManifest } from '../state/manifest.ts';
-import { recordProject } from '../state/projects.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
-import { confirmAndApply, loadLibrary, resolveLocation } from './shared.ts';
+import {
+  confirmAndApply,
+  dropUnknownBlocks,
+  loadLibrary,
+  notify,
+  readLocationManifest,
+  resolveLocation,
+  warnTrackedFiles,
+} from './shared.ts';
 
-export interface InitOptions {
+interface InitOptions {
   scope?: Scope;
   projectDir?: string;
   tools?: ToolId[];
@@ -35,46 +44,95 @@ export interface InitOptions {
   dryRun: boolean;
 }
 
+function checkExplicitBlocks(
+  library: BlockLibrary,
+  ids: readonly string[],
+  scope: Scope,
+): void {
+  const unknown = unknownBlockIds(library, ids);
+  if (unknown.length > 0) {
+    throw new UsageError(`Unknown blocks: ${unknown.join(', ')}`);
+  }
+  const outOfScope = library.blocks.filter(
+    (block) => ids.includes(block.id) && !block.scopes.includes(scope),
+  );
+  if (outOfScope.length > 0) {
+    throw new UsageError(
+      `Blocks not available for ${scope} scope: ${outOfScope.map((block) => block.id).join(', ')}`,
+    );
+  }
+}
+
+function checkScopeOptions(scope: Scope, options: InitOptions): void {
+  if (scope === 'project' && options.linkCommand !== undefined) {
+    throw new UsageError(
+      '--link-command only applies to system-wide installs.',
+    );
+  }
+  if (scope === 'global' && options.keepLocal !== undefined) {
+    throw new UsageError('--local only applies to project installs.');
+  }
+}
+
 export async function runInit(
   ctx: Context,
   options: InitOptions,
 ): Promise<number> {
-  const interactive = ctx.interactive && !options.yes;
-  const scope =
-    options.scope ?? (interactive ? await promptScope() : undefined);
+  const prompting = ctx.interactive && !options.yes;
+  const scope = options.scope ?? (prompting ? await promptScope() : undefined);
   if (!scope) throw new UsageError('Pass --global or --project <dir>.');
+  checkScopeOptions(scope, options);
 
   const projectDir =
-    scope === 'project' && options.projectDir === undefined && interactive
+    scope === 'project' && options.projectDir === undefined && prompting
       ? await promptProjectDir(ctx.cwd)
       : options.projectDir;
   const location = await resolveLocation(ctx, scope, projectDir);
   const library = await loadLibrary(ctx);
-  const previous = await readManifest(location.manifestPath, location.baseDir);
+  const previous = await readLocationManifest(location);
 
   const initialTools =
     options.tools ??
     previous?.tools ??
     (await detectTools(ctx.paths, ctx.searchPath));
-  const tools = interactive
+  const tools = prompting
     ? await promptTools(scope, initialTools, ctx.paths)
     : initialTools;
-  if (!interactive && tools.length === 0) {
-    throw new UsageError('No tools selected or detected; pass --tools.');
+  if (!prompting && tools.length === 0 && !previous) {
+    throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
 
+  if (options.blocks) checkExplicitBlocks(library, options.blocks, scope);
   const initialBlocks =
-    options.blocks ?? previous?.blocks ?? defaultBlockIds(library, scope);
-  const blocks = interactive
+    options.blocks ??
+    (previous
+      ? dropUnknownBlocks(ctx, prompting, library, previous.blocks)
+      : defaultBlockIds(library, scope));
+  const chosen = prompting
     ? await promptBlocks(library, scope, initialBlocks)
     : initialBlocks;
+  const { ids: blocks, added } = withRequirements(library, chosen);
+  if (added.length > 0) {
+    notify(ctx, prompting, `Added required blocks: ${added.join(', ')}`);
+  }
 
   const needed = requiredVariables(selectBlocks(library, blocks, scope));
+  const unused = Object.keys(options.variables).filter(
+    (name) => !needed.includes(name),
+  );
+  if (unused.length > 0) {
+    notify(
+      ctx,
+      prompting,
+      `Ignoring unused variables: ${unused.join(', ')}`,
+      'warn',
+    );
+  }
   const known = await lookupVariables(needed, {
     ...previous?.variables,
     ...options.variables,
   });
-  const variables = interactive ? await promptVariables(needed, known) : known;
+  const variables = prompting ? await promptVariables(needed, known) : known;
   const missing = needed.filter((name) => !variables[name]?.trim());
   if (missing.length > 0) {
     throw new UsageError(
@@ -82,26 +140,26 @@ export async function runInit(
     );
   }
 
+  const previousLink = previous?.options.linkCommand ?? false;
   const linkCommand =
     scope === 'global'
       ? (options.linkCommand ??
-        (interactive
-          ? await promptLinkCommand(
-              previous?.options.linkCommand ?? true,
-              ctx.paths,
-            )
-          : (previous?.options.linkCommand ?? false)))
+        (prompting
+          ? await promptLinkCommand(previous ? previousLink : true, ctx.paths)
+          : previousLink))
       : false;
+  const git = location.project?.git;
+  const previousLocal = previous?.options.keepLocal ?? false;
   const keepLocal =
     scope === 'project'
       ? (options.keepLocal ??
-        (interactive && location.gitExcludePath
-          ? await promptKeepLocal(previous?.options.keepLocal ?? false)
-          : (previous?.options.keepLocal ?? false)))
+        (prompting && git
+          ? await promptKeepLocal(previousLocal)
+          : previousLocal))
       : false;
-  if (keepLocal && !location.gitExcludePath) {
+  if (keepLocal && !git) {
     throw new UsageError(
-      `${location.projectDir ?? ctx.cwd} is not a git repository, so files cannot be kept local.`,
+      `${location.project?.dir ?? ctx.cwd} is not in a git repository, so files cannot be kept local.`,
     );
   }
 
@@ -113,20 +171,25 @@ export async function runInit(
     repoRoot: ctx.repoRoot,
     previous,
     manifestPath: location.manifestPath,
-    now: ctx.now(),
-    ...(location.projectDir ? { projectDir: location.projectDir } : {}),
-    ...(location.projectTitle ? { projectTitle: location.projectTitle } : {}),
-    ...(location.gitExcludePath
-      ? { gitExcludePath: location.gitExcludePath }
-      : {}),
+    ...(location.project ? { project: location.project } : {}),
   });
+  if (keepLocal) await warnTrackedFiles(ctx, prompting, plan, location.project);
 
-  const result = await confirmAndApply(ctx, plan, location, {
-    interactive,
+  const result = await confirmAndApply(ctx, plan, {
+    yes: options.yes,
     dryRun: options.dryRun,
   });
-  if (result.applied && location.projectDir) {
-    await recordProject(ctx.paths, location.projectDir);
+  if (
+    result.applied &&
+    linkCommand &&
+    !ctx.searchPath.includes(ctx.paths.localBin)
+  ) {
+    notify(
+      ctx,
+      prompting,
+      `${displayPath(ctx.paths.localBin, ctx.paths.home)} is not on your PATH; add it to run agents-config from any directory.`,
+      'warn',
+    );
   }
   return result.code;
 }

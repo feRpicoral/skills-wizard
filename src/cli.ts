@@ -30,11 +30,12 @@ Options:
   --global              System-wide scope (default for sync and doctor)
   --project <dir>       Project scope
   --tools <ids>         Comma-separated tools: ${TOOL_IDS.join(', ')}
+                        (an empty list removes everything installed)
   --blocks <ids>        Comma-separated block ids, for example core/no-ai-tells
   --var <name=value>    Block variable, repeatable
   --link-command        Link the agents-config command into ~/.local/bin
   --local               Project scope: keep the files out of git
-  -y, --yes             Skip prompts and confirmation
+  -y, --yes             Apply without asking (required without a terminal)
   --dry-run             Show the plan without writing anything
   -h, --help            Show this help
   -v, --version         Show the version`;
@@ -52,6 +53,24 @@ const OPTIONS = {
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
 } as const;
+
+type OptionName = keyof typeof OPTIONS;
+
+const ALLOWED: Record<string, readonly OptionName[]> = {
+  init: [
+    'global',
+    'project',
+    'tools',
+    'blocks',
+    'var',
+    'link-command',
+    'local',
+    'yes',
+    'dry-run',
+  ],
+  sync: ['global', 'project', 'yes', 'dry-run'],
+  doctor: ['global', 'project'],
+};
 
 function parseList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
@@ -83,11 +102,21 @@ function parseVariables(values: string[] | undefined): Record<string, string> {
   return variables;
 }
 
+function rejectOptions(command: string, provided: readonly string[]): void {
+  const allowed: readonly string[] = ALLOWED[command] ?? [];
+  const extra = provided.filter((name) => !allowed.includes(name));
+  if (extra.length > 0) {
+    throw new UsageError(
+      `${extra.map((name) => `--${name}`).join(', ')} does not apply to ${command}`,
+    );
+  }
+}
+
 async function version(): Promise<string> {
-  const manifest = JSON.parse(
+  const packageJson = JSON.parse(
     await readFile(join(REPO_ROOT, 'package.json'), 'utf8'),
   ) as { version: string };
-  return manifest.version;
+  return packageJson.version;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -126,8 +155,27 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const terminal = process.stdin.isTTY && process.stdout.isTTY;
+  const command = positionals[0];
+  if (command === undefined || command === 'help') {
+    if (command === undefined && terminal) {
+      rejectOptions('menu', Object.keys(values));
+      return runMenu(
+        createContext({
+          repoRoot: REPO_ROOT,
+          cwd: process.cwd(),
+          interactive: true,
+        }),
+      );
+    }
+    print(HELP);
+    return 0;
+  }
+  if (!(command in ALLOWED)) {
+    throw new UsageError(`Unknown command "${command}"`);
+  }
+  rejectOptions(command, Object.keys(values));
+
   const ctx = createContext({
-    env: process.env,
     repoRoot: REPO_ROOT,
     cwd: process.cwd(),
     interactive: terminal,
@@ -140,11 +188,10 @@ async function main(argv: string[]): Promise<number> {
         : undefined;
   const yes = values.yes ?? false;
   const dryRun = values['dry-run'] ?? false;
-  const command = positionals[0] ?? (terminal ? 'menu' : 'help');
+  const projectDir =
+    values.project !== undefined ? { projectDir: values.project } : {};
 
   switch (command) {
-    case 'menu':
-      return runMenu(ctx);
     case 'init': {
       if (terminal && !yes) clack.intro('agents-config');
       const tools = parseTools(values.tools);
@@ -154,7 +201,7 @@ async function main(argv: string[]): Promise<number> {
         yes,
         dryRun,
         ...(scope ? { scope } : {}),
-        ...(values.project !== undefined ? { projectDir: values.project } : {}),
+        ...projectDir,
         ...(tools ? { tools } : {}),
         ...(blocks ? { blocks } : {}),
         ...(values['link-command'] !== undefined
@@ -168,18 +215,10 @@ async function main(argv: string[]): Promise<number> {
         scope: scope ?? 'global',
         yes,
         dryRun,
-        ...(values.project !== undefined ? { projectDir: values.project } : {}),
+        ...projectDir,
       });
-    case 'doctor':
-      return runDoctor(ctx, {
-        scope: scope ?? 'global',
-        ...(values.project !== undefined ? { projectDir: values.project } : {}),
-      });
-    case 'help':
-      print(HELP);
-      return 0;
     default:
-      throw new UsageError(`Unknown command "${command}"`);
+      return runDoctor(ctx, { scope: scope ?? 'global', ...projectDir });
   }
 }
 
