@@ -1,19 +1,10 @@
-import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { delimiter } from 'node:path';
+
+import which from 'which';
 
 import type { Paths } from '../env.ts';
 import { lstatIfExists } from '../install/fs.ts';
 import { TOOL_IDS, type ToolId, TOOLS } from './registry.ts';
-
-async function isExecutable(file: string): Promise<boolean> {
-  try {
-    await access(file, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function anyExists(paths: readonly string[]): Promise<boolean> {
   for (const path of paths) {
@@ -26,10 +17,10 @@ async function onSearchPath(
   bins: readonly string[],
   searchPath: readonly string[],
 ): Promise<boolean> {
+  const path = searchPath.join(delimiter);
+  if (!path) return false;
   for (const bin of bins) {
-    for (const dir of searchPath) {
-      if (await isExecutable(join(dir, bin))) return true;
-    }
+    if (await which(bin, { path, nothrow: true })) return true;
   }
   return false;
 }

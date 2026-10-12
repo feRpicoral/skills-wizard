@@ -458,12 +458,37 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/node@npm:*":
+  version: 26.6.5
+  resolution: "@types/node@npm:26.6.5"
+  dependencies:
+    undici-types: "npm:~8.9.0"
+  checksum: 10c0/4f791f69466ace7842c09e7bef96cb1ddbb65cf3db916ef7e84f0e2b2a17220b6b816dc7539d01520cadfb17ed7169b8214910900493e0a83be8bc7d124ec20a
+  languageName: node
+  linkType: hard
+
 "@types/node@npm:^24.19.1":
   version: 24.19.1
   resolution: "@types/node@npm:24.19.1"
   dependencies:
     undici-types: "npm:>=7.24.0 <7.24.7"
   checksum: 10c0/789822cc68a0e0b632fd0a9fa53411e33541f03c18dc19942ed38161c369bf0b013917b4c6c760688bd2d09d940c827a601add118dfa04fe35a285535b2a8596
+  languageName: node
+  linkType: hard
+
+"@types/which@npm:3.0.4":
+  version: 3.0.4
+  resolution: "@types/which@npm:3.0.4"
+  checksum: 10c0/036e4cb243ebfd5cf4893be2ab3b9a60a22368811c1f1c78fb8fc70cadc274024282d04b8d7c0948268372600003252d84e2d3a5e064014a543a5da235c5989d
+  languageName: node
+  linkType: hard
+
+"@types/write-file-atomic@npm:4.0.3":
+  version: 4.0.3
+  resolution: "@types/write-file-atomic@npm:4.0.3"
+  dependencies:
+    "@types/node": "npm:*"
+  checksum: 10c0/deb7e861b6ef42c72cb2330cbd26ecd888b31206a8d11939ab3ecfddad901a989a74ff1f7e4a87882799bd69f736b9f6becda3d5cdb0585ebff8d88d9eef9969
   languageName: node
   linkType: hard
 
@@ -629,6 +654,9 @@ __metadata:
     "@commitlint/config-conventional": "npm:^21.2.3"
     "@eslint/js": "npm:^10.0.1"
     "@types/node": "npm:^24.19.1"
+    "@types/which": "npm:3.0.4"
+    "@types/write-file-atomic": "npm:4.0.3"
+    detect-indent: "npm:7.0.2"
     eslint: "npm:^10.12.0"
     eslint-config-prettier: "npm:^10.1.8"
     eslint-plugin-prettier: "npm:^5.5.6"
@@ -639,6 +667,8 @@ __metadata:
     prettier: "npm:^3.9.9"
     typescript: "npm:^6.0.3"
     typescript-eslint: "npm:^8.71.1"
+    which: "npm:7.0.0"
+    write-file-atomic: "npm:8.0.0"
     yaml: "npm:^2.9.1"
     zod: "npm:^4.6.5"
   bin:
@@ -841,6 +871,13 @@ __metadata:
   version: 0.1.4
   resolution: "deep-is@npm:0.1.4"
   checksum: 10c0/7f0ee496e0dff14a573dc6127f14c95061b448b87b995fc96c017ce0a1e66af1675e73f1d6064407975bc4ea6ab679497a29fff7b5b9c4e99cb10797c1ad0b4c
+  languageName: node
+  linkType: hard
+
+"detect-indent@npm:7.0.2":
+  version: 7.0.2
+  resolution: "detect-indent@npm:7.0.2"
+  checksum: 10c0/adb1334ca3fe516dc6817aff0a777540b88643ab92fe13a72d0f5d12721ca796ffdd0e5fedb7b45e6e82657156c6ad44f5d5758157f0439532ae7d07b595146b
   languageName: node
   linkType: hard
 
@@ -1316,6 +1353,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"isexe@npm:^4.0.0":
+  version: 4.0.0
+  resolution: "isexe@npm:4.0.0"
+  checksum: 10c0/5884815115bceac452877659a9c7726382531592f43dc29e5d48b7c4100661aed54018cb90bd36cb2eaeba521092570769167acbb95c18d39afdccbcca06c5ce
+  languageName: node
+  linkType: hard
+
 "jiti@npm:2.6.1":
   version: 2.6.1
   resolution: "jiti@npm:2.6.1"
@@ -1626,6 +1670,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"signal-exit@npm:^4.0.1":
+  version: 4.1.0
+  resolution: "signal-exit@npm:4.1.0"
+  checksum: 10c0/41602dce540e46d599edba9d9860193398d135f7ff72cab629db5171516cfae628d21e7bfccde1bbfdf11c48726bc2a6d1a8fb8701125852fbfda7cf19c6aa83
+  languageName: node
+  linkType: hard
+
 "sisteransi@npm:^1.0.5":
   version: 1.0.5
   resolution: "sisteransi@npm:1.0.5"
@@ -1763,6 +1814,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"undici-types@npm:~8.9.0":
+  version: 8.9.0
+  resolution: "undici-types@npm:8.9.0"
+  checksum: 10c0/51c712c20c087368f62c6fc0f2bc49fa76bfe5dec28ff01584bb677ff29b0622569783c02d43e151143808c48c0503f804093bd2c491b10f2a830138034cb451
+  languageName: node
+  linkType: hard
+
 "uri-js@npm:^4.2.2":
   version: 4.4.1
   resolution: "uri-js@npm:4.4.1"
@@ -1776,6 +1834,17 @@ __metadata:
   version: 0.5.0
   resolution: "verkit@npm:0.5.0"
   checksum: 10c0/0bad45304bd0b3d2e56e4bdb422a43863c7a86902741eb632adb104ea37e1213706e08be4eaa7b3e28f843658be56ace16081d3ed3478477a5872f94a83ef7d0
+  languageName: node
+  linkType: hard
+
+"which@npm:7.0.0":
+  version: 7.0.0
+  resolution: "which@npm:7.0.0"
+  dependencies:
+    isexe: "npm:^4.0.0"
+  bin:
+    node-which: bin/which.js
+  checksum: 10c0/ca0b54f198f78bbc4b7c02e34bda8d335cb352e0adb4cbca1c37b1a957af3a879a82c4c27ca6525bc942f548d8b64f816ef6528360af9f3de55ffb9b979b620d
   languageName: node
   linkType: hard
 
@@ -1805,6 +1874,15 @@ __metadata:
     string-width: "npm:^7.0.0"
     strip-ansi: "npm:^7.1.0"
   checksum: 10c0/3305839b9a0d6fb930cb63a52f34d3936013d8b0682ff3ec133c9826512620f213800ffa19ea22904876d5b7e9a3c1f40682f03597d986a4ca881fa7b033688c
+  languageName: node
+  linkType: hard
+
+"write-file-atomic@npm:8.0.0":
+  version: 8.0.0
+  resolution: "write-file-atomic@npm:8.0.0"
+  dependencies:
+    signal-exit: "npm:^4.0.1"
+  checksum: 10c0/49567002e4747e6f738373bc3cda591948c45b39282b835bf51143b483800f6c2e6259d2c187dbe08951fe5752ddec7751e52a90033eff3e93ad04b64cc091ae
   languageName: node
   linkType: hard
 

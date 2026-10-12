@@ -26,3 +26,13 @@ test('detectTools finds tools from executables on the search path', async (t) =>
 
   assert.ok(detected.includes('codex'));
 });
+
+test('detectTools ignores directories on the search path', async (t) => {
+  const paths = await tempPaths(t);
+  const bin = await tempDir(t);
+  await mkdir(join(bin, 'codex'), { recursive: true });
+
+  const detected = await detectTools(paths, [bin]);
+
+  assert.ok(!detected.includes('codex'));
+});

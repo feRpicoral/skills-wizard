@@ -1,3 +1,5 @@
+import detectIndent from 'detect-indent';
+
 import { JsonMergeError } from '../errors.ts';
 import { lineEnding } from './lines.ts';
 
@@ -128,16 +130,14 @@ function pruneEmptyObjects(doc: JsonObject, keys: string[]): JsonObject {
   return doc;
 }
 
-function detectIndent(content: string | null): string | number {
-  const match = content ? /^([ \t]+)"/m.exec(content) : null;
-  return match?.[1] ?? DEFAULT_INDENT;
-}
-
 export function serializeJson(
   doc: JsonObject,
   existing: string | null,
 ): string {
   const eol = lineEnding(existing);
-  const text = JSON.stringify(doc, null, detectIndent(existing));
+  const indent = existing
+    ? detectIndent(existing).indent || DEFAULT_INDENT
+    : DEFAULT_INDENT;
+  const text = JSON.stringify(doc, null, indent);
   return `${text.replace(/\n/g, eol)}${eol}`;
 }

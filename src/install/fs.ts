@@ -1,18 +1,17 @@
 import type { Stats } from 'node:fs';
 import {
-  chmod,
   lstat,
   mkdir,
   readFile,
   readlink,
   realpath,
-  rename,
   rm,
   stat,
   symlink,
-  writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
+
+import writeFileAtomic from 'write-file-atomic';
 
 import { UnsafeWriteError } from '../errors.ts';
 
@@ -116,19 +115,8 @@ export async function writeTextAtomic(
   }
 
   await mkdir(dirname(path), { recursive: true });
-  const temporary = join(
-    dirname(path),
-    `.${basename(path)}.agents-config-${process.pid}.tmp`,
-  );
   const mode = existing ? existing.mode & 0o777 : undefined;
-  try {
-    await writeFile(temporary, content, mode === undefined ? {} : { mode });
-    if (mode !== undefined) await chmod(temporary, mode);
-    await rename(temporary, path);
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
-  }
+  await writeFileAtomic(path, content, mode === undefined ? {} : { mode });
 }
 
 export async function replaceSymlink(
