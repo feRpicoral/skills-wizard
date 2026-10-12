@@ -1,0 +1,213 @@
+categories:
+  diagrams: Diagrams and docs
+  design: Frontend and design
+  react: React
+  mobile: React Native and Expo
+  data: Databases
+  ai: AI and MCP
+  review: Security and code review
+  workflow: Debugging and workflow
+  testing: Testing
+  typescript: TypeScript and tooling
+
+skills:
+  - name: pretty-mermaid
+    repo: imxv/Pretty-mermaid-skills
+    path: .
+    category: diagrams
+    scopes: [global, project]
+    defaults: [global]
+    setup: npm ci --ignore-scripts
+
+  - name: frontend-design
+    repo: anthropics/skills
+    path: skills/frontend-design
+    category: design
+    scopes: [global, project]
+  - name: claude-api
+    repo: anthropics/skills
+    path: skills/claude-api
+    category: ai
+    scopes: [global, project]
+  - name: mcp-builder
+    repo: anthropics/skills
+    path: skills/mcp-builder
+    category: ai
+    scopes: [global, project]
+
+  - name: skill-scanner
+    repo: getsentry/skills
+    path: skills/skill-scanner
+    category: review
+    scopes: [global, project]
+    defaults: [global]
+  - name: security-review
+    repo: getsentry/skills
+    path: skills/security-review
+    category: review
+    scopes: [global, project]
+  - name: find-bugs
+    repo: getsentry/skills
+    path: skills/find-bugs
+    category: review
+    scopes: [global, project]
+
+  - name: systematic-debugging
+    repo: obra/superpowers
+    path: skills/systematic-debugging
+    category: workflow
+    scopes: [global, project]
+  - name: verification-before-completion
+    repo: obra/superpowers
+    path: skills/verification-before-completion
+    category: workflow
+    scopes: [global, project]
+
+  - name: vercel-react-best-practices
+    repo: vercel-labs/agent-skills
+    path: skills/react-best-practices
+    category: react
+    scopes: [global, project]
+  - name: vercel-composition-patterns
+    repo: vercel-labs/agent-skills
+    path: skills/composition-patterns
+    category: react
+    scopes: [global, project]
+  - name: web-design-guidelines
+    repo: vercel-labs/agent-skills
+    path: skills/web-design-guidelines
+    category: design
+    scopes: [global, project]
+  - name: vercel-react-native-skills
+    repo: vercel-labs/agent-skills
+    path: skills/react-native-skills
+    category: mobile
+    scopes: [global, project]
+
+  - name: supabase
+    repo: supabase/agent-skills
+    path: skills/supabase
+    category: data
+    scopes: [global, project]
+  - name: supabase-postgres-best-practices
+    repo: supabase/agent-skills
+    path: skills/supabase-postgres-best-practices
+    category: data
+    scopes: [global, project]
+
+  - name: prisma-cli
+    repo: prisma/skills
+    path: prisma-cli
+    category: data
+    scopes: [global, project]
+  - name: prisma-client-api
+    repo: prisma/skills
+    path: prisma-client-api
+    category: data
+    scopes: [global, project]
+  - name: prisma-orm-setup
+    repo: prisma/skills
+    path: prisma-orm-setup
+    category: data
+    scopes: [global, project]
+  - name: prisma-upgrade-v7
+    repo: prisma/skills
+    path: prisma-upgrade-v7
+    category: data
+    scopes: [global, project]
+
+  - name: eas-workflows
+    repo: expo/skills
+    path: plugins/expo/skills/eas-workflows
+    category: mobile
+    scopes: [global, project]
+    note: Ends with an npx --yes submit-expo-feedback@latest command that sends feedback to Expo
+  - name: eas-update
+    repo: expo/skills
+    path: plugins/expo/skills/eas-update
+    category: mobile
+    scopes: [global, project]
+    note: Ends with an npx --yes submit-expo-feedback@latest command that sends feedback to Expo
+  - name: expo-dev-client
+    repo: expo/skills
+    path: plugins/expo/skills/expo-dev-client
+    category: mobile
+    scopes: [global, project]
+    note: Ends with an npx --yes submit-expo-feedback@latest command that sends feedback to Expo
+  - name: expo-upgrade
+    repo: expo/skills
+    path: plugins/expo/skills/expo-upgrade
+    category: mobile
+    scopes: [global, project]
+    note: Ends with an npx --yes submit-expo-feedback@latest command that sends feedback to Expo
+  - name: expo-module
+    repo: expo/skills
+    path: plugins/expo/skills/expo-module
+    category: mobile
+    scopes: [global, project]
+    note: Ends with an npx --yes submit-expo-feedback@latest command that sends feedback to Expo
+
+  - name: react-native-best-practices
+    repo: callstackincubator/agent-skills
+    path: skills/react-native-best-practices
+    category: mobile
+    scopes: [global, project]
+  - name: react-navigation
+    repo: callstackincubator/agent-skills
+    path: skills/react-navigation
+    category: mobile
+    scopes: [global, project]
+  - name: upgrading-react-native
+    repo: callstackincubator/agent-skills
+    path: skills/upgrading-react-native
+    category: mobile
+    scopes: [global, project]
+  - name: react-native-testing
+    repo: callstack/react-native-testing-library
+    path: skills/react-native-testing
+    category: testing
+    scopes: [global, project]
+
+  - name: playwright-cli
+    repo: microsoft/playwright-cli
+    path: skills/playwright-cli
+    category: testing
+    scopes: [global, project]
+
+  - name: tanstack-query-expert
+    repo: sickn33/agentic-awesome-skills
+    path: skills/tanstack-query-expert
+    category: react
+    scopes: [global, project]
+  - name: tailwind-patterns
+    repo: sickn33/agentic-awesome-skills
+    path: skills/tailwind-patterns
+    category: design
+    scopes: [global, project]
+  - name: zod-validation-expert
+    repo: sickn33/agentic-awesome-skills
+    path: skills/zod-validation-expert
+    category: typescript
+    scopes: [global, project]
+  - name: git-hooks-automation
+    repo: sickn33/agentic-awesome-skills
+    path: skills/git-hooks-automation
+    category: typescript
+    scopes: [global, project]
+  - name: typescript-expert
+    repo: sickn33/agentic-awesome-skills
+    path: skills/typescript-expert
+    category: typescript
+    scopes: [global, project]
+
+  - name: ai-sdk
+    repo: vercel/ai
+    path: skills/use-ai-sdk
+    category: ai
+    scopes: [global, project]
+  - name: shadcn
+    repo: shadcn-ui/ui
+    path: skills/shadcn
+    category: design
+    scopes: [global, project]
+    note: Runs npx shadcn@latest info --json when Claude Code loads it
