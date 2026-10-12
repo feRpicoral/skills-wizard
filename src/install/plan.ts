@@ -1,4 +1,4 @@
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 import {
   composeGlobal,
@@ -8,7 +8,11 @@ import {
 } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
-import { JsonMergeError, ManagedRegionError } from '../errors.ts';
+import {
+  JsonMergeError,
+  ManagedRegionError,
+  ManifestError,
+} from '../errors.ts';
 import {
   type Manifest,
   MANIFEST_VERSION,
@@ -17,9 +21,11 @@ import {
 } from '../state/manifest.ts';
 import { orderedTools, type ToolId } from '../tools/registry.ts';
 import {
+  fsErrorReason,
   lstatIfExists,
   readSymlink,
   readTextIfExists,
+  realLocation,
   resolveIfSymlink,
 } from './fs.ts';
 import { ensureLine, hasLine, removeLine } from './import-line.ts';
@@ -122,12 +128,30 @@ type Target =
     }
   | { kind: 'symlink'; path: string; target: string; label: string };
 
+type FileTarget = Exclude<Target, { kind: 'symlink' }>;
+
 type FileEntry = Exclude<ManifestEntry, { kind: 'symlink' }>;
 
 const NONE: Change = { type: 'none' };
 
+const REMOVAL_LABEL = 'no longer selected';
+const CHANGED_OUTSIDE = 'changed outside agents-config, left in place';
+const OUTSIDE_PROJECT = 'resolves outside the project, left in place';
 function keyOf(entry: { kind: string; path: string }): string {
   return `${entry.kind}:${entry.path}`;
+}
+
+function isInside(dir: string, path: string): boolean {
+  return path.startsWith(`${dir}${sep}`);
+}
+
+async function escapes(
+  path: string,
+  boundary: string | undefined,
+): Promise<boolean> {
+  return (
+    boundary !== undefined && !isInside(boundary, await realLocation(path))
+  );
 }
 
 function globalTargets(input: PlanInput): Target[] {
@@ -247,6 +271,20 @@ function conflict(
   };
 }
 
+async function guarded(
+  target: { path: string; label: string },
+  previous: ManifestEntry | null,
+  plan: () => Promise<PlannedAction>,
+): Promise<PlannedAction> {
+  try {
+    return await plan();
+  } catch (error) {
+    const reason = fsErrorReason(error);
+    if (reason === undefined) throw error;
+    return conflict(target, previous, reason);
+  }
+}
+
 function writeAction(
   target: { path: string; label: string },
   file: { writePath: string; existing: string | null },
@@ -304,9 +342,7 @@ async function planSymlink(
   return conflict(
     target,
     previous,
-    previous
-      ? 'changed outside agents-config, left in place'
-      : 'exists and is not managed by agents-config',
+    previous ? CHANGED_OUTSIDE : 'exists and is not managed by agents-config',
   );
 }
 
@@ -318,8 +354,9 @@ function wasCreated(existing: string | null, previous: ManifestEntry | null) {
 }
 
 async function planFile(
-  target: Exclude<Target, { kind: 'symlink' }>,
+  target: FileTarget,
   previous: ManifestEntry | null,
+  boundary: string | undefined,
 ): Promise<PlannedAction> {
   let writePath = target.path;
   const stats = await lstatIfExists(target.path);
@@ -343,6 +380,12 @@ async function planFile(
       }
     }
     writePath = resolved;
+  }
+  if (
+    target.kind !== 'exclude-region' &&
+    (await escapes(writePath, boundary))
+  ) {
+    return conflict(target, previous, OUTSIDE_PROJECT);
   }
 
   const existing = await readTextIfExists(writePath);
@@ -461,7 +504,7 @@ function removal(
   return {
     path: entry.path,
     ...(options.writePath ? { writePath: options.writePath } : {}),
-    label: 'no longer selected',
+    label: REMOVAL_LABEL,
     status: 'remove',
     change,
     entry: null,
@@ -484,22 +527,26 @@ function rewriteOrDelete(
   return removal(entry, { type: 'write', content: next }, writePath);
 }
 
-async function planRemoval(entry: ManifestEntry): Promise<PlannedAction> {
+async function planRemoval(
+  entry: ManifestEntry,
+  boundary: string | undefined,
+): Promise<PlannedAction> {
   if (entry.kind === 'symlink') {
     if ((await readSymlink(entry.path)) === entry.target) {
       return removal(entry, { type: 'delete' });
     }
-    return removal(entry, NONE, {
-      reason: 'changed outside agents-config, left in place',
-    });
+    return removal(entry, NONE, { reason: CHANGED_OUTSIDE });
   }
 
+  const conflictTarget = { path: entry.path, label: REMOVAL_LABEL };
   const viaLink = await resolveIfSymlink(entry.path);
   const writePath = viaLink ?? entry.path;
+  if (entry.kind !== 'exclude-region' && (await escapes(writePath, boundary))) {
+    return conflict(conflictTarget, entry, OUTSIDE_PROJECT);
+  }
   const existing = await readTextIfExists(writePath);
   if (existing === null) return removal(entry, NONE);
   const file = { writePath, existing, viaLink: viaLink !== null };
-  const conflictLabel = { path: entry.path, label: 'no longer selected' };
 
   switch (entry.kind) {
     case 'region':
@@ -516,7 +563,7 @@ async function planRemoval(entry: ManifestEntry): Promise<PlannedAction> {
         );
       } catch (error) {
         if (error instanceof ManagedRegionError) {
-          return conflict(conflictLabel, entry, error.message);
+          return conflict(conflictTarget, entry, error.message);
         }
         throw error;
       }
@@ -549,7 +596,7 @@ async function planRemoval(entry: ManifestEntry): Promise<PlannedAction> {
         );
       } catch (error) {
         if (error instanceof JsonMergeError) {
-          return conflict(conflictLabel, entry, error.message);
+          return conflict(conflictTarget, entry, error.message);
         }
         throw error;
       }
@@ -558,6 +605,13 @@ async function planRemoval(entry: ManifestEntry): Promise<PlannedAction> {
 }
 
 export async function buildPlan(input: PlanInput): Promise<Plan> {
+  const boundary = input.scope === 'project' ? input.project?.dir : undefined;
+  if (await escapes(input.manifestPath, boundary)) {
+    throw new ManifestError(
+      `${input.manifestPath} resolves outside the project; refusing to record the install there`,
+    );
+  }
+
   const targets =
     input.scope === 'global' ? globalTargets(input) : projectTargets(input);
   const previousEntries = new Map(
@@ -571,13 +625,20 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
     planned.add(key);
     const previous = previousEntries.get(key) ?? null;
     actions.push(
-      target.kind === 'symlink'
-        ? await planSymlink(target, previous)
-        : await planFile(target, previous),
+      await guarded(target, previous, () =>
+        target.kind === 'symlink'
+          ? planSymlink(target, previous)
+          : planFile(target, previous, boundary),
+      ),
     );
   }
   for (const [key, entry] of previousEntries) {
-    if (!planned.has(key)) actions.push(await planRemoval(entry));
+    if (planned.has(key)) continue;
+    actions.push(
+      await guarded({ path: entry.path, label: REMOVAL_LABEL }, entry, () =>
+        planRemoval(entry, boundary),
+      ),
+    );
   }
 
   const blocks = selectBlocks(
