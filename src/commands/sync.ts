@@ -9,6 +9,7 @@ import {
   dropUnknownBlocks,
   loadLibrary,
   notify,
+  notifyLeftGit,
   readLocationManifest,
   resolveLocation,
   warnTrackedFiles,
@@ -44,6 +45,11 @@ export async function runSync(
   if (added.length > 0) {
     notify(ctx, prompting, `Added required blocks: ${added.join(', ')}`);
   }
+  const recordedLocal = previous.options.keepLocal ?? false;
+  const keepLocal = recordedLocal && location.project?.git !== undefined;
+  if (location.project && recordedLocal && !keepLocal) {
+    notifyLeftGit(ctx, prompting, location.project.dir);
+  }
   const plan = await buildPlan({
     scope: options.scope,
     selection: {
@@ -51,7 +57,7 @@ export async function runSync(
       blocks,
       variables: previous.variables,
       linkCommand: previous.options.linkCommand ?? false,
-      keepLocal: previous.options.keepLocal ?? false,
+      keepLocal,
     },
     library,
     paths: ctx.paths,
@@ -60,9 +66,7 @@ export async function runSync(
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
   });
-  if (previous.options.keepLocal) {
-    await warnTrackedFiles(ctx, prompting, plan, location.project);
-  }
+  if (keepLocal) await warnTrackedFiles(ctx, prompting, plan, location.project);
 
   const result = await confirmAndApply(ctx, plan, options);
   return result.code;

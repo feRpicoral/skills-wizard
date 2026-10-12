@@ -16,6 +16,7 @@ import { applyPlan } from '../install/apply.ts';
 import {
   conflicts,
   describePlan,
+  displayPath,
   hasChanges,
   planPath,
 } from '../install/describe.ts';
@@ -153,6 +154,19 @@ export async function readLocationManifest(
     );
   }
   return result?.manifest ?? null;
+}
+
+export function notifyLeftGit(
+  ctx: Context,
+  prompting: boolean,
+  projectDir: string,
+): void {
+  notify(
+    ctx,
+    prompting,
+    `${displayPath(projectDir, ctx.paths.home)} is no longer in a git repository, so its files are no longer kept local.`,
+    'warn',
+  );
 }
 
 export function dropUnknownBlocks(

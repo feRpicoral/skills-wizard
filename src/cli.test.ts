@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, lstat, readFile, symlink, writeFile } from 'node:fs/promises';
+import { cp, lstat, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -250,4 +250,24 @@ test('doctor names project files relative to the project', async (t) => {
   const result = await cli(home, ['doctor', '--project', project]);
 
   assert.match(result.stdout, /^warn\s+AGENTS\.md is out of date/m);
+});
+
+test('sync and init drop keep-local with a notice once the project leaves git', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await run('git', ['init', '-q'], { cwd: project });
+  const install = ['init', '--project', project, '--yes', '--tools', 'codex'];
+  await cli(home, [...install, '--local']);
+  await rm(join(project, '.git'), { recursive: true, force: true });
+
+  const sync = await cli(home, ['sync', '--project', project, '--yes']);
+  const init = await cli(home, install);
+
+  assert.equal(sync.code, 0);
+  assert.match(sync.stdout, /no longer in a git repository/);
+  assert.equal(init.code, 0);
+  assert.match(
+    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+    /"keepLocal": false/,
+  );
 });

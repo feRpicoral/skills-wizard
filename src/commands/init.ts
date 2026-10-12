@@ -27,6 +27,7 @@ import {
   dropUnknownBlocks,
   loadLibrary,
   notify,
+  notifyLeftGit,
   readLocationManifest,
   resolveLocation,
   warnTrackedFiles,
@@ -150,18 +151,24 @@ export async function runInit(
       : false;
   const git = location.project?.git;
   const previousLocal = previous?.options.keepLocal ?? false;
-  const keepLocal =
-    scope === 'project'
-      ? (options.keepLocal ??
-        (prompting && git
-          ? await promptKeepLocal(previousLocal)
-          : previousLocal))
-      : false;
-  if (keepLocal && !git) {
+  if (options.keepLocal && !git) {
     throw new UsageError(
       `${location.project?.dir ?? ctx.cwd} is not in a git repository, so files cannot be kept local.`,
     );
   }
+  if (
+    location.project &&
+    previousLocal &&
+    !git &&
+    options.keepLocal === undefined
+  ) {
+    notifyLeftGit(ctx, prompting, location.project.dir);
+  }
+  const keepLocal =
+    scope === 'project' && git
+      ? (options.keepLocal ??
+        (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
+      : false;
 
   const plan = await buildPlan({
     scope,
