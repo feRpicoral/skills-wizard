@@ -1,11 +1,11 @@
 import { join, posix } from 'node:path';
 
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { z } from 'zod';
 
 import { SCOPES } from '../blocks/library.ts';
 import { CatalogError } from '../errors.ts';
-import { readTextIfExists } from '../install/fs.ts';
+import { readTextIfExists, writeTextAtomic } from '../install/fs.ts';
 import { isSkillName } from './validate.ts';
 
 const CATALOG_FILE = 'catalog.yaml';
@@ -101,4 +101,33 @@ export function repositoryPaths(catalog: Catalog, repo: string): string[] {
     .filter((entry) => entry.repo === repo)
     .map((entry) => entry.path);
   return [...new Set(paths)].sort();
+}
+
+export async function appendCatalogEntries(
+  file: string,
+  entries: readonly CatalogEntry[],
+): Promise<Catalog> {
+  const current = await loadCatalog(file);
+  const categories = { ...current.categories };
+  for (const entry of entries) {
+    if (!Object.hasOwn(categories, entry.category)) {
+      categories[entry.category] = entry.category;
+    }
+  }
+  const next: Catalog = {
+    categories,
+    skills: [
+      ...current.skills,
+      ...entries.map((entry) => entrySchema.parse(entry)),
+    ],
+  };
+  checkEntries(next, file);
+  const serialized = {
+    categories: next.categories,
+    skills: next.skills.map(({ defaults, ...rest }) =>
+      defaults.length > 0 ? { ...rest, defaults } : rest,
+    ),
+  };
+  await writeTextAtomic({ path: file, content: stringify(serialized) });
+  return next;
 }

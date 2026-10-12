@@ -6,10 +6,13 @@ import { parseArgs, styleText } from 'node:util';
 import * as clack from '@clack/prompts';
 
 import type { Scope } from './blocks/library.ts';
+import { runAdopt } from './commands/adopt.ts';
 import { runDoctor } from './commands/doctor.ts';
 import { runInit } from './commands/init.ts';
 import { runMenu } from './commands/menu.ts';
+import { runSkill } from './commands/skill.ts';
 import { runSync } from './commands/sync.ts';
+import { runUpdate } from './commands/update.ts';
 import { createContext } from './context.ts';
 import {
   AgentsConfigError,
@@ -25,10 +28,13 @@ const REPO_ROOT = join(import.meta.dirname, '..');
 const HELP = `Usage: agents-config [command] [options]
 
 Commands:
-  init     Install instructions system-wide or into a project
-  sync     Re-apply everything recorded in a manifest
-  doctor   Check an install and report problems
-  help     Show this help
+  init                      Install instructions and skills system-wide or into a project
+  sync                      Re-apply everything recorded in a manifest
+  update                    Fetch skill updates, show changes and risk flags, and refresh installs
+  adopt [skill...]          Take over existing unmanaged skills after backing them up
+  doctor                    Check an install and report problems
+  skill validate [path...]  Validate skill directories or --catalog
+  help                      Show this help
 
 Run without a command in a terminal to open the interactive menu.
 
@@ -41,6 +47,7 @@ Options:
   --skills <names>      Comma-separated skills from catalog.yaml or skills/
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
+  --catalog             skill validate: validate every skill in catalog.yaml
   --var <name=value>    Block variable, repeatable
   --link-command        Link the agents-config command into ~/.local/bin
   --local               Project scope: keep the files out of git
@@ -56,6 +63,7 @@ const OPTIONS = {
   blocks: { type: 'string' },
   skills: { type: 'string' },
   'skill-mode': { type: 'string' },
+  catalog: { type: 'boolean' },
   var: { type: 'string', multiple: true },
   'link-command': { type: 'boolean' },
   local: { type: 'boolean' },
@@ -67,7 +75,14 @@ const OPTIONS = {
 
 type OptionName = keyof typeof OPTIONS;
 
-const COMMANDS = ['init', 'sync', 'doctor'] as const;
+const COMMANDS = [
+  'init',
+  'sync',
+  'update',
+  'adopt',
+  'doctor',
+  'skill',
+] as const;
 
 type Command = (typeof COMMANDS)[number];
 
@@ -86,7 +101,10 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'dry-run',
   ],
   sync: ['global', 'project', 'yes', 'dry-run'],
+  update: ['yes', 'dry-run'],
+  adopt: ['skills', 'tools', 'yes', 'dry-run'],
   doctor: ['global', 'project'],
+  skill: ['catalog'],
 };
 
 function isCommand(value: string): value is Command {
@@ -179,11 +197,6 @@ async function main(argv: string[]): Promise<number> {
     print(await version());
     return 0;
   }
-  if (positionals.length > 1) {
-    throw new UsageError(
-      `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
-    );
-  }
   if (values.global && values.project !== undefined) {
     throw new UsageError('Use either --global or --project, not both.');
   }
@@ -191,6 +204,11 @@ async function main(argv: string[]): Promise<number> {
   const terminal = process.stdin.isTTY && process.stdout.isTTY;
   const command = positionals[0];
   if (command === undefined || command === 'help') {
+    if (positionals.length > 1) {
+      throw new UsageError(
+        `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
+      );
+    }
     if (command === undefined && terminal) {
       const provided = Object.keys(values);
       if (provided.length > 0) {
@@ -211,6 +229,11 @@ async function main(argv: string[]): Promise<number> {
   }
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
+  }
+  if (command !== 'adopt' && command !== 'skill' && positionals.length > 1) {
+    throw new UsageError(
+      `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
+    );
   }
   rejectOptions(command, Object.keys(values));
 
@@ -260,8 +283,29 @@ async function main(argv: string[]): Promise<number> {
         dryRun,
         ...projectDir,
       });
+    case 'update':
+      if (terminal && !yes) clack.intro('agents-config');
+      return runUpdate(ctx, { yes, dryRun });
+    case 'adopt': {
+      if (terminal && !yes) clack.intro('agents-config');
+      const tools = parseTools(values.tools);
+      const fromFlag = parseList(values.skills) ?? [];
+      const names = [...positionals.slice(1), ...fromFlag];
+      return runAdopt(ctx, {
+        names,
+        ...(tools ? { tools } : {}),
+        yes,
+        dryRun,
+      });
+    }
     case 'doctor':
       return runDoctor(ctx, { scope: scope ?? 'global', ...projectDir });
+    case 'skill':
+      return runSkill(ctx, {
+        subcommand: positionals[1],
+        paths: positionals.slice(2),
+        catalog: values.catalog ?? false,
+      });
   }
 }
 
