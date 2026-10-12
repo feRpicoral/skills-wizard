@@ -4,6 +4,7 @@ import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
+import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
 import {
   confirmAndApply,
   dropUnknownBlocks,
@@ -64,9 +65,11 @@ export async function runSync(
     selection: {
       tools: previous.tools,
       blocks,
+      skills: previous.skills,
       variables: previous.variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
+      skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
     },
     library,
     paths: ctx.paths,

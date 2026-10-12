@@ -294,5 +294,14 @@ export async function confirmAndApply(
       level: 'warn',
     });
   }
-  return { code: outcome.skipped.length > 0 ? 1 : 0, applied: true };
+  for (const failure of outcome.setupFailures) {
+    notify({
+      ctx,
+      prompting,
+      message: `Setup in ${planPath({ plan, path: failure.path, home: ctx.paths.home })} did not finish: ${failure.message}`,
+      level: 'warn',
+    });
+  }
+  const failed = outcome.skipped.length + outcome.setupFailures.length;
+  return { code: failed > 0 ? 1 : 0, applied: true };
 }

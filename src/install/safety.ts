@@ -18,7 +18,10 @@ export type Change =
   | { type: 'none' }
   | { type: 'write'; content: string }
   | { type: 'delete' }
-  | { type: 'symlink'; target: string };
+  | { type: 'symlink'; target: string }
+  | { type: 'copy-tree'; source: string; setup?: string; backup?: string }
+  | { type: 'link-tree'; target: string; backup?: string }
+  | { type: 'delete-tree' };
 
 export interface PlannedAction {
   path: string;
@@ -40,6 +43,8 @@ export const NONE: Change = { type: 'none' };
 export const REMOVAL_LABEL = 'no longer selected';
 export const CHANGED_OUTSIDE = 'changed outside agents-config, left in place';
 export const NOTHING_LEFT = 'nothing left to remove';
+export const NOT_MANAGED = 'exists and is not managed by agents-config';
+export const SOURCE_UNAVAILABLE = 'source unavailable, left as it is';
 
 const LOCATION_PROBLEMS = {
   outside: 'resolves outside the project',
