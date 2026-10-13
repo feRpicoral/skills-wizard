@@ -89,7 +89,7 @@ A fixture that is itself a skill should be stored as `SKILL.fixture.md`: the har
 - The `fake` runner is for dry-running the structure of an eval (workspaces, grading, aggregation, reports) without an agent. Its trigger decisions do not look at query labels and mean nothing.
 - agy task runs are never retried, because a failed attempt may have changed the workspace. agy grader runs are retried twice.
 - Token accounting: Claude input tokens include `cache_creation_input_tokens` and `cache_read_input_tokens`. Codex input tokens come from `turn.completed` usage and already include `cached_input_tokens`, which is a subset. Gemini usage comes from `result.stats` (stream JSON) or the sum of `stats.models[*].tokens` (the JSON grader output).
-- `Context.agy` is `{ bin(), config() }` and resolved lazily, so a malformed `AGY_EXTRA_ARGS` breaks only agy evals: `AGY_EXTRA_ARGS` is parsed only when the eval runner is `agy`, and `AGY_BIN` (which must be absolute) is read during runner auto-detection. `--binary` overrides `AGY_BIN` (an invalid `AGY_BIN` is ignored when `--binary` is given); `AGY_EXTRA_ARGS` still applies.
+- `Context.agy` is `{ bin(), extraArgs() }` and resolved lazily, so a malformed `AGY_EXTRA_ARGS` breaks only agy evals: `AGY_EXTRA_ARGS` is parsed only when the eval runner is `agy`, and `AGY_BIN` (which must be absolute) is read during runner auto-detection. With `--binary`, `AGY_BIN` is never read, so an invalid value does not matter; `AGY_EXTRA_ARGS` still applies.
 
 ### Command line
 

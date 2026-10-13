@@ -303,6 +303,7 @@ export async function runSkillEval({
 
   const warnings = new Set<string>();
   let possiblyContaminated = false;
+  let withSkillContaminated = false;
 
   const records = await runWithConcurrency({
     items: jobs,
@@ -333,6 +334,9 @@ export async function runSkillEval({
 
       if (prepared.possiblyContaminated) {
         possiblyContaminated = true;
+      }
+      if (prepared.skillShadowed) {
+        withSkillContaminated = true;
       }
       if (prepared.warning && !warnings.has(prepared.warning)) {
         warnings.add(prepared.warning);
@@ -407,6 +411,7 @@ export async function runSkillEval({
     runs: records,
     baselineEnabled: baseline,
     possiblyContaminated,
+    withSkillContaminated,
     compareRef,
     warnings: [...warnings],
   });

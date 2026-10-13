@@ -746,3 +746,42 @@ test(
     );
   },
 );
+
+test('runSkillEval reports a personal Claude skill as with_skill contamination, not baseline contamination', async (t) => {
+  const paths = await tempPaths(t);
+  const repoRoot = await tempDir(t);
+  const skillDir = join(repoRoot, 'skills', 'demo-skill');
+  await writeFiles(skillDir, {
+    'SKILL.md': skillSource('demo-skill'),
+    'evals/evals.json': JSON.stringify({
+      skill_name: 'demo-skill',
+      evals: [
+        {
+          id: 'case-1',
+          prompt: 'Process the project',
+          expected_output: 'Processed the project',
+          assertions: ['The output confirms skill execution'],
+        },
+      ],
+    }),
+  });
+  await writeFiles(join(paths.claudeHome, 'skills', 'demo-skill'), {
+    'SKILL.md': skillSource('demo-skill'),
+  });
+  const runner: EvalRunner = { ...createFakeRunner(), name: 'claude' };
+
+  const result = await runSkillEval({
+    skillName: 'demo-skill',
+    skillDir,
+    evalsRootDir: paths.evalsDir,
+    runner,
+    runs: 1,
+    baseline: true,
+    parallel: 1,
+    paths,
+    env: isolatedGitEnv(repoRoot),
+  });
+
+  assert.equal(result.benchmark.metadata.with_skill_contaminated, true);
+  assert.equal(result.benchmark.metadata.baseline_status, 'clean');
+});
