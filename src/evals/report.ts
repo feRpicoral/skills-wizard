@@ -250,18 +250,21 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   // Without baseline runs, assertions are classified against old_skill.
   const hasBaseline = summary.without_skill !== undefined;
   const withOldSkill = summary.old_skill !== undefined;
+  const firstCompareName = compareSkillNames[0];
   const referenceLabel = hasBaseline
     ? 'baseline'
     : withOldSkill
       ? '`old_skill`'
-      : undefined;
+      : firstCompareName !== undefined
+        ? codeSpan(`compare:${firstCompareName}`)
+        : undefined;
   const vsReference = referenceLabel ? ` (vs ${referenceLabel})` : '';
 
   if (benchmark.non_discriminating_assertions.length > 0) {
     lines.push(
       '## Non-Discriminating Assertions',
       '',
-      `These assertions passed 100% in both \`with_skill\` and ${hasBaseline ? 'baseline' : '`old_skill`'} runs:`,
+      `These assertions passed 100% in both \`with_skill\` and ${referenceLabel ?? 'reference'} runs:`,
       '',
     );
     for (const item of benchmark.non_discriminating_assertions) {
@@ -314,7 +317,9 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
           ? ['Classification (vs baseline)']
           : withOldSkill
             ? []
-            : ['Classification']),
+            : referenceLabel
+              ? [`Classification (vs ${referenceLabel})`]
+              : ['Classification']),
         ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
       ];
       lines.push(
