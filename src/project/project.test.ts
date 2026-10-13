@@ -5,10 +5,12 @@ import { test } from 'node:test';
 
 import { loadBlockLibrary } from '../blocks/library.ts';
 import { PresetError } from '../errors.ts';
+import { findMcpServer, loadMcpCatalog, mcpCatalogPath } from '../mcp/model.ts';
 import { findSkill, loadSkillLibrary } from '../skills/library.ts';
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import {
   DETECTABLE_BLOCKS,
+  DETECTABLE_MCP_SERVERS,
   DETECTABLE_SKILLS,
   detectProject,
 } from './detect.ts';
@@ -69,6 +71,17 @@ test('every detectable block and skill in detect.ts exists and is project-scoped
       skill.scopes.includes('project'),
       true,
       `Skill ${skillName} is not project-scoped`,
+    );
+  }
+
+  const mcpCatalog = await loadMcpCatalog(mcpCatalogPath(REPO_ROOT));
+  for (const serverName of DETECTABLE_MCP_SERVERS) {
+    const server = findMcpServer(mcpCatalog, serverName);
+    assert.ok(server, `Missing detectable MCP server: ${serverName}`);
+    assert.equal(
+      server.scopes.includes('project'),
+      true,
+      `MCP server ${serverName} is not project-scoped`,
     );
   }
 });
@@ -379,6 +392,7 @@ test('detectProject unions workspace stacks across nx, pnpm-workspace.yaml, and 
   assert.equal(nxDetection.detectedSkills.includes('ai-sdk'), true);
   assert.equal(nxDetection.detectedSkills.includes('claude-api'), true);
   assert.equal(nxDetection.detectedSkills.includes('playwright-cli'), true);
+  assert.deepEqual(nxDetection.detectedMcpServers, ['nx', 'supabase']);
 
   assert.deepEqual(
     pnpmWs.workspaces.map((ws) => ws.relativePath),

@@ -43,7 +43,10 @@ export interface ProjectDetection {
   workspaces: WorkspacePackageInfo[];
   detectedBlocks: string[];
   detectedSkills: string[];
+  detectedMcpServers: string[];
 }
+
+export const DETECTABLE_MCP_SERVERS = ['nx', 'supabase', 'sentry'] as const;
 
 export const DETECTABLE_BLOCKS = [
   'stack/nextjs',
@@ -547,24 +550,37 @@ function choosePreset({
 }
 
 interface CollectAdditiveParams {
+  hasNx: boolean;
   hasWorkspacePackages: boolean;
   allDeps: ReadonlySet<string>;
   hasPrismaFiles: boolean;
   hasSupabaseFiles: boolean;
+  hasSentry: boolean;
   hasComponentsJson: boolean;
   isUvProject: boolean;
 }
 
 function collectAdditiveSelections({
+  hasNx,
   hasWorkspacePackages,
   allDeps,
   hasPrismaFiles,
   hasSupabaseFiles,
+  hasSentry,
   hasComponentsJson,
   isUvProject,
-}: CollectAdditiveParams): { blocks: string[]; skills: string[] } {
+}: CollectAdditiveParams): {
+  blocks: string[];
+  skills: string[];
+  mcpServers: string[];
+} {
   const blocks = new Set<string>();
   const skills = new Set<string>();
+  const mcpServers = new Set<string>();
+
+  if (hasNx || allDeps.has('nx') || allDeps.has('@nx/workspace')) {
+    mcpServers.add('nx');
+  }
 
   if (hasWorkspacePackages) {
     if (allDeps.has('next')) {
@@ -626,6 +642,11 @@ function collectAdditiveSelections({
     }
     skills.add('supabase');
     skills.add('supabase-postgres-best-practices');
+    mcpServers.add('supabase');
+  }
+
+  if (hasSentry) {
+    mcpServers.add('sentry');
   }
 
   if (allDeps.has('@tanstack/react-query')) {
@@ -672,6 +693,7 @@ function collectAdditiveSelections({
   return {
     blocks: [...blocks],
     skills: [...skills],
+    mcpServers: [...mcpServers],
   };
 }
 
@@ -759,6 +781,24 @@ export async function detectProject(
     ...workspaceComponentsCandidates,
   ]);
 
+  const sentryRootCandidates = [
+    'sentry.client.config.ts',
+    'sentry.client.config.js',
+    'sentry.server.config.ts',
+    'sentry.server.config.js',
+    '.sentryclirc',
+  ];
+  const workspaceSentryCandidates = workspaces.flatMap((ws) =>
+    sentryRootCandidates.map((file) => `${ws.relativePath}/${file}`),
+  );
+  const hasSentryFiles = await hasAnyRelativeFile(projectDir, [
+    ...sentryRootCandidates,
+    ...workspaceSentryCandidates,
+  ]);
+  const hasSentryDeps =
+    [...allDeps].some((dep) => dep.startsWith('@sentry/')) ||
+    (pyprojectSource !== null && /\bsentry[-_]sdk\b/i.test(pyprojectSource));
+
   const preset = choosePreset({
     hasNx,
     hasPackageJson: pkg !== null,
@@ -771,11 +811,13 @@ export async function detectProject(
     pyproject,
   });
   const additive = collectAdditiveSelections({
+    hasNx,
     hasWorkspacePackages:
       hasNx || workspacePatterns.length > 0 || workspaces.length > 0,
     allDeps,
     hasPrismaFiles,
     hasSupabaseFiles,
+    hasSentry: hasSentryFiles || hasSentryDeps,
     hasComponentsJson,
     isUvProject: packageManager === 'uv',
   });
@@ -796,5 +838,6 @@ export async function detectProject(
     workspaces,
     detectedBlocks: additive.blocks,
     detectedSkills: additive.skills,
+    detectedMcpServers: additive.mcpServers,
   };
 }
