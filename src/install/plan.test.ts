@@ -223,7 +223,7 @@ test('deselecting tools removes only the content agents-config added', async (t)
   );
   assert.equal(
     await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
-    '{\n  "theme": "dark"\n}\n',
+    '{"theme":"dark"}\n',
   );
   await assert.rejects(lstat(join(paths.geminiHome, 'AGENTS.md')), {
     code: 'ENOENT',
@@ -248,20 +248,16 @@ test('deselecting Gemini CLI restores a string context file name', async (t) => 
 
 test('deselecting Gemini CLI keeps other settings and parents as written', async (t) => {
   const paths = await tempPaths(t);
-  await writeFiles(paths.home, {
-    '.gemini/settings.json': '{\n  "ratio": 1.0,\n  "context": {}\n}\n',
-  });
+  const settings =
+    '{\n  "ratio": 1.0,\n  "mcpServers": { "gh": { "command": "gh", "args": ["mcp"] } },\n  "context": {}\n}\n';
+  await writeFiles(paths.home, { '.gemini/settings.json': settings });
   await installGlobal(paths, ['gemini-cli', 'codex']);
 
   await installGlobal(paths, ['codex']);
 
-  const content = await readFile(
-    join(paths.geminiHome, 'settings.json'),
-    'utf8',
-  );
-  assert.deepEqual(
-    [content.includes('"ratio": 1.0'), JSON.parse(content)],
-    [true, { ratio: 1, context: {} }],
+  assert.equal(
+    await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
+    settings,
   );
 });
 
