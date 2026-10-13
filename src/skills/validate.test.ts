@@ -254,8 +254,8 @@ test('links that are absolute or leave the skill folder are errors', async (t) =
   const report = await validateSkill(dir, { strict: false });
 
   assert.deepEqual(report.errors, [
-    'docs/shared links outside the skill folder (../../shared); links must be relative and stay inside it',
-    'hosts links outside the skill folder (/etc/hosts); links must be relative and stay inside it',
+    'docs/shared does not resolve inside the skill folder (../../shared); links must be relative and stay inside it',
+    'hosts does not resolve inside the skill folder (/etc/hosts); links must be relative and stay inside it',
   ]);
 });
 
@@ -287,6 +287,6 @@ test('a link chain that leaves the skill folder is an error', async (t) => {
   const report = await validateSkill(dir, { strict: false });
 
   assert.deepEqual(report.errors, [
-    'leak links outside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
+    'leak does not resolve inside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
   ]);
 });

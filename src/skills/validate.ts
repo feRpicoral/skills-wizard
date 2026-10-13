@@ -206,7 +206,7 @@ async function linkProblems(dir: string): Promise<string[]> {
   try {
     return (await escapingLinks(dir)).map(
       ({ path, target }) =>
-        `${path} links outside the skill folder (${target}); links must be relative and stay inside it`,
+        `${path} does not resolve inside the skill folder (${target}); links must be relative and stay inside it`,
     );
   } catch (error) {
     const reason = fsErrorReason(error);
