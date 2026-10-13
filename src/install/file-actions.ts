@@ -136,8 +136,11 @@ function regionPreamble({
   existing,
   previous,
 }: RegionPreambleParams): string | undefined {
-  if (isBlank(existing)) return target.preamble;
-  return previous?.kind === 'region' ? previous.preamble : undefined;
+  if (existing === null || isBlank(existing)) return target.preamble;
+  const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
+  return preamble && existing.trimStart().startsWith(preamble)
+    ? preamble
+    : undefined;
 }
 
 interface FileActionParams<T extends FileTarget> {
@@ -329,7 +332,7 @@ async function resolveTargetFile({
   return {
     writePath,
     existing: current,
-    createdFile: wasCreated(onDisk, previous),
+    createdFile: writePath === target.path && wasCreated(onDisk, previous),
   };
 }
 
