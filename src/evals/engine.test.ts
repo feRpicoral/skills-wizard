@@ -112,11 +112,13 @@ test('runSkillTriggers evaluates trigger queries on requested split and writes t
     'evals/trigger_queries.json': JSON.stringify([
       { query: 'Please run demo-skill on my project', should_trigger: true },
       { query: 'Help me configure demo-skill options', should_trigger: true },
-      { query: '[negative] Unrelated database query', should_trigger: false },
-      { query: '[negative] Another unrelated task', should_trigger: false },
+      { query: 'Unrelated database query', should_trigger: false },
+      { query: 'Another unrelated task', should_trigger: false },
     ]),
   });
-  const runner = createFakeRunner();
+  const runner = createFakeRunner({
+    onTask: ({ prompt }) => ({ triggered: prompt.includes('demo-skill') }),
+  });
 
   const result = await runSkillTriggers({
     skillName: 'demo-skill',

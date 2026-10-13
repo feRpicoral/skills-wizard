@@ -113,7 +113,11 @@ export {
   parseCodexGraderJson,
   parseCodexStreamJson,
 } from './codex.ts';
-export { createFakeRunner, type FakeRunnerOptions } from './fake.ts';
+export {
+  createFakeRunner,
+  type FakeRunnerOptions,
+  fakeTriggerDecision,
+} from './fake.ts';
 export {
   buildGeminiGraderArgs,
   buildGeminiTaskArgs,
