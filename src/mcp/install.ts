@@ -1,5 +1,5 @@
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
-import { parseJsonObject } from '../install/json-merge.ts';
+import { isEmptyJsonObject, parseJsonObject } from '../install/json-merge.ts';
 import {
   rawJson,
   removeJsonProperty,
@@ -24,6 +24,7 @@ export interface EnsureMcpJsonParams {
   existing: string | null;
   servers: Readonly<Record<string, Record<string, unknown>>>;
   ownedServers: readonly string[];
+  retainedServers?: ReadonlySet<string>;
 }
 
 export interface EnsureMcpJsonResult {
@@ -39,6 +40,7 @@ export function ensureMcpJsonServers({
   existing,
   servers,
   ownedServers,
+  retainedServers,
 }: EnsureMcpJsonParams): EnsureMcpJsonResult {
   const doc = parseJsonObject(existing);
   if (doc.mcpServers !== undefined && !isObject(doc.mcpServers)) {
@@ -46,6 +48,7 @@ export function ensureMcpJsonServers({
   }
   const currentServers = doc.mcpServers ?? {};
   const ownedSet = new Set(ownedServers);
+  const retainedSet = retainedServers ?? new Set<string>();
 
   for (const name of Object.keys(servers)) {
     if (Object.hasOwn(currentServers, name) && !ownedSet.has(name)) {
@@ -72,8 +75,11 @@ export function ensureMcpJsonServers({
     };
   }
 
-  const original =
-    !createdMcpServers && Object.keys(currentServers).length === 0
+  const original = createdMcpServers
+    ? Object.keys(doc).length === 0
+      ? rawJson({ text: withoutBom(existing), keys: [] })
+      : undefined
+    : Object.keys(currentServers).length === 0
       ? rawJson({ text: withoutBom(existing), keys: ['mcpServers'] })
       : undefined;
 
@@ -81,6 +87,7 @@ export function ensureMcpJsonServers({
   for (const owned of ownedServers) {
     if (
       !Object.hasOwn(servers, owned) &&
+      !retainedSet.has(owned) &&
       Object.hasOwn(currentServers, owned)
     ) {
       content = keepBom(content, (text) =>
@@ -114,6 +121,7 @@ export interface RemoveMcpJsonParams {
   servers: readonly string[];
   createdMcpServers: boolean;
   original?: string;
+  retainedServers?: ReadonlySet<string>;
 }
 
 export function removeMcpJsonServers({
@@ -121,6 +129,7 @@ export function removeMcpJsonServers({
   servers,
   createdMcpServers,
   original,
+  retainedServers,
 }: RemoveMcpJsonParams): string {
   const doc = parseJsonObject(existing);
   if (!Object.hasOwn(doc, 'mcpServers')) return existing;
@@ -128,8 +137,9 @@ export function removeMcpJsonServers({
     throw new JsonMergeError('"mcpServers" must be an object');
   }
   const currentServers = doc.mcpServers ?? {};
-  const toRemove = servers.filter((name) =>
-    Object.hasOwn(currentServers, name),
+  const retainedSet = retainedServers ?? new Set<string>();
+  const toRemove = servers.filter(
+    (name) => !retainedSet.has(name) && Object.hasOwn(currentServers, name),
   );
   if (toRemove.length === 0) return existing;
 
@@ -147,6 +157,15 @@ export function removeMcpJsonServers({
       content = keepBom(content, (text) =>
         removeJsonProperty({ text, keys: ['mcpServers'] }),
       );
+      if (
+        original !== undefined &&
+        isEmptyJsonObject(content) &&
+        isEmptyJsonObject(original)
+      ) {
+        content = keepBom(content, (text) =>
+          replaceRawJson({ text, keys: [], raw: original }),
+        );
+      }
     } else if (original !== undefined) {
       content = keepBom(content, (text) =>
         replaceRawJson({ text, keys: ['mcpServers'], raw: original }),
@@ -167,11 +186,39 @@ export function hasUnmanagedTomlServer({
   name,
 }: UnmanagedTomlCheckParams): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(
-    `^[ \\t]*\\[\\s*mcp_servers\\s*\\.\\s*(?:${escaped}|"${escaped}"|'${escaped}')(?:\\s*\\.[^\\]]*)?\\s*\\]`,
+  const nameToken = `(?:${escaped}|"${escaped}"|'${escaped}')`;
+  const tableHeaderPattern = new RegExp(
+    `^[ \\t]*\\[\\[?\\s*mcp_servers\\s*\\.\\s*${nameToken}(?:\\s*\\.[^\\]]*)?\\s*\\]\\]?`,
     'm',
   );
-  return pattern.test(text);
+  if (tableHeaderPattern.test(text)) return true;
+
+  const dottedKeyPattern = new RegExp(
+    `^[ \\t]*mcp_servers\\s*\\.\\s*${nameToken}(?:\\s*\\.[^=\\r\\n]+)?\\s*=`,
+    'm',
+  );
+  if (dottedKeyPattern.test(text)) return true;
+
+  const sectionHeaderPattern =
+    /^[ \t]*\[\[?\s*([^\]]+?)\s*\]\]?[ \t]*(?:#.*)?$/;
+  const memberKeyPattern = new RegExp(
+    `^[ \\t]*${nameToken}(?:\\s*\\.[^=\\r\\n]+)?\\s*=`,
+  );
+  let inMcpServersSection = false;
+  for (const line of text.split(/\r?\n/)) {
+    const headerMatch = sectionHeaderPattern.exec(line);
+    if (headerMatch) {
+      const tableName = (headerMatch[1] ?? '')
+        .trim()
+        .replace(/^['"]|['"]$/g, '');
+      inMcpServersSection = tableName === 'mcp_servers';
+      continue;
+    }
+    if (inMcpServersSection && memberKeyPattern.test(line)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export interface UpsertMcpTomlParams {

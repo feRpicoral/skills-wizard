@@ -192,8 +192,14 @@ function renderJsonServer({
       return server.transport === 'stdio'
         ? renderAntigravityStdio(server)
         : renderAntigravityRemote(server, warnings);
-    case 'claude-code':
+    case 'claude-code': {
+      if (server.tools?.allow && server.tools.allow.length > 0) {
+        warnings.push(
+          `MCP server "${server.name}" defines tools.allow, which Claude Code does not support in MCP config; all tools not in tools.deny remain enabled.`,
+        );
+      }
       return renderExpandedServer({ server, includeStdioType: false });
+    }
     case 'gemini-cli': {
       const entry = renderExpandedServer({ server, includeStdioType: false });
       if (server.tools?.allow && server.tools.allow.length > 0) {
@@ -206,6 +212,22 @@ function renderJsonServer({
     }
     case 'copilot':
     case 'claude-copilot-shared': {
+      if (
+        client === 'claude-copilot-shared' &&
+        server.tools?.allow &&
+        server.tools.allow.length > 0
+      ) {
+        warnings.push(
+          `MCP server "${server.name}" defines tools.allow, which Claude Code ignores in shared .mcp.json.`,
+        );
+      }
+      if (server.tools?.deny && server.tools.deny.length > 0) {
+        warnings.push(
+          client === 'copilot'
+            ? `MCP server "${server.name}" defines tools.deny, which GitHub Copilot does not support in mcp-config.json.`
+            : `MCP server "${server.name}" defines tools.deny, which GitHub Copilot ignores in shared .mcp.json (enforced only for Claude Code via permissions.deny).`,
+        );
+      }
       const entry = renderExpandedServer({ server, includeStdioType: true });
       entry.tools =
         server.tools?.allow && server.tools.allow.length > 0

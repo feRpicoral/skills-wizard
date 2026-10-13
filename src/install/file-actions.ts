@@ -1,5 +1,7 @@
 import { basename, dirname, resolve } from 'node:path';
 
+import { parsePath } from 'dot-prop';
+
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import { ensureMcpJsonServers, upsertMcpTomlServers } from '../mcp/install.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
@@ -116,8 +118,17 @@ function regionPreamble({
 }
 
 export interface EmptyJsonState {
-  wasEmpty: true;
+  wasEmpty?: true;
   blankText?: string;
+  rootOriginal?: string;
+}
+
+export interface SharedMcpJsonState {
+  previousOwned: Set<string>;
+  plannedServers: Set<string>;
+  stagedServers: Set<string>;
+  createdMcpServers?: boolean;
+  original?: string;
 }
 
 interface FileActionParams<T extends FileTarget> {
@@ -125,6 +136,7 @@ interface FileActionParams<T extends FileTarget> {
   file: ResolvedTargetFile;
   previous: ManifestEntry | null;
   emptyJson?: EmptyJsonState;
+  sharedMcp?: SharedMcpJsonState;
 }
 
 function planRegion({
@@ -261,6 +273,16 @@ function planJsonArray({
     const blankText = earlier
       ? earlier.blankText
       : (emptyJson?.blankText ?? result.blankText);
+    const shape = createdShape(earlier, result);
+    const effectiveShape =
+      !earlier &&
+      shape.original === undefined &&
+      emptyJson?.rootOriginal !== undefined
+        ? {
+            createdKeys: parsePath(target.key).length,
+            original: emptyJson.rootOriginal,
+          }
+        : shape;
     return writeAction({
       target,
       file,
@@ -271,7 +293,7 @@ function planJsonArray({
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
-        ...createdShape(earlier, result),
+        ...effectiveShape,
         ...(wasEmpty ? { wasEmpty: true } : {}),
         ...(blankText !== undefined ? { blankText } : {}),
         createdFile: file.createdFile,
@@ -291,23 +313,53 @@ function planMcpJson({
   file,
   previous,
   emptyJson,
+  sharedMcp,
 }: FileActionParams<McpJsonTarget>): PlannedAction {
   try {
     const earlier = previous?.kind === 'mcp-json' ? previous : null;
+    const ownedServers = [
+      ...new Set([
+        ...(earlier?.servers ?? []),
+        ...(sharedMcp?.previousOwned ?? []),
+        ...(sharedMcp?.stagedServers ?? []),
+      ]),
+    ];
+    const retainedServers = new Set<string>([
+      ...(sharedMcp?.stagedServers ?? []),
+      ...(sharedMcp?.plannedServers ?? []),
+    ]);
     const result = ensureMcpJsonServers({
       existing: file.existing,
       servers: target.servers,
-      ownedServers: earlier?.servers ?? [],
+      ownedServers,
+      retainedServers,
     });
     const createdMcpServers =
-      Boolean(earlier?.createdMcpServers) || result.createdMcpServers;
-    const original = earlier ? earlier.original : result.original;
+      Boolean(earlier?.createdMcpServers) ||
+      Boolean(sharedMcp?.createdMcpServers) ||
+      result.createdMcpServers;
+    const original = earlier
+      ? earlier.original
+      : (result.original ??
+        sharedMcp?.original ??
+        (createdMcpServers ? emptyJson?.rootOriginal : undefined));
     const wasEmpty = earlier
       ? earlier.wasEmpty
       : (emptyJson?.wasEmpty ?? result.wasEmpty);
     const blankText = earlier
       ? earlier.blankText
       : (emptyJson?.blankText ?? result.blankText);
+    if (sharedMcp) {
+      for (const name of result.servers) {
+        sharedMcp.stagedServers.add(name);
+      }
+      if (createdMcpServers) {
+        sharedMcp.createdMcpServers = true;
+      }
+      if (original !== undefined && sharedMcp.original === undefined) {
+        sharedMcp.original = original;
+      }
+    }
     return writeAction({
       target,
       file,
@@ -370,6 +422,7 @@ export interface PlanFileParams {
   boundary?: string;
   pathCreated?: boolean;
   emptyJson?: EmptyJsonState;
+  sharedMcp?: SharedMcpJsonState;
 }
 
 async function resolveTargetFile({
@@ -488,6 +541,7 @@ export async function planFile({
   target,
   previous,
   emptyJson,
+  sharedMcp,
   ...rest
 }: PlanFileParams): Promise<PlannedAction> {
   if (
@@ -506,6 +560,7 @@ export async function planFile({
   if ('status' in resolved) return resolved;
 
   const emptyState = emptyJson ? { emptyJson } : {};
+  const mcpState = sharedMcp ? { sharedMcp } : {};
   switch (target.kind) {
     case 'region':
       return planRegion({ target, file: resolved, previous });
@@ -516,7 +571,13 @@ export async function planFile({
     case 'json-array':
       return planJsonArray({ target, file: resolved, previous, ...emptyState });
     case 'mcp-json':
-      return planMcpJson({ target, file: resolved, previous, ...emptyState });
+      return planMcpJson({
+        target,
+        file: resolved,
+        previous,
+        ...emptyState,
+        ...mcpState,
+      });
     case 'mcp-toml':
       return planMcpToml({ target, file: resolved, previous });
   }

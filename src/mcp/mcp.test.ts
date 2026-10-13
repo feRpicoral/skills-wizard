@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -270,12 +270,26 @@ test('upsertMcpTomlServers and removeMcpTomlServers preserve outside TOML and re
       body: '[mcp_servers.custom]\ncommand = "other"',
       serverNames: ['custom'],
     });
+  const collideDotted = () =>
+    upsertMcpTomlServers({
+      existing: 'mcp_servers.custom.url = "https://example.com"\n',
+      body: '[mcp_servers.custom]\nurl = "https://other.example.com"',
+      serverNames: ['custom'],
+    });
+  const collideInline = () =>
+    upsertMcpTomlServers({
+      existing: '[mcp_servers]\ncustom = { command = "my-mcp" }\n',
+      body: '[mcp_servers.custom]\ncommand = "other"',
+      serverNames: ['custom'],
+    });
 
   assert.equal(upserted.includes(MCP_TOML_MARKERS.begin), true);
   assert.equal(upserted.includes('[mcp_servers.custom]'), true);
   assert.equal(removed, existing);
   assert.throws(collideBare, ManagedRegionError);
   assert.throws(collideQuoted, ManagedRegionError);
+  assert.throws(collideDotted, ManagedRegionError);
+  assert.throws(collideInline, ManagedRegionError);
 });
 
 test('buildPlan and applyPlan share Antigravity mcp_config.json, share project .mcp.json, and coexist in Gemini settings.json', async (t) => {
@@ -688,4 +702,356 @@ test('searchMcpRegistry converts npm, pypi, and remote servers and enforces resp
     'SENTRY_MCP_AUTH_TOKEN',
   ]);
   await assert.rejects(oversizedAttempt, McpError);
+});
+
+test('buildPlan and applyPlan coalesce aliased mcp-json targets and restore non-canonical empty JSON formatting on co-owned files', async (t) => {
+  const paths = await tempPaths(t);
+  const projectDir = await realpath(await tempDir(t));
+  const baseCatalog = await loadMcpCatalog(mcpCatalogPath(REPO_ROOT));
+  const mcpCatalog: McpCatalog = {
+    servers: [
+      ...baseCatalog.servers,
+      {
+        name: 'private-api',
+        description: 'Remote server with required secret header',
+        scopes: ['project'],
+        defaults: [],
+        transport: 'http',
+        url: 'https://api.example.com/mcp',
+        headers: {
+          Authorization: { secret: 'PRIVATE_API_TOKEN' },
+        },
+      },
+    ],
+  };
+  await writeFiles(projectDir, {
+    '.mcp.json': '{ }',
+    '.gemini/settings.json': '{ }',
+  });
+  await mkdir(join(projectDir, '.agents'), { recursive: true });
+  await symlink(
+    join('..', '.mcp.json'),
+    join(projectDir, '.agents', 'mcp_config.json'),
+  );
+
+  const installPlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['antigravity', 'claude-code', 'gemini-cli'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['nx', 'private-api'],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog,
+  });
+  const installOutcome = await applyPlan(installPlan);
+  const mcpAfterInstall = JSON.parse(
+    await readFile(join(projectDir, '.mcp.json'), 'utf8'),
+  ) as { mcpServers: Record<string, unknown> };
+  const afterInstallManifest = await readProjectManifest(
+    projectManifestPath(projectDir),
+    { dir: projectDir },
+  );
+  const removeClaudePlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['antigravity', 'gemini-cli'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['nx', 'private-api'],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: afterInstallManifest?.manifest ?? null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog,
+  });
+  await applyPlan(removeClaudePlan);
+  const mcpAfterRemoveClaude = JSON.parse(
+    await readFile(join(projectDir, '.mcp.json'), 'utf8'),
+  ) as { mcpServers: Record<string, unknown> };
+  const afterRemoveClaudeManifest = await readProjectManifest(
+    projectManifestPath(projectDir),
+    { dir: projectDir },
+  );
+  const removeAllPlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: [],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: [],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: afterRemoveClaudeManifest?.manifest ?? null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog,
+  });
+  await applyPlan(removeAllPlan);
+  const mcpRawAfterRemoveAll = await readFile(
+    join(projectDir, '.mcp.json'),
+    'utf8',
+  );
+  const geminiRawAfterRemoveAll = await readFile(
+    join(projectDir, '.gemini', 'settings.json'),
+    'utf8',
+  );
+
+  assert.equal(installOutcome.skipped.length, 0);
+  assert.deepEqual(Object.keys(mcpAfterInstall.mcpServers), [
+    'nx',
+    'private-api',
+  ]);
+  assert.deepEqual(Object.keys(mcpAfterRemoveClaude.mcpServers), ['nx']);
+  assert.equal(mcpRawAfterRemoveAll, '{ }');
+  assert.equal(geminiRawAfterRemoveAll, '{ }');
+});
+
+test('buildPlan emits tool filter warnings, suppresses Claude permissions.deny on .mcp.json conflict, and omits unrendered servers from manifest.mcp', async (t) => {
+  const paths = await tempPaths(t);
+  const projectDir = await realpath(await tempDir(t));
+  const customCatalog: McpCatalog = {
+    servers: [
+      {
+        name: 'filtered',
+        description: 'Server with allow and deny filters',
+        scopes: ['project'],
+        defaults: [],
+        transport: 'stdio',
+        command: 'npx',
+        args: ['filtered-mcp'],
+        env: {},
+        tools: { allow: ['safe-read'], deny: ['dangerous-write'] },
+      },
+      {
+        name: 'sse-only',
+        description: 'SSE server unsupported by Codex',
+        scopes: ['project'],
+        defaults: [],
+        transport: 'sse',
+        url: 'https://example.com/sse',
+        headers: {},
+      },
+    ],
+  };
+  await writeFiles(projectDir, {
+    '.mcp.json': JSON.stringify(
+      { mcpServers: { filtered: { command: 'unmanaged' } } },
+      null,
+      2,
+    ),
+  });
+
+  const claudeCopilotPlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['claude-code', 'copilot'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['filtered'],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog: customCatalog,
+  });
+  await applyPlan(claudeCopilotPlan);
+  const claudeCopilotManifest = await readProjectManifest(
+    projectManifestPath(projectDir),
+    { dir: projectDir },
+  );
+  const codexSsePlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['codex'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['sse-only'],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog: customCatalog,
+  });
+
+  assert.equal(
+    claudeCopilotPlan.actions.some(
+      (action) => action.label === 'Claude Code MCP tool permissions',
+    ),
+    false,
+  );
+  assert.equal(
+    (claudeCopilotPlan.warnings ?? []).some((w) => w.includes('tools.allow')),
+    true,
+  );
+  assert.equal(
+    (claudeCopilotPlan.warnings ?? []).some((w) => w.includes('tools.deny')),
+    true,
+  );
+  assert.deepEqual(claudeCopilotManifest?.manifest.mcp, []);
+  assert.deepEqual(codexSsePlan.manifest.mcp, []);
+});
+
+test('searchMcpRegistry handles digit-leading names, package fallback, isLatest prioritization, slug disambiguation, and default optional secrets', async () => {
+  const payload = {
+    servers: [
+      {
+        server: {
+          name: 'io.github.example/3d-viewer',
+          description: '3D model viewer',
+          remotes: [
+            {
+              type: 'http',
+              url: 'https://example.com/3d/mcp',
+              headers: [
+                { name: 'Authorization', isSecret: true },
+                { name: 'X-Tenant-Id' },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        server: {
+          name: 'io.github.example/fallback-pkg',
+          description: 'Fallback package test',
+          packages: [
+            {
+              registryType: 'npm',
+              identifier: '--invalid-pkg',
+            },
+            {
+              registryType: 'npm',
+              identifier: '@example/working',
+              version: '2.0.0',
+              environmentVariables: [{ name: 'OPTIONAL_UNSET_VAR' }],
+            },
+          ],
+        },
+      },
+      {
+        server: {
+          name: 'io.github.acme/versioned-mcp',
+          description: 'Old version',
+          version: '1.0.0',
+          packages: [
+            {
+              registryType: 'npm',
+              identifier: '@acme/versioned-mcp',
+              version: '1.0.0',
+            },
+          ],
+        },
+        _meta: {
+          'io.modelcontextprotocol.registry/official': { isLatest: false },
+        },
+      },
+      {
+        server: {
+          name: 'io.github.acme/versioned-mcp',
+          description: 'Latest version',
+          version: '2.1.0',
+          packages: [
+            {
+              registryType: 'npm',
+              identifier: '@acme/versioned-mcp',
+              version: '2.1.0',
+            },
+          ],
+        },
+        _meta: {
+          'io.modelcontextprotocol.registry/official': { isLatest: true },
+        },
+      },
+      {
+        server: {
+          name: 'io.github.alice/postgres-mcp',
+          description: 'Alice Postgres MCP',
+          packages: [
+            { registryType: 'npm', identifier: '@alice/postgres-mcp' },
+          ],
+        },
+      },
+      {
+        server: {
+          name: 'io.github.bob/postgres-mcp',
+          description: 'Bob Postgres MCP',
+          packages: [{ registryType: 'npm', identifier: '@bob/postgres-mcp' }],
+        },
+      },
+    ],
+  };
+
+  const candidates = await searchMcpRegistry({
+    query: 'mcp',
+    limit: 10,
+    fetchFn: () =>
+      Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+  });
+  const viewer = candidates.find((c) => c.name === '3d-viewer');
+  const fallback = candidates.find((c) => c.name === 'fallback-pkg');
+  const versioned = candidates.find((c) => c.name === 'versioned-mcp');
+  const alicePg = candidates.find(
+    (c) => c.fullName === 'io.github.alice/postgres-mcp',
+  );
+  const bobPg = candidates.find(
+    (c) => c.fullName === 'io.github.bob/postgres-mcp',
+  );
+
+  assert.ok(viewer);
+  assert.deepEqual(allServerSecrets(viewer.server), [
+    'MCP_3D_VIEWER_AUTH_TOKEN',
+    'X_TENANT_ID',
+  ]);
+  assert.deepEqual(requiredServerSecrets(viewer.server), []);
+  assert.ok(fallback);
+  assert.equal(fallback.server.transport, 'stdio');
+  assert.deepEqual(fallback.server.args, ['-y', '@example/working@2.0.0']);
+  assert.deepEqual(requiredServerSecrets(fallback.server), []);
+  assert.deepEqual(allServerSecrets(fallback.server), ['OPTIONAL_UNSET_VAR']);
+  assert.equal(versioned?.version, '2.1.0');
+  assert.equal(alicePg?.name, 'postgres-mcp');
+  assert.equal(bobPg?.name, 'bob-postgres-mcp');
 });

@@ -163,7 +163,11 @@ function toSecretEnvName({
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
   if (cleaned && isEnvVarName(cleaned)) return cleaned;
-  const prefix = fallbackPrefix.replace(/[^A-Za-z0-9_]+/g, '_').toUpperCase();
+  const rawPrefix = fallbackPrefix
+    .replace(/[^A-Za-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+  const prefix = /^[0-9]/.test(rawPrefix) ? `MCP_${rawPrefix}` : rawPrefix;
   const candidate = `${prefix}_${cleaned || 'SECRET'}`;
   return isEnvVarName(candidate) ? candidate : 'MCP_SECRET_TOKEN';
 }
@@ -199,7 +203,7 @@ function buildStdioEnv(
     if (item.isSecret || !literal) {
       env[key] = {
         secret: key,
-        ...(item.isRequired === false ? { optional: true } : {}),
+        ...(item.isRequired === true ? {} : { optional: true }),
       };
     } else {
       env[key] = literal;
@@ -218,11 +222,14 @@ function buildRemoteHeaders(
     if (header.isSecret || !literal) {
       const defaultSecretName =
         header.name.toLowerCase() === 'authorization'
-          ? `${shortName.replace(/-/g, '_').toUpperCase()}_AUTH_TOKEN`
+          ? toSecretEnvName({
+              raw: `${shortName}_AUTH_TOKEN`,
+              fallbackPrefix: 'MCP',
+            })
           : toSecretEnvName({ raw: header.name, fallbackPrefix: shortName });
       out[header.name] = {
         secret: defaultSecretName,
-        ...(header.isRequired === false ? { optional: true } : {}),
+        ...(header.isRequired === true ? {} : { optional: true }),
       };
     } else {
       out[header.name] = literal;
@@ -231,9 +238,32 @@ function buildRemoteHeaders(
   return out;
 }
 
-function extractInnerServer(
-  rawItem: unknown,
-): z.infer<typeof registryServerInnerSchema> | null {
+interface ExtractedRegistryServer {
+  inner: z.infer<typeof registryServerInnerSchema>;
+  isLatest: boolean;
+}
+
+function hasIsLatestFlag(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.isLatest === true) return true;
+  if (record._meta && typeof record._meta === 'object') {
+    for (const metaValue of Object.values(
+      record._meta as Record<string, unknown>,
+    )) {
+      if (
+        metaValue &&
+        typeof metaValue === 'object' &&
+        (metaValue as Record<string, unknown>).isLatest === true
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function extractInnerServer(rawItem: unknown): ExtractedRegistryServer | null {
   if (!rawItem || typeof rawItem !== 'object') return null;
   const wrapped = rawItem as { server?: unknown };
   const candidate =
@@ -241,18 +271,70 @@ function extractInnerServer(
       ? wrapped.server
       : rawItem;
   const parsed = registryServerInnerSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) return null;
+  return {
+    inner: parsed.data,
+    isLatest: hasIsLatestFlag(rawItem) || hasIsLatestFlag(candidate),
+  };
 }
 
 function sanitizeDescription(raw: string | undefined): string {
   return (raw ?? '').replace(/[\s\p{Cc}]+/gu, ' ').trim();
 }
 
-function toCandidate(
-  inner: z.infer<typeof registryServerInnerSchema>,
-): McpSearchCandidate | null {
-  const shortName = deriveShortServerName(inner.name);
-  if (!shortName) return null;
+interface DisambiguateShortServerNameParams {
+  registryName: string;
+  baseName: string;
+  usedNames: ReadonlySet<string>;
+}
+
+function disambiguateShortServerName({
+  registryName,
+  baseName,
+  usedNames,
+}: DisambiguateShortServerNameParams): string | null {
+  if (!usedNames.has(baseName)) return baseName;
+  const slashIndex = registryName.lastIndexOf('/');
+  if (slashIndex > 0) {
+    const namespace = registryName.slice(0, slashIndex);
+    const ownerRaw =
+      namespace.split(/[./]/).filter(Boolean).at(-1) ?? namespace;
+    const ownerSlug = deriveShortServerName(ownerRaw);
+    if (ownerSlug && ownerSlug !== baseName) {
+      const ownerCandidate = `${ownerSlug}-${baseName}`;
+      if (isMcpServerName(ownerCandidate) && !usedNames.has(ownerCandidate)) {
+        return ownerCandidate;
+      }
+    }
+    const namespaceSlug = deriveShortServerName(namespace);
+    if (namespaceSlug && namespaceSlug !== baseName) {
+      const namespaceCandidate = `${namespaceSlug}-${baseName}`;
+      if (
+        isMcpServerName(namespaceCandidate) &&
+        !usedNames.has(namespaceCandidate)
+      ) {
+        return namespaceCandidate;
+      }
+    }
+  }
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const numbered = `${baseName}-${suffix}`;
+    if (isMcpServerName(numbered) && !usedNames.has(numbered)) {
+      return numbered;
+    }
+  }
+  return null;
+}
+
+interface ToCandidateParams {
+  inner: z.infer<typeof registryServerInnerSchema>;
+  shortName: string;
+}
+
+function toCandidate({
+  inner,
+  shortName,
+}: ToCandidateParams): McpSearchCandidate | null {
   const description =
     sanitizeDescription(inner.description) || `${shortName} MCP server`;
 
@@ -271,61 +353,69 @@ function toCandidate(
     const env = buildStdioEnv(pkg.environmentVariables ?? [], shortName);
 
     if (kind === 'npm' || hint === 'npx') {
-      const validated = parseMcpCatalog(
-        {
-          servers: [
-            {
-              name: shortName,
-              description,
-              scopes: ['global', 'project'],
-              defaults: [],
-              transport: 'stdio',
-              command: 'npx',
-              args: ['-y', spec, ...extraArgs],
-              ...(Object.keys(env).length > 0 ? { env } : {}),
-            },
-          ],
-        },
-        'registry',
-      );
-      const server = validated.servers[0]!;
-      return {
-        name: server.name,
-        fullName: inner.name,
-        description: server.description,
-        transport: server.transport,
-        ...(version ? { version } : {}),
-        server,
-      };
+      try {
+        const validated = parseMcpCatalog(
+          {
+            servers: [
+              {
+                name: shortName,
+                description,
+                scopes: ['global', 'project'],
+                defaults: [],
+                transport: 'stdio',
+                command: 'npx',
+                args: ['-y', spec, ...extraArgs],
+                ...(Object.keys(env).length > 0 ? { env } : {}),
+              },
+            ],
+          },
+          'registry',
+        );
+        const server = validated.servers[0]!;
+        return {
+          name: server.name,
+          fullName: inner.name,
+          description: server.description,
+          transport: server.transport,
+          ...(version ? { version } : {}),
+          server,
+        };
+      } catch {
+        continue;
+      }
     }
 
     if (kind === 'pypi' || hint === 'uvx') {
-      const validated = parseMcpCatalog(
-        {
-          servers: [
-            {
-              name: shortName,
-              description,
-              scopes: ['global', 'project'],
-              defaults: [],
-              transport: 'stdio',
-              command: 'uvx',
-              args: [spec, ...extraArgs],
-              ...(Object.keys(env).length > 0 ? { env } : {}),
-            },
-          ],
-        },
-        'registry',
-      );
-      const server = validated.servers[0]!;
-      return {
-        name: server.name,
-        fullName: inner.name,
-        description: server.description,
-        transport: server.transport,
-        ...(version ? { version } : {}),
-        server,
-      };
+      try {
+        const validated = parseMcpCatalog(
+          {
+            servers: [
+              {
+                name: shortName,
+                description,
+                scopes: ['global', 'project'],
+                defaults: [],
+                transport: 'stdio',
+                command: 'uvx',
+                args: [spec, ...extraArgs],
+                ...(Object.keys(env).length > 0 ? { env } : {}),
+              },
+            ],
+          },
+          'registry',
+        );
+        const server = validated.servers[0]!;
+        return {
+          name: server.name,
+          fullName: inner.name,
+          description: server.description,
+          transport: server.transport,
+          ...(version ? { version } : {}),
+          server,
+        };
+      } catch {
+        continue;
+      }
     }
   }
 
@@ -447,20 +537,42 @@ export async function searchMcpRegistry({
     );
   }
 
-  const seen = new Set<string>();
-  const candidates: McpSearchCandidate[] = [];
+  const groupedByFullName = new Map<string, ExtractedRegistryServer[]>();
   for (const rawItem of envelope.data.servers) {
-    const inner = extractInnerServer(rawItem);
-    if (!inner) continue;
-    let candidate: McpSearchCandidate | null;
-    try {
-      candidate = toCandidate(inner);
-    } catch {
-      continue;
+    const extracted = extractInnerServer(rawItem);
+    if (!extracted) continue;
+    const existing = groupedByFullName.get(extracted.inner.name) ?? [];
+    existing.push(extracted);
+    groupedByFullName.set(extracted.inner.name, existing);
+  }
+
+  const usedNames = new Set<string>();
+  const candidates: McpSearchCandidate[] = [];
+  for (const [fullName, versions] of groupedByFullName) {
+    const baseName = deriveShortServerName(fullName);
+    if (!baseName) continue;
+    const shortName = disambiguateShortServerName({
+      registryName: fullName,
+      baseName,
+      usedNames,
+    });
+    if (!shortName) continue;
+
+    const ordered = [...versions].sort(
+      (a, b) => Number(b.isLatest) - Number(a.isLatest),
+    );
+    let matched: McpSearchCandidate | null = null;
+    for (const entry of ordered) {
+      try {
+        matched = toCandidate({ inner: entry.inner, shortName });
+      } catch {
+        continue;
+      }
+      if (matched) break;
     }
-    if (!candidate || seen.has(candidate.server.name)) continue;
-    seen.add(candidate.server.name);
-    candidates.push(candidate);
+    if (!matched) continue;
+    usedNames.add(matched.server.name);
+    candidates.push(matched);
     if (candidates.length >= limit) break;
   }
 

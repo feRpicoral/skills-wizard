@@ -42,27 +42,28 @@ export function createContext({
   cwd,
   interactive,
 }: CreateContextParams): Context {
+  const sources: SourceSettings = {
+    url: githubUrl,
+    env: gitEnvironment(),
+    now: () => new Date(),
+    skillsShUrl: () => resolveSkillsShUrl(),
+    mcpRegistryUrl: ({ official } = {}) =>
+      resolveMcpRegistryUrl({
+        ...(official !== undefined ? { official } : {}),
+      }),
+  };
   return {
     paths: resolvePaths(),
     repoRoot,
     cwd,
     searchPath: resolveSearchPath(),
     interactive,
-    sources: {
-      url: githubUrl,
-      env: gitEnvironment(),
-      now: () => new Date(),
-      skillsShUrl: () => resolveSkillsShUrl(),
-      mcpRegistryUrl: ({ official } = {}) =>
-        resolveMcpRegistryUrl({
-          ...(official !== undefined ? { official } : {}),
-        }),
-    },
+    sources,
     agy: {
       bin: () => resolveAgyBin(),
       extraArgs: () => resolveAgyExtraArgs(),
     },
-    hasEnvVar: (name) => hasEnvVar(name),
+    hasEnvVar: (name) => hasEnvVar(name, sources.env),
     print: (line = '') => {
       process.stdout.write(`${line}\n`);
     },

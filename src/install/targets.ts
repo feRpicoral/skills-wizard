@@ -499,6 +499,30 @@ export function mcpWarningsForPlan(input: PlanInput): string[] {
       ...renderMcpJsonServers({ client: 'antigravity', servers }).warnings,
     );
   }
+  const hasClaude = tools.some((tool) => tool.id === 'claude-code');
+  const hasCopilot = tools.some((tool) => tool.id === 'copilot');
+  if (input.scope === 'project' && hasClaude && hasCopilot) {
+    warnings.push(
+      ...renderMcpJsonServers({ client: 'claude-copilot-shared', servers })
+        .warnings,
+    );
+  } else {
+    if (hasClaude) {
+      warnings.push(
+        ...renderMcpJsonServers({ client: 'claude-code', servers }).warnings,
+      );
+    }
+    if (hasCopilot) {
+      warnings.push(
+        ...renderMcpJsonServers({ client: 'copilot', servers }).warnings,
+      );
+    }
+  }
+  if (tools.some((tool) => tool.id === 'gemini-cli')) {
+    warnings.push(
+      ...renderMcpJsonServers({ client: 'gemini-cli', servers }).warnings,
+    );
+  }
   if (tools.some((tool) => tool.id === 'codex')) {
     warnings.push(...renderMcpTomlServers(servers).warnings);
   }
