@@ -192,7 +192,7 @@ function planJsonArrayRemoval(
   file: ResolvedRemovalFile,
 ): PlannedAction {
   try {
-    const next = removeArrayValues({
+    const removed = removeArrayValues({
       existing: file.existing,
       keyPath: entry.key,
       values: entry.added,
@@ -203,7 +203,9 @@ function planJsonArrayRemoval(
           keyPath: entry.key,
           createdFile: entry.createdFile,
         }),
+      ...(entry.original === undefined ? {} : { original: entry.original }),
     });
+    const next = entry.wasEmpty && isEmptyJsonObject(removed) ? '' : removed;
     if (next === file.existing) {
       return removal({ entry, change: NONE, reason: NOTHING_LEFT });
     }

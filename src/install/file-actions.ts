@@ -233,15 +233,27 @@ function planLine({
 
 type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
 
-function createdKeysField(
+interface CreatedShape {
+  createdKeys?: number;
+  original?: string;
+}
+
+function shapeOf({ createdKeys, original }: CreatedShape): CreatedShape {
+  return {
+    ...(createdKeys === undefined ? {} : { createdKeys }),
+    ...(original === undefined ? {} : { original }),
+  };
+}
+
+function createdShape(
   earlier: JsonArrayEntry | null,
-  created: number,
-): { createdKeys?: number } {
-  if (!earlier) return { createdKeys: created };
+  result: CreatedShape & { createdKeys: number },
+): CreatedShape {
+  if (!earlier) return shapeOf(result);
   if (earlier.createdKeys === undefined) {
-    return created > 0 ? { createdKeys: created } : {};
+    return result.createdKeys > 0 ? shapeOf(result) : {};
   }
-  return { createdKeys: Math.max(earlier.createdKeys, created) };
+  return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
 }
 
 function planJsonArray({
@@ -274,7 +286,10 @@ function planJsonArray({
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
-        ...createdKeysField(earlier, result.createdKeys),
+        ...createdShape(earlier, result),
+        ...((earlier ? earlier.wasEmpty : result.wasEmpty)
+          ? { wasEmpty: true }
+          : {}),
         createdFile: file.createdFile,
       },
       previous,

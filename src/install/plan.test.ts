@@ -252,6 +252,33 @@ test('deselecting Gemini CLI restores a string context file name', async (t) => 
   );
 });
 
+test('deselecting Gemini CLI leaves an empty settings file empty again', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, { '.gemini/settings.json': '' });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.equal(
+    await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
+    '',
+  );
+});
+
+test('deselecting Gemini CLI restores a context file name with escapes as written', async (t) => {
+  const paths = await tempPaths(t);
+  const settings = '{"context": {"fileName": "GEM\\u0049NI.md"}}\n';
+  await writeFiles(paths.home, { '.gemini/settings.json': settings });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.equal(
+    await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
+    settings,
+  );
+});
+
 test('deselecting Gemini CLI keeps other settings and parents as written', async (t) => {
   const paths = await tempPaths(t);
   const settings =
