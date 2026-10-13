@@ -5,6 +5,7 @@ import { test } from 'node:test';
 
 import { RunnerError } from '../../errors.ts';
 import { tempDir, writeFiles } from '../../test-support/fixtures.ts';
+import { stagedSkillDir } from '../workspace.ts';
 import { createAgyRunner } from './agy.ts';
 import {
   buildAgyGraderArgs,
@@ -18,6 +19,7 @@ import {
   createEvalRunner,
   createFakeRunner,
   detectDefaultRunner,
+  fakeTriggerDecision,
   mentionsSkillFile,
   normalizeUsage,
   parseAgyGraderJson,
@@ -28,6 +30,7 @@ import {
   parseCodexStreamJson,
   parseGeminiGraderJson,
   parseGeminiStreamJson,
+  resolveRunnerBinary,
 } from './index.ts';
 
 const lines = (...events: unknown[]): string =>
@@ -111,6 +114,11 @@ test('grader builders use the most restrictive tool and permission mode of each 
     schema: { type: 'object' },
   });
   assert.equal(claude.includes('--dangerously-skip-permissions'), false);
+  // `--disallowedTools "*"` would also remove the structured-output tool.
+  assert.equal(
+    claude.some((arg) => arg === '*' || arg.endsWith('=*')),
+    false,
+  );
   assert.deepEqual(claude.slice(1, 7), [
     '--tools',
     '',
@@ -324,7 +332,7 @@ test('Claude trigger detection reads Read/Bash paths with a path boundary', () =
   );
 });
 
-test('parseClaudeGraderJson prefers structured_output and throws on error results', () => {
+test('parseClaudeGraderJson requires structured_output and throws on error results', () => {
   const output = { results: [{ assertion: 'A', passed: true, evidence: 'e' }] };
   const parsed = parseClaudeGraderJson({
     stdout: JSON.stringify({
@@ -351,6 +359,20 @@ test('parseClaudeGraderJson prefers structured_output and throws on error result
         }),
       }),
     /error_max_structured_output_retries: schema validation failed/,
+  );
+  // A success result without structured_output is a failure, even when the
+  // text result happens to be JSON.
+  assert.throws(
+    () =>
+      parseClaudeGraderJson({
+        stdout: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: JSON.stringify(output),
+        }),
+      }),
+    /no structured_output/,
   );
 });
 
@@ -1117,4 +1139,145 @@ test('detectDefaultRunner prioritizes agy -> claude -> codex -> gemini and agy r
   assert.equal(taskResult.durationMs, 321);
   assert.equal(taskResult.usageReported, true);
   assert.match(loggedStdout, /stub response/);
+});
+
+test('usageReported is false when every token counter is zero, e.g. on failed runs', () => {
+  const geminiFailed = parseGeminiStreamJson({
+    stdout: lines({
+      type: 'result',
+      status: 'error',
+      error: { type: 'ApiError', message: 'quota exceeded' },
+      stats: {
+        total_tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        duration_ms: 12,
+        tool_calls: 0,
+      },
+    }),
+    skillName: 'demo-skill',
+  });
+  assert.equal(geminiFailed.error, 'quota exceeded');
+  assert.equal(geminiFailed.usageReported, false);
+
+  const claudeZero = parseClaudeStreamJson({
+    stdout: lines({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      usage: {
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0,
+      },
+      errors: ['startup failed'],
+    }),
+    skillName: 'demo-skill',
+  });
+  assert.equal(claudeZero.usageReported, false);
+
+  const codexCachedOnly = parseCodexStreamJson({
+    stdout: lines({
+      type: 'turn.completed',
+      usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 3 },
+    }),
+    skillName: 'demo-skill',
+  });
+  assert.equal(codexCachedOnly.usageReported, true);
+});
+
+test('the fake runner triggers by a stable prompt hash, ignoring labels, and only when the skill is staged', async (t) => {
+  const prompts = Array.from({ length: 40 }, (_, i) => `Request number ${i}`);
+  const decisions = prompts.map((prompt) =>
+    fakeTriggerDecision({ prompt, skillName: 'demo-skill' }),
+  );
+  const triggeredCount = decisions.filter(Boolean).length;
+  assert.ok(triggeredCount > 5 && triggeredCount < 35, `${triggeredCount}/40`);
+  assert.deepEqual(
+    prompts.map((prompt) =>
+      fakeTriggerDecision({ prompt, skillName: 'demo-skill' }),
+    ),
+    decisions,
+  );
+
+  const root = await tempDir(t);
+  const staged = join(root, 'staged');
+  const bare = join(root, 'bare');
+  await writeFiles(
+    stagedSkillDir({
+      workdir: staged,
+      runner: 'fake',
+      skillName: 'demo-skill',
+    }),
+    { 'SKILL.md': '---\nname: demo-skill\n---\n' },
+  );
+  await writeFiles(bare, { 'README.md': 'x' });
+  const runner = createFakeRunner();
+  const run = async (workdir: string, prompt: string, excludeSkill = false) =>
+    (
+      await runner.runTask({
+        prompt,
+        workdir,
+        runDir: join(root, 'run'),
+        skillName: 'demo-skill',
+        timeoutSeconds: 10,
+        excludeSkill,
+      })
+    ).triggered;
+
+  const triggeringPrompt = prompts[decisions.indexOf(true)] ?? '';
+  const quietPrompt = prompts[decisions.indexOf(false)] ?? '';
+  assert.equal(await run(staged, triggeringPrompt), true);
+  assert.equal(await run(staged, quietPrompt), false);
+  assert.equal(await run(staged, triggeringPrompt, true), false);
+  assert.equal(await run(bare, triggeringPrompt), false);
+  // A "[negative]" label is not special any more.
+  const labelled = `[negative] ${triggeringPrompt}`;
+  assert.equal(
+    await run(staged, labelled),
+    fakeTriggerDecision({ prompt: labelled, skillName: 'demo-skill' }),
+  );
+});
+
+test('createEvalRunner resolves a relative --binary path against the given cwd', async (t) => {
+  const root = await tempDir(t);
+  const cliCwd = join(root, 'project');
+  const workdir = join(root, 'workdir');
+  await writeFiles(workdir, { 'README.md': 'x' });
+  await stubBinary(
+    join(cliCwd, 'bin'),
+    'claude',
+    `#!/bin/sh\necho '${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'relative ok', usage: { input_tokens: 1, output_tokens: 1 } })}'\n`,
+  );
+
+  assert.equal(
+    resolveRunnerBinary({ binary: './bin/claude', cwd: cliCwd }),
+    join(cliCwd, 'bin', 'claude'),
+  );
+  assert.equal(
+    resolveRunnerBinary({ binary: 'claude', cwd: cliCwd }),
+    'claude',
+  );
+  assert.equal(
+    resolveRunnerBinary({ binary: '/opt/claude', cwd: cliCwd }),
+    '/opt/claude',
+  );
+
+  const runner = createEvalRunner({
+    runner: 'claude',
+    binary: './bin/claude',
+    cwd: cliCwd,
+    env: STUB_ENV,
+  });
+  await runner.preflight?.();
+  const result = await runner.runTask({
+    prompt: 'Hello',
+    workdir,
+    runDir: join(root, 'run'),
+    skillName: 'demo-skill',
+    timeoutSeconds: 10,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.response, 'relative ok');
 });
