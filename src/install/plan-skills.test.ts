@@ -893,3 +893,32 @@ test('a copy recorded before the setup flag keeps what setup created', async (t)
   assert.equal(recorded.install.setup, true);
   assert.ok((await stat(join(canonical, 'node_modules/dep/x.js'))).isFile());
 });
+
+test('a setup copy recorded before the setup flag is removed when deselected', async (t) => {
+  const paths = await tempPaths(t);
+  const skill: SkillSource = {
+    ...(await localSkill({ root: await tempDir(t), name: 'notes' })),
+    setup: 'mkdir -p node_modules/dep && echo x > node_modules/dep/x.js',
+  };
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  const manifestPath = globalManifestPath(paths);
+  const stored = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
+  for (const entry of stored.entries) {
+    if (entry.kind === 'skill' && entry.install.mode === 'copy') {
+      delete entry.install.setup;
+    }
+  }
+  await writeFiles(dirname(manifestPath), {
+    [basename(manifestPath)]: JSON.stringify(stored),
+  });
+  const canonical = join(paths.skillsDir, 'notes');
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    selected: [],
+  });
+
+  assert.equal(statuses(plan)[canonical], 'remove');
+  await assert.rejects(lstat(canonical), { code: 'ENOENT' });
+});
