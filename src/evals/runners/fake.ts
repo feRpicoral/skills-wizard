@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { lstatIfExists, readTextIfExists } from '../../install/fs.ts';
+import { lstatIfExists } from '../../install/fs.ts';
+import { stagedSkillDir } from '../workspace.ts';
 import type {
   EvalRunner,
   RunnerGraderRequest,
@@ -28,31 +29,20 @@ interface SkillActiveCheckParams {
   skillName: string;
 }
 
+/**
+ * The fake runner "sees" the skill when it is staged where the harness stages
+ * it for the fake runner. Baseline workspaces never stage it, and
+ * `excludeSkill` is honored as well.
+ */
 async function isSkillActiveInWorkdir({
   workdir,
   skillName,
 }: SkillActiveCheckParams): Promise<boolean> {
-  if (
-    (await lstatIfExists(
-      join(workdir, '.agents', 'skills', skillName, 'SKILL.md'),
-    )) === null
-  ) {
-    return false;
-  }
-  const excludeJson = await readTextIfExists(
-    join(workdir, '.agents', 'skills.json'),
+  const skillFile = join(
+    stagedSkillDir({ workdir, runner: 'fake', skillName }),
+    'SKILL.md',
   );
-  if (excludeJson) {
-    try {
-      const parsed = JSON.parse(excludeJson) as { exclude?: unknown };
-      if (Array.isArray(parsed.exclude) && parsed.exclude.includes(skillName)) {
-        return false;
-      }
-    } catch {
-      return true;
-    }
-  }
-  return true;
+  return (await lstatIfExists(skillFile)) !== null;
 }
 
 function extractAssertionsFromGraderPrompt(prompt: string): string[] {
