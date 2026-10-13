@@ -1,7 +1,6 @@
 ---
 name: prettier-configuration
-description: "Use when adding, configuring or debugging Prettier 3 in a repo: .prettierrc and overrides, options such as singleQuote, printWidth or trailingComma, .prettierignore and prettier-ignore comments, plugins like prettier-plugin-tailwindcss, the CLI (--check, --write, --cache), editor format on save, lint-staged and Husky pre-commit hooks, or CI format checks. Also use for indirect asks such as 'format on save fights the linter', 'make ESLint and Prettier stop fighting', 'stop Prettier from reformatting generated files or Markdown tables', 'prettier --check passes locally but fails in CI', formatting churn after an upgrade, or 'set up formatting for this repo', even when the user only says formatting. Applies the user's house style to new setups and matches existing ones. For lint rules and ESLint config structure, use eslint-configuration."
-license: MIT
+description: "Configures and debugs Prettier 3 and its editor, pre-commit and CI integrations. Use when adding or updating .prettierrc and overrides, options such as singleQuote, printWidth or trailingComma, .prettierignore and prettier-ignore comments, plugins like prettier-plugin-tailwindcss, the CLI (--check, --write, --cache), editor format on save, lint-staged and Husky pre-commit hooks, or CI format checks, or for indirect requests such as 'format on save fights the linter', 'make ESLint and Prettier stop fighting', 'stop Prettier from reformatting generated files or Markdown tables', 'prettier --check passes locally but fails in CI', formatting churn after an upgrade, or 'set up formatting for this repo'. Don't use for non-formatting ESLint rules or eslintrc-to-flat-config migrations (use eslint-configuration)."
 compatibility: Requires Node.js. scripts/check-version.mjs reads the project's package.json and node_modules.
 metadata:
   docs-version: '3.9.10'
@@ -29,8 +28,9 @@ When you explain a change, say which parts Prettier requires and which are the u
    - `match`: use the references as written.
    - `newer`: tell the user the installed Prettier is newer than the 3.9.10 docs this skill was built from. Recommend updating the skill from the docs at the installed version, and read the changelog entries after 3.9.10 before relying on version-specific details. Keep helping with the task.
    - `older`: read [references/version-differences.md](references/version-differences.md) before anything else. Options and flags in the other references may not exist, and output differs between releases.
+   - `declared`: Prettier is declared in `package.json` with an uncomparable range (`catalog:`, `workspace:*`, `latest`) and not installed. Install dependencies first and re-run the check; do not treat it as a new setup.
    - `missing`: Prettier is neither installed nor declared. Treat it as a new setup.
-   - `staleInstall: true`: the installed version is below the declared range, a classic cause of "passes locally, fails in CI". Say so and reinstall from the lockfile before comparing output.
+   - `staleInstall: true`: the installed version is outside the declared range, a classic cause of "passes locally, fails in CI". Say so and reinstall from the lockfile before comparing output.
 
 2. Inspect the existing setup before editing anything:
    - Config: the `"prettier"` key in `package.json`, `.prettierrc*`, `prettier.config.*`, `.editorconfig`, and nested configs in subdirectories (resolution starts at each formatted file).
@@ -53,7 +53,7 @@ When you explain a change, say which parts Prettier requires and which are the u
 3. Create `.prettierignore` for build output, coverage, generated code and lockfiles that are not already in `.gitignore`.
 4. Add scripts `format` and `format:check`, and devDependencies `prettier` (plus the plugin).
 5. ESLint integration: add `eslint-plugin-prettier/recommended` (with `eslint-config-prettier`) after the shared configs, and remove stylistic ESLint rules. The eslint-configuration skill covers the config itself. Mention once that Prettier's docs list downsides of running Prettier inside ESLint (editor noise, speed, indirection), and keep it.
-6. Hooks: lint-staged plus Husky 9 with the house block (ESLint first, then Prettier) and the `pre-commit` and `commit-msg` hooks. With Yarn, install Husky from `postinstall`; with npm, pnpm or bun, from `prepare`.
+6. Hooks: add devDependencies `husky` and `lint-staged` (plus `@commitlint/cli` and `@commitlint/config-conventional` with `commitlint.config.mjs` when adding the `commit-msg` hook), the house `lint-staged` block (ESLint first, then Prettier), and `.husky/pre-commit` (and `.husky/commit-msg` when commitlint is configured). With Yarn, install Husky from `postinstall`; with npm, pnpm or bun, from `prepare`.
 7. Where the user's repos disagree (quotes, `printWidth`), follow the target repo if it already decided; otherwise use the newest repos' choice (desvia, quotahit: single quotes, default `printWidth`) and say so.
 
 ### Stop Prettier from touching something

@@ -55,7 +55,7 @@ Files in `node_modules` are skipped (`--with-node-modules` includes them), symbo
 | `--stdin-filepath <path>`                                        | Format stdin as if it were this file: `cat abc.css \| prettier --stdin-filepath abc.css`     |
 | `--plugin <name>`                                                | Load a plugin, repeatable                                                                    |
 
-Every formatting option also has a flag (options.md).
+Every formatting option (`--single-quote`, `--print-width`, `--tab-width`, `--trailing-comma`, `--prose-wrap`, etc.) also has a CLI flag, though config files are preferred.
 
 ## Cache
 

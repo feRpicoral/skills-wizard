@@ -140,8 +140,8 @@
     },
     {
       "id": "ci-local-version-drift",
-      "prompt": "prettier --check passes on my laptop but CI fails saying docs/setup.md isn't formatted. nobody touched that file in weeks. what's going on? and please don't just ignore it",
-      "expected_output": "The agent runs the version check, which reports older with staleInstall true: node_modules has prettier 3.0.3 while package.json declares ^3.9.10 and the docs are 3.9.10. It explains that CI installs 3.9.10 from package-lock.json with npm ci while the laptop still has 3.0.3, and that Prettier output changes between releases: with the Markdown override tabWidth 4, Prettier before 3.4.0 prints list items as '-   item' and 3.4.0 and later print '- item' (3.9.0 also replaced the Markdown parser). It tells the user to reinstall from the lockfile (npm ci), rerun prettier --check, then run prettier --write with 3.9.10, review and commit the formatting change on its own. It mentions the docs' advice to install an exact version (or relying on the committed lockfile) and making the editor use the local Prettier. It does not add the file to .prettierignore, does not loosen or remove the CI step, and does not downgrade Prettier.",
+      "prompt": "prettier --check passes on my laptop but CI fails saying docs/setup.md isn't formatted. nobody touched that file in weeks. what's going on, and can you fix docs/setup.md so CI passes without just ignoring it?",
+      "expected_output": "The agent runs the version check, which reports older with staleInstall true: node_modules has prettier 3.0.3 while package.json declares ^3.9.10 and the docs are 3.9.10. It explains that CI installs 3.9.10 from package-lock.json with npm ci while the laptop still has 3.0.3, and that Prettier output changes between releases: with the Markdown override tabWidth 4, Prettier before 3.4.0 prints list items as '-   item' and 3.4.0 and later print '- item' (3.9.0 also replaced the Markdown parser). It updates docs/setup.md to match Prettier 3.9.10 formatting ('- Install Node.js 24.' with single space after the list marker), tells the user to reinstall from the lockfile (npm ci) and rerun prettier --check, and mentions the docs' advice to install an exact version (or relying on the committed lockfile) and making the editor use the local Prettier. It does not add the file to .prettierignore, does not loosen or remove the CI step, and does not downgrade Prettier.",
       "files": [
         "evals/files/ci-local-version-drift/package.json",
         "evals/files/ci-local-version-drift/package-lock.json",
@@ -178,6 +178,11 @@
           "pattern": "prettier[^\\n]*--check"
         },
         { "type": "file_exists", "path": "docs/setup.md" },
+        {
+          "type": "regex",
+          "path": "docs/setup.md",
+          "pattern": "^(?![\\s\\S]*-   Install)"
+        },
         { "type": "file_exists", "path": "package-lock.json" },
         "Does not add the failing files to .prettierignore, does not loosen or remove the CI check, and does not downgrade Prettier"
       ]

@@ -2,14 +2,14 @@ Source: the user's repositories quotahit, desvia, relay, cite and sonar (eslint.
 
 # House style (ESLint)
 
-Use this for new setups. In an existing repo, match what is there. This file has the shared core and the plain TypeScript/Node and Next.js variants; the Nx monorepo and Expo/React Native variants are in house-style-nx.md.
+Use this for new setups. In an existing repo, match what is there. This file has the shared core and the plain TypeScript/Node and Next.js variants.
 
 ## What all five repos share
 
 - ESLint 9 flat config in `eslint.config.mjs`. None of the five is on ESLint 10 yet.
 - `eslint-plugin-prettier/recommended`, with `eslint-plugin-prettier`, `eslint-config-prettier` and `prettier` installed. It enables `prettier/prettier`, turns on eslint-config-prettier and turns off `arrow-body-style` and `prefer-arrow-callback` (eslint-plugin-prettier README).
 - `eslint-plugin-simple-import-sort` with both `simple-import-sort/imports` and `simple-import-sort/exports` set to `"error"`.
-- Prettier, Husky 9, lint-staged and commitlint on every commit (prettier-configuration skill, house-style.md there).
+- Prettier (`.prettierrc` with `{ "singleQuote": true }` and `.prettierignore`), Husky 9, lint-staged and commitlint on every commit.
 
 ## Where the repos differ
 
@@ -162,8 +162,18 @@ Dev dependencies: `eslint`, `eslint-config-next` (same version as `next`), `type
 
 ## Scripts, hooks and CI
 
-- `"lint": "eslint ."` and `"lint:fix": "eslint . --fix"` (quotahit). relay, cite and sonar use `eslint` with no path, which also lints `.`.
-- lint-staged runs `eslint --fix` and then `prettier --write` on `*.{ts,tsx,js,jsx,cjs,mjs}`; see the prettier-configuration house style for the full block and Husky hooks.
+- `"lint": "eslint ."`, `"lint:fix": "eslint . --fix"`, `"format": "prettier --write ."`, `"format:check": "prettier --check ."`, and `"postinstall": "husky"` on Yarn (`"prepare": "husky"` on npm, pnpm or bun).
+- `.prettierrc`: `{ "singleQuote": true }`, plus `.prettierignore` (`dist`, `coverage`, `.yarn`, `node_modules`).
+- `lint-staged` in `package.json`:
+  ```json
+  {
+    "lint-staged": {
+      "*.{ts,tsx,js,jsx,cjs,mjs}": ["eslint --fix", "prettier --write"],
+      "*.{json,md,css,yml,yaml}": ["prettier --write"]
+    }
+  }
+  ```
+- `.husky/pre-commit`: `yarn lint-staged` (or `npx lint-staged` / `pnpm exec lint-staged`). Dev dependencies for hooks: `husky`, `lint-staged`.
 - CI (quotahit, relay): `corepack enable`, `yarn install --immutable`, then `yarn lint`, typecheck, tests and build.
 - All five use Yarn 4 with `nodeLinker: node-modules`.
 

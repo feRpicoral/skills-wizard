@@ -97,7 +97,7 @@
     {
       "id": "migrate-eslintrc-to-flat",
       "prompt": "Please migrate this repo's ESLint setup to flat config and upgrade ESLint to v10 while you're at it. Keep the existing rules, the browser/node/mocha globals, the test override and every ignore pattern from .eslintrc.json and .eslintignore. Delete the old files and fix the npm scripts that still use eslintrc-only flags.",
-      "expected_output": "The agent runs the version check, which reports older (eslint 8.57.0 installed versus the 10.12.0 docs), reads version-differences.md and notes the Node.js requirement for ESLint 10. It writes eslint.config.mjs with the same behavior: @eslint/js recommended, the four rules including argsIgnorePattern ^_, browser globals for src and tests but not for scripts and *.config.js (the old override set browser false and sourceType script), mocha globals and the no-unused-expressions and no-console overrides for test files, node globals for scripts, and global ignores for dist/, coverage/, vendor/**, public/legacy.js and **/temp.js (temp.js gains **/ because flat config patterns are relative to the config file). It removes the eslint-env comments, deletes .eslintrc.json and .eslintignore, bumps eslint to ^10 and adds @eslint/js and globals, drops --ignore-path from the scripts, adds no house-style plugins, and reports which commands it ran or that installing dependencies is required first.",
+      "expected_output": "The agent runs the version check, which reports older (eslint 8.57.0 installed versus the 10.12.0 docs), reads version-differences.md and notes the Node.js requirement for ESLint 10. It writes eslint.config.mjs with the same behavior: @eslint/js recommended, the four rules including argsIgnorePattern ^_, browser globals for src and tests but not for scripts and **/*.config.js (the old override set browser false and sourceType script, and *.config.js gains **/ because eslintrc overrides used matchBase: true), mocha globals and the no-unused-expressions and no-console overrides for test files, node globals for scripts and **/*.config.js, and global ignores for dist/, coverage/, vendor/**, public/legacy.js and **/temp.js (temp.js gains **/ because flat config patterns are relative to the config file). It removes the eslint-env comments, deletes .eslintrc.json and .eslintignore, bumps eslint to ^10 and adds @eslint/js and globals, drops --ignore-path from the scripts, adds no house-style plugins, and reports which commands it ran or that installing dependencies is required first.",
       "files": [
         "evals/files/migrate-eslintrc-to-flat/package.json",
         "evals/files/migrate-eslintrc-to-flat/.eslintrc.json",
@@ -106,6 +106,7 @@
         "evals/files/migrate-eslintrc-to-flat/src/widget.js",
         "evals/files/migrate-eslintrc-to-flat/test/widget.test.js",
         "evals/files/migrate-eslintrc-to-flat/scripts/build.js",
+        "evals/files/migrate-eslintrc-to-flat/packages/ui/rollup.config.js",
         "evals/files/migrate-eslintrc-to-flat/node_modules/eslint/package.json"
       ],
       "assertions": [
@@ -147,6 +148,11 @@
           "type": "regex",
           "path": "eslint.config.mjs",
           "pattern": "['\"]\\*\\*/temp\\.js['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "\\*\\*/\\*\\.config\\.js"
         },
         {
           "type": "regex",

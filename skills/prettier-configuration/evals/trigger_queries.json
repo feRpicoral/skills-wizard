@@ -52,7 +52,7 @@
     "should_trigger": false
   },
   {
-    "query": "Configure commitlint and a Husky commit-msg hook to enforce header-only Conventional Commits with no body or footer.",
+    "query": "Configure Vitest workspace projects and v8 coverage thresholds in vitest.config.ts for our TypeScript monorepo.",
     "should_trigger": false
   },
   {

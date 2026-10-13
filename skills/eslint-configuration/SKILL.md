@@ -1,7 +1,6 @@
 ---
 name: eslint-configuration
-description: "Use when setting up, changing, migrating, upgrading or debugging ESLint in a JavaScript or TypeScript repo: writing eslint.config.js/mjs/ts flat config with defineConfig, adding rules, plugins, parsers, globals or ignores, converting .eslintrc or .eslintignore, moving from ESLint 8 or 9 to 10, or wiring lint into lint-staged, Husky and CI. Also use for indirect asks such as 'set up linting for this repo', 'lint errors after upgrading', 'eslint is ignoring my files', 'this rule does not apply', 'format on save fights the linter', unsorted imports, unused-variable noise, Nx or monorepo lint config, typescript-eslint or eslint-plugin-prettier questions, even when the user never says ESLint. Applies the user's house style to new setups and matches existing ones. For Prettier options alone, use prettier-configuration."
-license: MIT
+description: "Configures, migrates, upgrades and debugs ESLint in JavaScript and TypeScript repositories. Use when writing eslint.config.js/mjs/ts flat config with defineConfig, adding rules, plugins, parsers, globals or ignores, converting .eslintrc or .eslintignore, upgrading ESLint 8 or 9 to 10, wiring lint into lint-staged, Husky and CI, or answering indirect requests such as 'set up linting for this repo', 'lint errors after upgrading', 'eslint is ignoring my files', 'this rule does not apply', unsorted imports, unused-variable noise, Nx or monorepo lint config, or typescript-eslint questions. Don't use for Prettier options, .prettierignore, or editor format-on-save conflicts alone (use prettier-configuration)."
 compatibility: Requires Node.js. scripts/check-version.mjs reads the project's package.json and node_modules.
 metadata:
   docs-version: '10.12.0'
@@ -29,6 +28,7 @@ When you explain a change, say which parts ESLint requires and which are the use
    - `match`: use the references as written.
    - `newer`: tell the user the installed ESLint is newer than the 10.12.0 docs this skill was built from. Recommend updating the skill from the docs at the installed version, and read that version's release notes (and migration guide if the major changed) before relying on version-specific details. Keep helping with the task.
    - `older`: read [references/version-differences.md](references/version-differences.md) before anything else. Features in the other references, such as `defineConfig`, `basePath` or bulk suppressions, may not exist in the installed version.
+   - `declared`: ESLint is declared in `package.json` with an uncomparable range (`catalog:`, `workspace:*`, `latest`) and not installed. Install dependencies first and re-run the check; do not treat it as a new setup.
    - `missing`: ESLint is neither installed nor declared. Treat it as a new setup.
    - `staleInstall: true` or "declared but not installed": say so. Lint results are not trustworthy until dependencies are installed from the lockfile.
 
@@ -54,7 +54,7 @@ When you explain a change, say which parts ESLint requires and which are the use
 3. Order the array: shared configs (framework, typescript-eslint), then `eslint-plugin-prettier/recommended`, then the house rules object, then global ignores. Nothing after the Prettier config may enable formatting rules.
 4. House rules: `simple-import-sort/imports` and `simple-import-sort/exports` as `"error"`, unused variables ignored when prefixed with `_` (`^_`), and type-only imports through `@typescript-eslint/consistent-type-imports`.
 5. Where the user's repos disagree (unused-imports plugin or the typescript-eslint rule, quote style, `printWidth`), follow the target repo if it already decided. Otherwise use the newest repos' choice (desvia, quotahit) and tell the user which choice you made.
-6. Add Prettier (`{ "singleQuote": true }`), lint-staged and Husky as listed in house-style.md. The prettier-configuration skill has the details.
+6. Add Prettier (`.prettierrc` with `{ "singleQuote": true }` and `.prettierignore`), `lint`/`lint:fix`/`format`/`format:check` scripts, `lint-staged` (`"*.{ts,tsx,js,jsx,cjs,mjs}": ["eslint --fix", "prettier --write"]`, `"*.{json,md,css,yml,yaml}": ["prettier --write"]`), and Husky (`.husky/pre-commit` running `yarn lint-staged`, wired via `"postinstall": "husky"` on Yarn or `"prepare": "husky"` on npm/pnpm/bun) as listed in [references/house-style.md](references/house-style.md).
 7. Install versions whose `peerDependencies` accept the ESLint major you install. The house repos run ESLint 9; if a plugin does not accept ESLint 10 yet, install the latest 9.x and say so.
 8. Mention the eslint-plugin-prettier trade-off in one sentence (Prettier's docs list editor noise, speed and an extra layer of indirection) and keep the plugin.
 
@@ -107,7 +107,7 @@ Read only what the task needs:
 - Flat config reads only `eslint.config.*`. `env`, top-level `globals`, `overrides`, `ignorePatterns`, `root`, `.eslintignore` and `eslintConfig` in package.json are unsupported, and ESLint 10 reports `/* eslint-env */` comments as errors.
 - `extends` only works inside `defineConfig()` (ESLint 9.22.0 or later). A plain array with `extends` fails with "A config object is using the "extends" key, which is not supported in flat config system". Pair every `extends` with `files`.
 - ESLint lints `**/*.js`, `**/*.cjs` and `**/*.mjs` by default. Other extensions need a `files` pattern such as `**/*.ts`, and objects without `files` then apply to those files too.
-- Patterns are relative to the config file, or to the working directory when `--config` is used. `temp.js` only matches next to the config; write `**/temp.js`.
+- Patterns are relative to the config file, or to the working directory when `--config` is used. In legacy eslintrc, slash-less patterns in `.eslintignore`/`ignorePatterns` and `overrides[].files` (`matchBase: true`) matched at any depth (`temp.js` or `*.config.js`); in flat config, prepend `**/` (`**/temp.js`, `**/*.config.js`) unless the old pattern started with `./`.
 - `ignores` is global only when it is the only key besides `name`; prefer `globalIgnores()`. Non-global ignores match files only, so `dir/` does nothing there; use `dir/**`.
 - `build/**` stops traversal, so nothing inside can be unignored; use `build/**/*` plus `!` patterns.
 - ESLint 10 finds the config by walking up from each linted file, so a nested `eslint.config.*` wins for its subtree. ESLint 9 used the working directory unless a flag was set.
