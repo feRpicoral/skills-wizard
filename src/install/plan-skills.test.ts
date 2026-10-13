@@ -7,6 +7,7 @@ import {
   readFile,
   readlink,
   realpath,
+  rm,
   stat,
   symlink,
 } from 'node:fs/promises';
@@ -603,5 +604,123 @@ test('a committed manifest that records a project folder as a skill is refused a
   assert.equal(
     await readFile(join(dir, 'src', 'lib', 'index.ts'), 'utf8'),
     'export {};\n',
+  );
+});
+
+async function aliasClaudeSkills(paths: Paths): Promise<void> {
+  await mkdir(paths.claudeHome, { recursive: true });
+  await symlink(paths.skillsDir, join(paths.claudeHome, 'skills'));
+}
+
+test('a tool skills folder that links to the shared folder gets no per-skill link', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
+  await mkdir(paths.skillsDir, { recursive: true });
+  await aliasClaudeSkills(paths);
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['claude-code'],
+    skills: [skill],
+  });
+
+  const link = plan.actions.find(
+    (action) => action.path === join(paths.claudeHome, 'skills', 'notes'),
+  );
+  assert.deepEqual(
+    { status: link?.status, reason: link?.reason },
+    { status: 'unchanged', reason: 'tool reads the shared skills folder' },
+  );
+  assert.ok((await lstat(join(paths.skillsDir, 'notes'))).isDirectory());
+  assert.ok(
+    (
+      await stat(join(paths.claudeHome, 'skills', 'notes', 'SKILL.md'))
+    ).isFile(),
+  );
+  assert.deepEqual(
+    (await manifestOf(paths))?.entries.filter(
+      (entry) => entry.kind === 'symlink',
+    ),
+    [],
+  );
+});
+
+test('adopting through a tool skills folder that links to the shared folder keeps one copy', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
+  await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'mine\n' });
+  await aliasClaudeSkills(paths);
+  const backupDir = join(paths.stateDir, 'backups', '2026-01-01T00-00-00Z');
+
+  await installGlobal(paths, {
+    tools: ['claude-code'],
+    skills: [skill],
+    adopt: { names: new Set(['notes']), backupDir },
+  });
+
+  assert.ok((await lstat(join(paths.skillsDir, 'notes'))).isDirectory());
+  assert.equal(
+    await readFile(join(paths.skillsDir, 'notes', 'SKILL.md'), 'utf8'),
+    skillSource('notes'),
+  );
+  assert.equal(
+    await readFile(join(backupDir, '.agents/skills/notes/SKILL.md'), 'utf8'),
+    'mine\n',
+  );
+});
+
+test('a recorded link under a folder that now links to the shared folder is dropped without touching the copy', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
+  await installGlobal(paths, { tools: ['claude-code'], skills: [skill] });
+  await rm(join(paths.claudeHome, 'skills'), { recursive: true });
+  await aliasClaudeSkills(paths);
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+  });
+
+  assert.equal(
+    plan.actions.find(
+      (action) => action.path === join(paths.claudeHome, 'skills', 'notes'),
+    )?.reason,
+    'tool reads the shared skills folder',
+  );
+  assert.ok((await stat(join(paths.skillsDir, 'notes', 'SKILL.md'))).isFile());
+  assert.deepEqual(
+    (await manifestOf(paths))?.entries.filter(
+      (entry) => entry.kind === 'symlink',
+    ),
+    [],
+  );
+});
+
+test('a project skills folder that links to .agents/skills gets no per-skill link', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
+  await mkdir(join(dir, '.claude'));
+  await symlink(
+    join('..', '.agents', 'skills'),
+    join(dir, '.claude', 'skills'),
+  );
+
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+    skills: [skill],
+  });
+
+  assert.equal(
+    statuses(plan)[join(dir, '.claude', 'skills', 'notes')],
+    'unchanged',
+  );
+  assert.ok(
+    (await lstat(join(dir, '.agents', 'skills', 'notes'))).isDirectory(),
+  );
+  assert.doesNotMatch(
+    await readFile(projectManifestPath(dir), 'utf8'),
+    /"kind": "symlink"/,
   );
 });

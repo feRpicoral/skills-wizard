@@ -31,7 +31,12 @@ import {
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
-import { installedState, type SkillEntry } from './skill-actions.ts';
+import {
+  installedState,
+  SHARED_FOLDER,
+  sharesSkillsFolder,
+  type SkillEntry,
+} from './skill-actions.ts';
 
 type SymlinkEntry = Extract<ManifestEntry, { kind: 'symlink' }>;
 type FileEntry = Exclude<ManifestEntry, SymlinkEntry | SkillEntry>;
@@ -258,9 +263,11 @@ export async function planRemoval({
         });
       }
     }
-    return entry.kind === 'symlink'
-      ? planSymlinkRemoval(entry)
-      : planSkillRemoval(entry);
+    if (entry.kind === 'skill') return planSkillRemoval(entry);
+    if (await sharesSkillsFolder(entry)) {
+      return removal({ entry, change: NONE, reason: SHARED_FOLDER });
+    }
+    return planSymlinkRemoval(entry);
   }
   const resolved = await resolveRemovalFile({
     entry,

@@ -1,10 +1,10 @@
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import type { Scope } from '../blocks/library.ts';
 import type { SkillSource } from '../skills/install.ts';
 import { hashTree } from '../skills/tree.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import { lstatIfExists, readSymlink } from './fs.ts';
+import { lstatIfExists, readSymlink, realLocation } from './fs.ts';
 import {
   type Change,
   CHANGED_OUTSIDE,
@@ -19,6 +19,8 @@ import {
 import type { SkillTarget, SymlinkTarget } from './targets.ts';
 
 export type SkillEntry = Extract<ManifestEntry, { kind: 'skill' }>;
+
+export const SHARED_FOLDER = 'tool reads the shared skills folder';
 
 export type InstalledState = 'missing' | 'owned' | 'changed' | 'unmanaged';
 
@@ -68,6 +70,29 @@ function placeSkill({ source, install, backup }: PlaceSkillParams): Change {
   };
 }
 
+async function folderLocation(dir: string): Promise<string | null> {
+  const real = await realLocation(dir);
+  if (real !== null) return real;
+  const target = await readSymlink(dir);
+  return target === null ? null : realLocation(resolve(dirname(dir), target));
+}
+
+interface SharedFolderParams {
+  path: string;
+  target: string;
+}
+
+export async function sharesSkillsFolder({
+  path,
+  target,
+}: SharedFolderParams): Promise<boolean> {
+  const [linkFolder, copyFolder] = await Promise.all([
+    folderLocation(dirname(path)),
+    folderLocation(dirname(resolve(dirname(path), target))),
+  ]);
+  return linkFolder !== null && linkFolder === copyFolder;
+}
+
 export interface PlanSymlinkParams {
   target: SymlinkTarget;
   previous: ManifestEntry | null;
@@ -79,6 +104,17 @@ export async function planSymlink({
   previous,
   boundary,
 }: PlanSymlinkParams): Promise<PlannedAction> {
+  if (target.skill !== undefined && (await sharesSkillsFolder(target))) {
+    return {
+      path: target.path,
+      label: target.label,
+      status: 'unchanged',
+      change: NONE,
+      entry: null,
+      previous,
+      reason: SHARED_FOLDER,
+    };
+  }
   const problem = await locationProblem({
     path: dirname(target.path),
     ...(boundary ? { boundary } : {}),
