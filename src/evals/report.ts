@@ -119,23 +119,31 @@ function formatRunHeading(run: EvalRunRecord): string {
   return `#### ${codeSpan(run.variant)} - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds.toFixed(2)}s, ${tokens}${failure})`;
 }
 
-function formatAssertionRow(
-  assertion: AssertionAggregate,
-  withOldSkill: boolean,
-): string {
+interface AssertionRowParams {
+  assertion: AssertionAggregate;
+  hasBaseline: boolean;
+  withOldSkill: boolean;
+}
+
+function formatAssertionRow({
+  assertion,
+  hasBaseline,
+  withOldSkill,
+}: AssertionRowParams): string {
+  const oldClassification =
+    assertion.old_skill_classification ??
+    (hasBaseline ? undefined : assertion.classification);
   const cells = [
     escapeTableCell(assertion.text),
     cellCodeSpan(assertion.kind),
     formatRate(assertion.with_skill_pass_rate),
-    formatRate(assertion.baseline_pass_rate),
+    ...(hasBaseline ? [formatRate(assertion.baseline_pass_rate)] : []),
     ...(withOldSkill ? [formatRate(assertion.old_skill_pass_rate)] : []),
-    cellCodeSpan(assertion.classification),
+    ...(hasBaseline || !withOldSkill
+      ? [cellCodeSpan(assertion.classification)]
+      : []),
     ...(withOldSkill
-      ? [
-          assertion.old_skill_classification
-            ? cellCodeSpan(assertion.old_skill_classification)
-            : NOT_AVAILABLE,
-        ]
+      ? [oldClassification ? cellCodeSpan(oldClassification) : NOT_AVAILABLE]
       : []),
   ];
   return `| ${cells.join(' | ')} |`;
@@ -150,6 +158,7 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     `- **Timestamp:** ${codeSpan(metadata.timestamp)}`,
     `- **Runs per configuration:** ${metadata.runs_per_configuration}`,
     `- **Baseline status:** ${metadata.baseline_status}`,
+    `- **\`with_skill\` status:** ${metadata.with_skill_contaminated ? 'possibly contaminated' : 'clean'}`,
   ];
   if (metadata.compare_ref) {
     lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
@@ -203,11 +212,21 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   }
   lines.push('');
 
+  // Without baseline runs, assertions are classified against old_skill.
+  const hasBaseline = summary.without_skill !== undefined;
+  const withOldSkill = summary.old_skill !== undefined;
+  const referenceLabel = hasBaseline
+    ? 'baseline'
+    : withOldSkill
+      ? '`old_skill`'
+      : undefined;
+  const vsReference = referenceLabel ? ` (vs ${referenceLabel})` : '';
+
   if (benchmark.non_discriminating_assertions.length > 0) {
     lines.push(
       '## Non-Discriminating Assertions',
       '',
-      'These assertions passed 100% in both `with_skill` and baseline runs:',
+      `These assertions passed 100% in both \`with_skill\` and ${hasBaseline ? 'baseline' : '`old_skill`'} runs:`,
       '',
     );
     for (const item of benchmark.non_discriminating_assertions) {
@@ -218,12 +237,12 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
 
   const analysis = benchmark.assertion_analysis;
   const analysisLines = [
-    ['Pass only with skill', analysis.pass_only_with_skill],
+    [`Pass only with skill${vsReference}`, analysis.pass_only_with_skill],
     ['Regressing (vs baseline)', analysis.regressing],
-    ['Regressing (vs old_skill)', analysis.regressing_vs_old],
-    ['Pass in both', analysis.pass_in_both],
-    ['Fail in both', analysis.fail_in_both],
-    ['Flaky', analysis.flaky],
+    ['Regressing (vs `old_skill`)', analysis.regressing_vs_old],
+    [`Pass in both${vsReference}`, analysis.pass_in_both],
+    [`Fail in both${vsReference}`, analysis.fail_in_both],
+    [`Flaky${vsReference}`, analysis.flaky],
   ] as const;
   if (analysisLines.some(([, items]) => items.length > 0)) {
     lines.push('## Assertion Analysis', '');
@@ -233,7 +252,6 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     lines.push('');
   }
 
-  const withOldSkill = summary.old_skill !== undefined;
   lines.push('## Eval Cases', '');
   for (const evalCase of cases) {
     lines.push(
@@ -254,17 +272,23 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
         'Assertion',
         'Kind',
         '`with_skill`',
-        '`without_skill`',
+        ...(hasBaseline ? ['`without_skill`'] : []),
         ...(withOldSkill ? ['`old_skill`'] : []),
-        'Classification',
-        ...(withOldSkill ? ['vs `old_skill`'] : []),
+        ...(hasBaseline
+          ? ['Classification (vs baseline)']
+          : withOldSkill
+            ? []
+            : ['Classification']),
+        ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
       ];
       lines.push(
         `| ${header.join(' | ')} |`,
         `| ${header.map(() => '---').join(' | ')} |`,
       );
       for (const assertion of evalCase.assertions) {
-        lines.push(formatAssertionRow(assertion, withOldSkill));
+        lines.push(
+          formatAssertionRow({ assertion, hasBaseline, withOldSkill }),
+        );
       }
       lines.push('');
     }
