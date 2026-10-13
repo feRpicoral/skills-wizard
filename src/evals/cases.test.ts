@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { EvalError } from '../errors.ts';
+import { validateSkill } from '../skills/validate.ts';
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import {
   loadEvalSuite,
@@ -12,6 +13,8 @@ import {
   selectTriggerQueries,
   splitTriggerQueries,
 } from './cases.ts';
+
+const REPO_ROOT = join(import.meta.dirname, '..', '..');
 
 test('loadEvalSuite parses string and scripted assertions and verifies files', async (t) => {
   const root = await tempDir(t);
@@ -226,5 +229,40 @@ test('parseTriggerQueries rejects empty arrays, duplicates, and invalid items', 
 
   for (const raw of invalidInputs) {
     assert.throws(attempt(raw), EvalError);
+  }
+});
+
+test('all five new first-party skills pass strict validation and eval suite loading', async () => {
+  const skillNames = [
+    'eslint-configuration',
+    'github-repo-setup',
+    'nestjs-module',
+    'prettier-configuration',
+    'supabase-prisma',
+  ];
+
+  const results = await Promise.all(
+    skillNames.map(async (name) => {
+      const dir = join(REPO_ROOT, 'skills', name);
+      const report = await validateSkill(dir, { strict: true });
+      const suite = await loadEvalSuite(dir);
+      const queries = await loadTriggerQueries(dir);
+      return {
+        name,
+        errors: report.errors,
+        warnings: report.warnings,
+        evalCount: suite.evals.length,
+        positiveCount: queries.filter((item) => item.should_trigger).length,
+        negativeCount: queries.filter((item) => !item.should_trigger).length,
+      };
+    }),
+  );
+
+  for (const item of results) {
+    assert.deepEqual(item.errors, []);
+    assert.deepEqual(item.warnings, []);
+    assert.equal(item.evalCount, 3);
+    assert.equal(item.positiveCount, 10);
+    assert.equal(item.negativeCount, 10);
   }
 });
