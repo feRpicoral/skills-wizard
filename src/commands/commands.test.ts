@@ -926,3 +926,25 @@ test('skill eval reads the agy settings only for the agy runner', async (t) => {
   );
   assert.equal(configReads, 1);
 });
+
+test('skill eval prints pass-rate deltas in percentage points', async (t) => {
+  const { ctx, output } = await testContext(t);
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['summary-skill'],
+    withEvals: true,
+  });
+
+  const code = await runSkill(ctx, {
+    subcommand: 'eval',
+    paths: ['summary-skill'],
+    runner: 'fake',
+    baseline: true,
+  });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /with_skill pass rate \d+\.\d% \([+-]\d+\.\d pp vs baseline\)/,
+  );
+});
