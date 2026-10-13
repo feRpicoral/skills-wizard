@@ -5,6 +5,17 @@ export interface Line {
   eol: string;
 }
 
+const BOM = '\uFEFF';
+
+export function keepBom(
+  content: string,
+  edit: (text: string) => string,
+): string {
+  const bom = content.startsWith(BOM) ? BOM : '';
+  const next = edit(content.slice(bom.length));
+  return next === '' ? '' : `${bom}${next}`;
+}
+
 export function isBlank(content: string | null): boolean {
   return content === null || content.trim() === '';
 }

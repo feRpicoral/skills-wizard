@@ -52,3 +52,21 @@ test('removeLine keeps the endings of the other lines', () => {
 
   assert.equal(content, '# Claude\r\nmore\n');
 });
+
+test('ensureLine keeps a byte order mark at the start of the file', () => {
+  const content = ensureLine({
+    existing: '\uFEFF# Claude\n',
+    line: '@AGENTS.md',
+  });
+
+  assert.equal(content, '\uFEFF@AGENTS.md\n\n# Claude\n');
+});
+
+test('removeLine keeps a byte order mark at the start of the file', () => {
+  const content = removeLine({
+    existing: '\uFEFF@AGENTS.md\n\n# Claude\n',
+    line: '@AGENTS.md',
+  });
+
+  assert.equal(content, '\uFEFF# Claude\n');
+});
