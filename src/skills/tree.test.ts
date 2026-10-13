@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import {
   copySkillTree,
+  escapingLinks,
   hashInstalledCopy,
   hashTree,
   replaceWithCopy,
@@ -86,6 +87,52 @@ test('copySkillTree leaves out generated Python output', async (t) => {
     'SKILL.md',
     'scripts/run.py',
   ]);
+});
+
+test('escapingLinks reports absolute links and links that leave the skill', async (t) => {
+  const root = await tempDir(t);
+  const skill = join(root, 'skill');
+  await writeFiles(skill, {
+    'SKILL.md': 'skill\n',
+    'docs/guide.md': 'g\n',
+    'references/notes.md': 'n\n',
+  });
+  await symlink('/etc/hosts', join(skill, 'hosts'));
+  await symlink('../../../.ssh/id_rsa', join(skill, 'docs', 'key'));
+  await symlink('../shared', join(skill, 'shared'));
+  await symlink('../docs/guide.md', join(skill, 'references', 'guide.md'));
+  await symlink('docs', join(skill, 'manual'));
+  await symlink('/etc/passwd', join(skill, 'AGENTS.md'));
+
+  assert.deepEqual(await escapingLinks(skill), [
+    { path: 'docs/key', target: '../../../.ssh/id_rsa' },
+    { path: 'hosts', target: '/etc/hosts' },
+    { path: 'shared', target: '../shared' },
+  ]);
+});
+
+test('copySkillTree refuses links that leave the skill', async (t) => {
+  const root = await tempDir(t);
+  const source = join(root, 'source');
+  await writeFiles(source, { 'SKILL.md': 'skill\n' });
+  await symlink('../outside.md', join(source, 'outside.md'));
+
+  await assert.rejects(
+    copySkillTree({ source, destination: join(root, 'copy') }),
+    /outside\.md: it links outside the skill/,
+  );
+});
+
+test('copySkillTree refuses absolute links', async (t) => {
+  const root = await tempDir(t);
+  const source = join(root, 'source');
+  await writeFiles(source, { 'SKILL.md': 'skill\n' });
+  await symlink('/etc/hosts', join(source, 'hosts'));
+
+  await assert.rejects(
+    copySkillTree({ source, destination: join(root, 'copy') }),
+    /hosts: it links outside the skill \(\/etc\/hosts\)/,
+  );
 });
 
 test('hashInstalledCopy of a pristine copy equals the source hash', async (t) => {
