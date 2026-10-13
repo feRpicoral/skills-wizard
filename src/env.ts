@@ -68,12 +68,9 @@ export function resolveAgyBin(
   return value;
 }
 
-export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
-  const bin = resolveAgyBin(env);
+export function resolveAgyExtraArgs(env: Environment = process.env): string[] {
   const rawExtra = env.AGY_EXTRA_ARGS?.trim();
-  if (!rawExtra) {
-    return { ...(bin ? { bin } : {}), extraArgs: [] };
-  }
+  if (!rawExtra) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawExtra);
@@ -91,7 +88,12 @@ export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
       'AGY_EXTRA_ARGS must be a JSON array of strings',
     );
   }
-  return { ...(bin ? { bin } : {}), extraArgs: parsed };
+  return parsed;
+}
+
+export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
+  const bin = resolveAgyBin(env);
+  return { ...(bin ? { bin } : {}), extraArgs: resolveAgyExtraArgs(env) };
 }
 
 export function resolveSearchPath(env: Environment = process.env): string[] {

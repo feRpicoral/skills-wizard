@@ -1,19 +1,19 @@
 import {
-  type AgyConfig,
   gitEnvironment,
   type Paths,
   resolveAgyBin,
-  resolveAgyConfig,
+  resolveAgyExtraArgs,
   resolvePaths,
   resolveSearchPath,
 } from './env.ts';
 import { githubUrl, type SourceSettings } from './skills/sources.ts';
 
 // Read lazily: only agy evals (and runner auto-detection, for the binary)
-// need these, so a malformed AGY_EXTRA_ARGS never breaks other commands.
+// need these, so a malformed AGY_EXTRA_ARGS never breaks other commands and
+// an invalid AGY_BIN is never read when --binary overrides it.
 export interface AgySettings {
   bin: () => string | undefined;
-  config: () => AgyConfig;
+  extraArgs: () => string[];
 }
 
 export interface Context {
@@ -51,7 +51,7 @@ export function createContext({
     },
     agy: {
       bin: () => resolveAgyBin(),
-      config: () => resolveAgyConfig(),
+      extraArgs: () => resolveAgyExtraArgs(),
     },
     print: (line = '') => {
       process.stdout.write(`${line}\n`);
