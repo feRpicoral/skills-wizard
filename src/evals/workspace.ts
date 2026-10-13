@@ -41,6 +41,9 @@ const HARNESS_OWNED_DIRS = ['.agents', '.claude', '.gemini', '.codex'] as const;
 
 const DEFAULT_PROJECT_SKILLS_DIR = posix.join('.agents', 'skills');
 
+/** Fixture file name that is staged into eval workspaces as `SKILL.md`. */
+export const FIXTURE_SKILL_FILE = 'SKILL.fixture.md';
+
 export type EvalVariant = 'with_skill' | 'without_skill' | 'old_skill';
 
 export type EvalRunnerName = 'agy' | 'claude' | 'codex' | 'gemini' | 'fake';
@@ -126,13 +129,16 @@ export function mapCaseFileRelativePath({
     ? normalized.slice(prefix.length)
     : normalized;
   const casePrefix = `${caseId}/`;
-  if (
-    afterPrefix.startsWith(casePrefix) &&
-    afterPrefix.length > casePrefix.length
-  ) {
-    return afterPrefix.slice(casePrefix.length);
+  const relative =
+    afterPrefix.startsWith(casePrefix) && afterPrefix.length > casePrefix.length
+      ? afterPrefix.slice(casePrefix.length)
+      : afterPrefix;
+  // Fixture skills are stored as SKILL.fixture.md so that tools scanning a
+  // linked skill folder never discover them; they are staged as SKILL.md.
+  if (posix.basename(relative) === FIXTURE_SKILL_FILE) {
+    return posix.join(posix.dirname(relative), 'SKILL.md');
   }
-  return afterPrefix;
+  return relative;
 }
 
 export interface CaseFileDestinationsParams {

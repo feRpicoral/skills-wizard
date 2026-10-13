@@ -15,6 +15,7 @@ import {
 } from '../test-support/fixtures.ts';
 import { isolatedGitEnv } from '../test-support/git.ts';
 import {
+  mapCaseFileRelativePath,
   personalSkillShadowWarning,
   prepareEvalWorkspace,
   prepareTriggerWorkspace,
@@ -652,4 +653,55 @@ test('prepareEvalWorkspace refuses a fixture mapped into .git before writing any
     { name: 'EvalError', message: /maps into "\.git\/"/ },
   );
   assert.equal(await lstatIfExists(join(root, 'run', 'workdir', '.git')), null);
+});
+
+test('fixture SKILL.fixture.md files are staged as SKILL.md', async (t) => {
+  const root = await tempDir(t);
+  const skillDir = join(root, 'skills', 'demo-skill');
+  await writeFiles(skillDir, {
+    'SKILL.md': skillSource('demo-skill'),
+    'evals/files/fixture-case/draft/SKILL.fixture.md': '# Fixture skill\n',
+  });
+
+  assert.equal(
+    mapCaseFileRelativePath({
+      fileEntry: 'evals/files/fixture-case/draft/SKILL.fixture.md',
+      caseId: 'fixture-case',
+    }),
+    'draft/SKILL.md',
+  );
+  assert.throws(
+    () =>
+      validateCaseFileDestinations({
+        evalCase: {
+          id: 'fixture-case',
+          files: ['evals/files/SKILL.fixture.md', 'evals/files/SKILL.md'],
+        },
+        skillName: 'demo-skill',
+      }),
+    /same destination "SKILL\.md"/,
+  );
+
+  const prepared = await prepareEvalWorkspace({
+    runDir: join(root, 'run'),
+    skillDir,
+    skillName: 'demo-skill',
+    evalCase: {
+      ...plainCase,
+      id: 'fixture-case',
+      files: ['evals/files/fixture-case/draft/SKILL.fixture.md'],
+    },
+    variant: 'without_skill',
+    runner: 'fake',
+    env: isolatedGitEnv(root),
+  });
+
+  assert.equal(
+    await readFile(join(prepared.workdir, 'draft', 'SKILL.md'), 'utf8'),
+    '# Fixture skill\n',
+  );
+  assert.equal(
+    await lstatIfExists(join(prepared.workdir, 'draft', 'SKILL.fixture.md')),
+    null,
+  );
 });
