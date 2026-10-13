@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
-import type { Context } from '../context.ts';
+import { type Context, createContext } from '../context.ts';
 import {
   CatalogError,
   EnvironmentError,
@@ -1900,6 +1900,14 @@ test('runMcp lists, adds, removes, and searches MCP servers and preserves MCP ac
   });
   const catalogAfterAdd = await loadMcpCatalog(mcpCatalogPath(repoRoot));
   const manifest = await readManifest(globalManifestPath(ctx.paths));
+  const duplicateSearchAdd = () =>
+    runMcp(ctx, {
+      subcommand: 'search',
+      args: ['memory'],
+      add: true,
+      yes: true,
+      dryRun: false,
+    });
 
   assert.equal(addCode, 0);
   assert.equal(listCode, 0);
@@ -1912,6 +1920,7 @@ test('runMcp lists, adds, removes, and searches MCP servers and preserves MCP ac
     false,
   );
   assert.equal(searchAddCode, 0);
+  await assert.rejects(duplicateSearchAdd, UsageError);
   assert.equal(
     catalogAfterAdd.servers.some((s) => s.name === 'memory-mcp'),
     true,
@@ -2017,7 +2026,15 @@ test('runDoctor reports missing MCP secrets, Antigravity stdio notes, project tr
     scope: 'project',
     projectDir: project,
   });
+  const liveCtx = createContext({
+    repoRoot,
+    cwd: project,
+    interactive: false,
+  });
+  liveCtx.sources.env = { CUSTOM_TEST_SECRET: 'set-value' };
 
+  assert.equal(liveCtx.hasEnvVar?.('CUSTOM_TEST_SECRET'), true);
+  assert.equal(liveCtx.hasEnvVar?.('MISSING_TEST_SECRET'), false);
   assert.equal(doctorCode, 0);
   assert.match(
     doctorOutput,

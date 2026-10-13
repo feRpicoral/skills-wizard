@@ -10,6 +10,7 @@ import { buildPlan } from '../install/plan.ts';
 import {
   appendMcpServers,
   extendMcpCatalog,
+  findMcpServer,
   formatMcpServerYaml,
   loadMcpCatalog,
   type McpCatalog,
@@ -413,6 +414,12 @@ async function runMcpSearch({
             item.name === lowerQuery ||
             item.fullName.toLowerCase() === lowerQuery,
         ) ?? candidates[0]!);
+
+  if (findMcpServer(catalog, chosen.server.name)) {
+    throw new UsageError(
+      `MCP server "${chosen.server.name}" is already in mcp/servers.yaml; run agents-config mcp add ${chosen.server.name} to install it.`,
+    );
+  }
 
   const file = mcpCatalogPath(ctx.repoRoot);
   extendMcpCatalog({

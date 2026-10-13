@@ -233,9 +233,6 @@ function planJsonArrayRemoval(
       entry.wasEmpty && isEmptyJsonObject(removed)
         ? (entry.blankText ?? '')
         : removed;
-    if (next === file.existing) {
-      return removal({ entry, change: NONE, reason: NOTHING_LEFT });
-    }
     return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
@@ -249,24 +246,29 @@ function planJsonArrayRemoval(
   }
 }
 
-function planMcpJsonRemoval(
-  entry: McpJsonEntry,
-  file: ResolvedRemovalFile,
-): PlannedAction {
+interface PlanMcpJsonRemovalParams {
+  entry: McpJsonEntry;
+  file: ResolvedRemovalFile;
+  retainedServers?: ReadonlySet<string>;
+}
+
+function planMcpJsonRemoval({
+  entry,
+  file,
+  retainedServers,
+}: PlanMcpJsonRemovalParams): PlannedAction {
   try {
     const removed = removeMcpJsonServers({
       existing: file.existing,
       servers: entry.servers,
       createdMcpServers: entry.createdMcpServers ?? entry.createdFile,
       ...(entry.original === undefined ? {} : { original: entry.original }),
+      ...(retainedServers !== undefined ? { retainedServers } : {}),
     });
     const next =
       entry.wasEmpty && isEmptyJsonObject(removed)
         ? (entry.blankText ?? '')
         : removed;
-    if (next === file.existing) {
-      return removal({ entry, change: NONE, reason: NOTHING_LEFT });
-    }
     return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
@@ -309,6 +311,7 @@ export interface PlanRemovalParams {
   staged: StagedContents;
   sharedWith?: string;
   boundary?: string;
+  retainedMcpServers?: ReadonlySet<string>;
 }
 
 export async function planRemoval({
@@ -316,6 +319,7 @@ export async function planRemoval({
   staged,
   sharedWith,
   boundary,
+  retainedMcpServers,
 }: PlanRemovalParams): Promise<PlannedAction> {
   if (sharedWith !== undefined) {
     return removal({
@@ -360,7 +364,13 @@ export async function planRemoval({
     case 'json-array':
       return planJsonArrayRemoval(entry, resolved);
     case 'mcp-json':
-      return planMcpJsonRemoval(entry, resolved);
+      return planMcpJsonRemoval({
+        entry,
+        file: resolved,
+        ...(retainedMcpServers !== undefined
+          ? { retainedServers: retainedMcpServers }
+          : {}),
+      });
     case 'mcp-toml':
       return planMcpTomlRemoval(entry, resolved);
   }
