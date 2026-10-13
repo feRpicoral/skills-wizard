@@ -177,6 +177,9 @@ export interface TriggerBenchmarkSummary {
     runs_per_query: number;
     threshold: number;
     timestamp: string;
+    /** True when another copy of the skill may be loaded instead of the staged one. */
+    possibly_contaminated: boolean;
+    warnings: string[];
   };
   metrics: TriggerMetrics;
   queries: TriggerQueryAggregate[];
@@ -505,6 +508,8 @@ export interface AggregateTriggerRunsParams {
   threshold: number;
   queries: readonly TriggerQuery[];
   results: readonly TriggerQueryRunResult[];
+  possiblyContaminated?: boolean;
+  warnings?: readonly string[];
   timestamp?: string;
 }
 
@@ -526,6 +531,8 @@ export function aggregateTriggerRuns({
   threshold,
   queries,
   results,
+  possiblyContaminated = false,
+  warnings = [],
   timestamp = new Date().toISOString(),
 }: AggregateTriggerRunsParams): TriggerBenchmarkSummary {
   const queryAggregates: TriggerQueryAggregate[] = queries.map((item) => {
@@ -569,6 +576,8 @@ export function aggregateTriggerRuns({
       runs_per_query: runsPerQuery,
       threshold,
       timestamp,
+      possibly_contaminated: possiblyContaminated,
+      warnings: [...warnings],
     },
     metrics: {
       total_queries: queryAggregates.length,
@@ -724,6 +733,8 @@ const triggerBenchmarkSummarySchema = z.looseObject({
     runs_per_query: z.number().int(),
     threshold: z.number(),
     timestamp: z.string(),
+    possibly_contaminated: z.boolean().default(false),
+    warnings: z.array(z.string()).default([]),
   }),
   metrics: z.looseObject({
     total_queries: z.number().int(),
