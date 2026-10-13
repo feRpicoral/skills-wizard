@@ -244,7 +244,7 @@ function parseSplit(value: string | undefined): TriggerSplit {
 
 interface WarnUnsupportedSandboxParams {
   ctx: Context;
-  runner: EvalRunner & { readonly sandboxSupported?: boolean };
+  runner: EvalRunner;
   sandbox: boolean;
 }
 
