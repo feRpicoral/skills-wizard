@@ -33,7 +33,7 @@ import {
   type SkillLibrary,
 } from '../skills/library.ts';
 import { type LockedSkill, readSkillLock } from '../skills/lock.ts';
-import { readManifest } from '../state/manifest.ts';
+import { readGlobalManifest } from '../state/manifest.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
@@ -232,7 +232,7 @@ async function restoreCatalog({
 }: RestoreCatalogParams): Promise<void> {
   let recorded: ReadonlySet<string>;
   try {
-    recorded = new Set((await readManifest(manifestPath))?.skills ?? []);
+    recorded = new Set((await readGlobalManifest(manifestPath))?.skills ?? []);
   } catch {
     return;
   }
