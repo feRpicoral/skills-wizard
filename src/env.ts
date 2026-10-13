@@ -49,20 +49,38 @@ export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
 }
 
+// What `git rev-parse --local-env-vars` lists, which git itself clears before
+// it works in another repository, plus GIT_NAMESPACE. User-level settings
+// such as GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM are kept.
 const REPOSITORY_GIT_VARIABLES = new Set([
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_COMMON_DIR',
+  'GIT_CONFIG',
+  'GIT_CONFIG_COUNT',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_DIR',
+  'GIT_GRAFT_FILE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_INDEX_FILE',
   'GIT_NAMESPACE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_OBJECT_DIRECTORY',
   'GIT_PREFIX',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_SHALLOW_FILE',
+  'GIT_WORK_TREE',
 ]);
+const REPOSITORY_GIT_PATTERN = /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/;
+
+function isRepositoryGitVariable(name: string): boolean {
+  return (
+    REPOSITORY_GIT_VARIABLES.has(name) || REPOSITORY_GIT_PATTERN.test(name)
+  );
+}
 
 export function gitEnvironment(env: Environment = process.env): Environment {
   const kept = Object.entries(env).filter(
-    ([name]) => !REPOSITORY_GIT_VARIABLES.has(name),
+    ([name]) => !isRepositoryGitVariable(name),
   );
   return { ...Object.fromEntries(kept), GIT_TERMINAL_PROMPT: '0' };
 }
