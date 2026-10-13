@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { promisify } from 'node:util';
 
@@ -39,10 +39,19 @@ interface Result {
   stderr: string;
 }
 
-async function cli(home: string, args: string[]): Promise<Result> {
+interface CliOptions {
+  extraPath?: string;
+}
+
+async function cli(
+  home: string,
+  args: string[],
+  { extraPath }: CliOptions = {},
+): Promise<Result> {
+  const path = extraPath ? `${extraPath}${delimiter}${searchPath}` : searchPath;
   try {
     const { stdout, stderr } = await run(process.execPath, [CLI, ...args], {
-      env: { HOME: home, PATH: searchPath, GIT_CONFIG_NOSYSTEM: '1' },
+      env: { HOME: home, PATH: path, GIT_CONFIG_NOSYSTEM: '1' },
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -134,6 +143,26 @@ test('sync reapplies a recorded install after a file was edited', async (t) => {
   assert.match(doctor.stdout, /out of date/);
   assert.equal(sync.code, 0);
   assert.match(sync.stdout, /update\s+~\/\.codex\/AGENTS\.md/);
+});
+
+test('init warns when ~/.local/bin is not on PATH after linking the command', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, [...INSTALL, '--link-command']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /\.local\/bin is not on your PATH/);
+});
+
+test('init accepts ~/.local/bin on PATH written with a trailing slash', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, [...INSTALL, '--link-command'], {
+    extraPath: `${join(home, '.local', 'bin')}/`,
+  });
+
+  assert.equal(result.code, 0);
+  assert.doesNotMatch(result.stdout, /not on your PATH/);
 });
 
 test('an empty tool list removes everything that was installed', async (t) => {
