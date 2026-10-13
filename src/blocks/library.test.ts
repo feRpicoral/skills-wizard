@@ -42,6 +42,17 @@ test('loads blocks with their frontmatter and trimmed body', async (t) => {
   });
 });
 
+test('rejects an index that is not valid YAML, naming the index file', async (t) => {
+  const dir = await tempDir(t);
+  await writeFiles(dir, { 'index.yaml': 'order: [core/one\n' });
+
+  await assert.rejects(loadBlockLibrary(dir), (error) => {
+    assert.ok(error instanceof BlockLibraryError);
+    assert.match(error.message, /index\.yaml: invalid YAML/);
+    return true;
+  });
+});
+
 test('rejects block files missing from the index order', async (t) => {
   const dir = await tempDir(t);
   await writeFiles(dir, {

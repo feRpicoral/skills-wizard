@@ -108,7 +108,13 @@ interface ParseIndexParams {
 }
 
 function parseIndex({ source, file }: ParseIndexParams) {
-  const result = indexSchema.safeParse(parse(source));
+  let data: unknown;
+  try {
+    data = parse(source);
+  } catch (error) {
+    throw new BlockLibraryError(`${file}: invalid YAML`, { cause: error });
+  }
+  const result = indexSchema.safeParse(data);
   if (!result.success) {
     throw new BlockLibraryError(`${file}: ${z.prettifyError(result.error)}`);
   }
