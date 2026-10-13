@@ -94,6 +94,24 @@ test('exclude markers are scoped to one project', () => {
   );
 });
 
+test('exclude markers for an id ending in whitespace find their own region', () => {
+  const markers = excludeMarkers('app ');
+  const first = upsertRegion({
+    existing: '*.log\n',
+    body: '/app /AGENTS.md',
+    markers,
+  });
+
+  const again = upsertRegion({
+    existing: first,
+    body: '/app /AGENTS.md',
+    markers,
+  });
+
+  assert.equal(again, first);
+  assert.equal(removeRegion(again, markers), '*.log\n');
+});
+
 test('removeRegion keeps surrounding content and drops the separator', () => {
   const content = removeRegion(`mine\n\n${BEGIN}\nrules\n${END}\n`);
 
