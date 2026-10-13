@@ -374,16 +374,29 @@ test('rejects disallowed flags on update, adopt and skill validate', async (t) =
   );
 });
 
-test('cli rejects invalid numeric flags for skill eval and triggers', async (t) => {
+test('cli rejects invalid numeric flags and accepts --baseline none and --cases for skill eval', async (t) => {
   const home = await tempDir(t);
 
-  const [badRuns, badThreshold] = await Promise.all([
+  const [badRuns, badThreshold, evalNoBaseline] = await Promise.all([
     cli(home, ['skill', 'eval', 'some-skill', '--runs', '0']),
     cli(home, ['skill', 'triggers', 'some-skill', '--threshold', 'not-num']),
+    cli(home, [
+      'skill',
+      'eval',
+      'skill-author',
+      '--runner',
+      'fake',
+      '--baseline',
+      'none',
+      '--cases',
+      'casual-changelog-skill',
+    ]),
   ]);
 
   assert.equal(badRuns.code, 2);
   assert.match(badRuns.stderr, /--runs must be a positive integer/);
   assert.equal(badThreshold.code, 2);
   assert.match(badThreshold.stderr, /--threshold must be a number/);
+  assert.equal(evalNoBaseline.code, 0);
+  assert.match(evalNoBaseline.stdout, /Evaluated skill-author with fake/);
 });
