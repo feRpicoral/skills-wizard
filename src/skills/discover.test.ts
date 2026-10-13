@@ -349,3 +349,22 @@ test('inspectDiscoveredSkill validates the skill leniently and scans risk flags'
     'pipe-to-shell',
   ]);
 });
+
+test('searchSkillsSh converts response stream errors into SourceError', async () => {
+  const failingFetch: typeof globalThis.fetch = () => {
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        return Promise.reject(new TypeError('stream reset'));
+      },
+    });
+    return Promise.resolve(new Response(stream, { status: 200 }));
+  };
+
+  await assert.rejects(
+    searchSkillsSh({ query: 'react', fetchFn: failingFetch }),
+    (error: unknown) =>
+      error instanceof SourceError && /stream reset/.test(error.message),
+  );
+
+  assert.ok(true);
+});

@@ -216,4 +216,17 @@ test('resolveSkillsShUrl defaults to https://skills.sh and validates overrides',
     () => resolveSkillsShUrl({ SKILLS_SH_URL: 'file:///tmp/skills' }),
     EnvironmentError,
   );
+  assert.throws(
+    () =>
+      resolveSkillsShUrl({ SKILLS_SH_URL: 'https://skills.sh?token=secret' }),
+    EnvironmentError,
+  );
+  assert.throws(
+    () => resolveSkillsShUrl({ SKILLS_SH_URL: 'https://user:pass@skills.sh' }),
+    EnvironmentError,
+  );
+  assert.throws(
+    () => resolveSkillsShUrl({ SKILLS_SH_URL: 'https://skills.sh#frag' }),
+    EnvironmentError,
+  );
 });

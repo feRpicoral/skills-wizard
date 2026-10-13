@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
 import { isDirectory, lstatIfExists, statIfExists } from '../install/fs.ts';
+import { escapingLinks } from '../skills/tree.ts';
+import { isSkillName } from '../skills/validate.ts';
 import {
   aggregateBenchmark,
   aggregateTriggerRuns,
@@ -286,8 +288,19 @@ export async function runSkillEval({
   if (selectedCases.length === 0) {
     throw new EvalError(`No eval cases found in ${skillName}`);
   }
+  const primaryEscaping = await escapingLinks(skillDir);
+  if (primaryEscaping.length > 0) {
+    throw new EvalError(
+      `Skill "${skillName}" has links that point outside the skill folder: ${primaryEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
+    );
+  }
   const compareSkillsByName = new Map<string, ComparedSkillSpec>();
   for (const item of compareSkills ?? []) {
+    if (!isSkillName(item.skillName)) {
+      throw new EvalError(
+        `Compared skill name "${item.skillName}" is not a valid skill name`,
+      );
+    }
     if (item.skillName === skillName) {
       throw new EvalError(
         `Compared skill "${item.skillName}" must have a different name from the target skill "${skillName}"`,
@@ -302,6 +315,12 @@ export async function runSkillEval({
     if (!skillMd?.isFile()) {
       throw new EvalError(
         `Compared skill "${item.skillName}" is missing SKILL.md in ${item.skillDir}`,
+      );
+    }
+    const itemEscaping = await escapingLinks(item.skillDir);
+    if (itemEscaping.length > 0) {
+      throw new EvalError(
+        `Compared skill "${item.skillName}" has links that point outside the skill folder: ${itemEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
       );
     }
     compareSkillsByName.set(item.skillName, item);

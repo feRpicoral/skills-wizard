@@ -143,17 +143,21 @@ function linkedMarkdown({
 interface NestedReferencesParams {
   dir: string;
   body: string;
+  escapingPaths: ReadonlySet<string>;
 }
 
 async function nestedReferences({
   dir,
   body,
+  escapingPaths,
 }: NestedReferencesParams): Promise<string[]> {
   const skillFile = join(dir, SKILL_FILE);
   const warnings: string[] = [];
   for (const reference of new Set(
     linkedMarkdown({ markdown: body, file: skillFile, dir }),
   )) {
+    const relReference = relative(dir, reference).split(sep).join('/');
+    if (escapingPaths.has(relReference)) continue;
     const content = await readIfReadable(reference);
     if (content === null) continue;
     const [deeper] = linkedMarkdown({
@@ -242,6 +246,17 @@ export async function validateSkill(
   { strict, expectedName }: ValidateOptions,
 ): Promise<SkillReport> {
   const report: SkillReport = { dir, errors: [], warnings: [] };
+  const escaping = await escapingLinks(dir).catch(() => []);
+  const escapingPaths = new Set(escaping.map((item) => item.path));
+  if (escapingPaths.has(SKILL_FILE)) {
+    report.errors.push(
+      ...escaping.map(
+        ({ path, target }) =>
+          `${path} does not resolve inside the skill folder (${target}); links must be relative and stay inside it`,
+      ),
+    );
+    return report;
+  }
   const source = await readSkillFile(dir, report);
   if (source === null) return report;
   report.errors.push(...(await linkProblems(dir)));
@@ -289,7 +304,7 @@ export async function validateSkill(
   }
   report.warnings.push(
     ...practiceWarnings(description, body),
-    ...(await nestedReferences({ dir, body })),
+    ...(await nestedReferences({ dir, body, escapingPaths })),
   );
   return report;
 }

@@ -39,6 +39,7 @@ import {
 } from '../skills/catalog.ts';
 import { loadSkillLibrary } from '../skills/library.ts';
 import { ensureSource } from '../skills/sources.ts';
+import { escapingLinks } from '../skills/tree.ts';
 import {
   isSkillName,
   type SkillReport,
@@ -234,6 +235,23 @@ interface ResolveComparedSkillParams {
   nameOrPath: string;
 }
 
+interface AssertSafeComparedSkillDirParams {
+  skillDir: string;
+  label: string;
+}
+
+async function assertSafeComparedSkillDir({
+  skillDir,
+  label,
+}: AssertSafeComparedSkillDirParams): Promise<void> {
+  const escaping = await escapingLinks(skillDir);
+  if (escaping.length > 0) {
+    throw new UsageError(
+      `Compared skill "${label}" has links that point outside the skill folder: ${escaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
+    );
+  }
+}
+
 async function tryResolveLocalComparedSkill({
   ctx,
   nameOrPath,
@@ -247,6 +265,7 @@ async function tryResolveLocalComparedSkill({
     : [];
   for (const dir of candidates) {
     if ((await statIfExists(join(dir, 'SKILL.md')))?.isFile()) {
+      await assertSafeComparedSkillDir({ skillDir: dir, label: nameOrPath });
       const report = await validateSkill(dir, { strict: false });
       const skillName =
         report.name && isSkillName(report.name) ? report.name : nameOrPath;
@@ -255,6 +274,7 @@ async function tryResolveLocalComparedSkill({
   }
   const resolved = resolve(ctx.cwd, nameOrPath);
   if ((await statIfExists(join(resolved, 'SKILL.md')))?.isFile()) {
+    await assertSafeComparedSkillDir({ skillDir: resolved, label: nameOrPath });
     const report = await validateSkill(resolved, { strict: false });
     const fallbackName = basename(resolved);
     const skillName =
@@ -292,9 +312,25 @@ async function resolveComparedSkill({
         paths: repositoryPaths(library.catalog, entry.repo),
       });
       const skillDir =
-        entry.path === WHOLE_REPOSITORY ? root : join(root, entry.path);
-      if ((await statIfExists(join(skillDir, 'SKILL.md')))?.isFile()) {
-        return { skillName: entry.name, skillDir };
+        entry.path === WHOLE_REPOSITORY
+          ? root
+          : join(root, ...entry.path.split('/'));
+      if ((await lstatIfExists(skillDir))?.isDirectory()) {
+        const [realRoot, realSkill] = await Promise.all([
+          realpath(root),
+          realpath(skillDir),
+        ]);
+        const expectedRealSkill =
+          entry.path === WHOLE_REPOSITORY
+            ? realRoot
+            : join(realRoot, ...entry.path.split('/'));
+        if (
+          realSkill === expectedRealSkill &&
+          (await lstatIfExists(join(skillDir, 'SKILL.md')))?.isFile()
+        ) {
+          await assertSafeComparedSkillDir({ skillDir, label: entry.name });
+          return { skillName: entry.name, skillDir };
+        }
       }
     }
   }
@@ -369,12 +405,16 @@ async function resolveCompareSpec({
     ctx,
     nameOrPath: compare,
   });
-  if (
-    singleLocal !== null &&
-    singleLocal.skillName !== primarySkillName &&
-    (await realpath(singleLocal.skillDir)) !== primaryRealDir
-  ) {
-    return { compareSkills: [singleLocal] };
+  if (singleLocal !== null) {
+    const singleRealDir = await realpath(singleLocal.skillDir);
+    if (singleRealDir !== primaryRealDir) {
+      if (singleLocal.skillName === primarySkillName) {
+        throw new UsageError(
+          `Compared skill "${compare}" has the same name "${primarySkillName}" as the skill under evaluation; use --compare <ref> to compare two revisions of the same skill`,
+        );
+      }
+      return { compareSkills: [singleLocal] };
+    }
   }
 
   if (isSkillName(compare) && compare !== primarySkillName) {

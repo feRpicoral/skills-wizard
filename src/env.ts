@@ -119,6 +119,16 @@ export function resolveSkillsShUrl(env: Environment = process.env): string {
       `SKILLS_SH_URL must be an http:// or https:// URL, got "${value}"`,
     );
   }
+  if (
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.username !== '' ||
+    parsed.password !== ''
+  ) {
+    throw new EnvironmentError(
+      `SKILLS_SH_URL must not include credentials, query parameters, or fragments, got "${value}"`,
+    );
+  }
   return value.replace(/\/+$/, '');
 }
 

@@ -318,6 +318,7 @@ async function runGit({
 interface CopyCaseFilesParams {
   skillDir: string;
   skillName: string;
+  compareSkillNames?: readonly string[];
   workdir: string;
   evalCase: EvalCase;
 }
@@ -325,10 +326,11 @@ interface CopyCaseFilesParams {
 async function copyCaseFiles({
   skillDir,
   skillName,
+  compareSkillNames,
   workdir,
   evalCase,
 }: CopyCaseFilesParams): Promise<void> {
-  validateCaseFileDestinations({ evalCase, skillName });
+  validateCaseFileDestinations({ evalCase, skillName, compareSkillNames });
   for (const fileEntry of evalCase.files) {
     const srcPath = join(skillDir, fileEntry);
     const relDest = mapCaseFileRelativePath({
@@ -664,7 +666,13 @@ export async function prepareEvalWorkspace({
   await rm(workdir, { recursive: true, force: true });
   await mkdir(workdir, { recursive: true });
 
-  await copyCaseFiles({ skillDir, skillName, workdir, evalCase });
+  await copyCaseFiles({
+    skillDir,
+    skillName,
+    ...(compareSkill ? { compareSkillNames: [compareSkill.skillName] } : {}),
+    workdir,
+    evalCase,
+  });
   await initWorkspaceGit({ workdir, env });
 
   if (variant === 'with_skill' || variant === 'old_skill') {
@@ -721,25 +729,28 @@ export async function prepareEvalWorkspace({
       source: compareSkill.skillDir,
       destination: destSkillDir,
     });
-    await applyBaselineExclusion({
+    const exclusion = await applyBaselineExclusion({
       workdir,
       skillName,
       runner,
       paths,
     });
-    const warning = await personalSkillShadowWarning({
+    const shadowWarning = await personalSkillShadowWarning({
       runner,
       skillName: compareSkill.skillName,
       paths,
     });
+    const combinedWarning = [exclusion.warning, shadowWarning]
+      .filter((item): item is string => item !== undefined)
+      .join(' ');
     return {
       workdir,
       variant,
       runner,
       skillName: compareSkill.skillName,
       possiblyContaminated: false,
-      skillShadowed: warning !== undefined,
-      ...(warning ? { warning } : {}),
+      skillShadowed: false,
+      ...(combinedWarning ? { warning: combinedWarning } : {}),
     };
   }
 
