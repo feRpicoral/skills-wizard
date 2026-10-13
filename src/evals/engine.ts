@@ -136,7 +136,7 @@ export interface RunSkillEvalParams {
   sandbox?: boolean;
   keepWorkdirs?: boolean;
   paths?: Paths;
-  env?: Environment;
+  env: Environment;
   onLog?: (line: string) => void;
 }
 
