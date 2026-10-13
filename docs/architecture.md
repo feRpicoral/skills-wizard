@@ -53,10 +53,29 @@ When a skill is installed as a copy, the tree walker leaves out `.git`, `.github
 
 First-party skills under `skills/<name>/` can include an `evals/` directory (excluded when copying skills into `~/.agents/skills`):
 
-- `evals/evals.json`: test cases with `id`, `prompt`, `expected_output`, optional input `files` under `evals/files/`, and `assertions` (either natural-language strings graded by a blind LLM grader or deterministic scripted checks: `file_exists`, `file_absent`, `regex`, `json_valid`, `command`).
-- `evals/trigger_queries.json`: positive (`should_trigger: true`) and near-miss negative (`should_trigger: false`) user prompts partitioned into a deterministic 60/40 stratified `train`/`validation` split seeded by query text SHA-256.
+- `evals/evals.json`: validated with `zod` (`src/evals/cases.ts`). Defines test cases with `id`, `prompt`, `expected_output`, optional input `files` under `evals/files/`, and `assertions` (either natural-language strings graded by a blind LLM grader or deterministic scripted checks: `file_exists`, `file_absent`, `regex`, `json_valid`, `command`).
+- `evals/trigger_queries.json`: validated with `zod`. Defines positive (`should_trigger: true`) and near-miss negative (`should_trigger: false`) user prompts partitioned into a deterministic 60/40 stratified `train`/`validation` split seeded by query text SHA-256.
 
-`agents-config skill eval <name>` prepares an isolated temporary git repository per run, executes `with_skill`, `without_skill` (excluding the skill at the workspace or CLI flag level without modifying `~/.agents/skills`), and optional `old_skill` (`--compare <git-ref>`) variants across `agy`, `claude`, `codex`, `gemini` or `fake` runners, grades all assertions, and writes `benchmark.json` and `report.md` under `~/.agents/agents-config/evals/<name>/iteration-<N>/`. Any string assertion where the blind grader omits supporting `evidence` is marked failed, and assertions passing 100% in both `with_skill` and baseline are flagged as non-discriminating.
+### Evaluation pipeline
+
+`agents-config skill eval <name>` runs a four-stage pipeline (`src/evals/engine.ts`):
+
+1. **Workspace preparation (`src/evals/workspace.ts`):** For each `(case, variant, run)` job, creates `<runDir>/workdir`, copies fixture files (stripping leading `evals/files/` and `<case-id>/` segments), initializes a git repository with `.agents/`, `.claude/`, `.gemini/` and `.codex/` in `.git/info/exclude`, and commits the initial fixture files so `git status` starts clean. For `with_skill`, copies the skill into `<workdir>/.agents/skills/<name>`. For `old_skill` (`--compare <ref>` or `--baseline <ref>`), extracts the historical skill snapshot via `git ls-tree` and `git show` without mutating the working tree.
+2. **Runner execution (`src/evals/runners/`):** Auto-detects the default runner on `PATH` using `which` (`agy` -> `claude` -> `codex` -> `gemini`) or uses `--runner`. Spawns the runner in headless stream-JSON mode, logs raw `stdout.log` and `stderr.log`, and requires a final result event (`type: "result"` or `type: "turn.completed"`) before extracting the response, duration, token usage, and skill trigger signals.
+3. **Two-phase grading (`src/evals/grade.ts`):** Evaluates deterministic scripted assertions (`file_exists`, `file_absent`, `regex`, `json_valid`, `command`) first, then captures the workspace file summary and invokes the blind LLM grader (`runner.runGrader`) with structured JSON schema output for natural-language string assertions. The grader prompt never reveals the variant name, and any string assertion without non-empty supporting `evidence` is forced to `passed: false`.
+4. **Aggregation and reporting (`src/evals/aggregate.ts`, `src/evals/report.ts`):** Computes mean, sample stddev, min, and max for pass rate, duration, and token count; classifies each assertion (`differentiating`, `non-discriminating`, `regressing`, `failing`, `flaky`); populates `assertion_analysis` (`pass_only_with_skill`, `pass_in_both`, `fail_in_both`, `flaky`); and writes `benchmark.json` and `report.md` under `~/.agents/agents-config/evals/<name>/iteration-<N>/`.
+
+### Baseline skill exclusion and contamination detection
+
+`without_skill` baseline runs never modify or delete global skills in `~/.agents/skills`:
+
+| Runner   | Workspace / CLI baseline exclusion                                                                                 | Contamination check                                                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `agy`    | Writes `<workdir>/.agents/skills.json` with `{ "exclude": ["<name>"] }`                                            | Clean (`possiblyContaminated: false`)                                                                               |
+| `claude` | Writes `<workdir>/.claude/settings.local.json` (`skillOverrides` + `permissions.deny`) and `--disallowedTools` CLI | Clean (`possiblyContaminated: false`)                                                                               |
+| `gemini` | Writes `<workdir>/.gemini/settings.json` with `{ "skills": { "disabled": ["<name>"] } }`                           | Clean (`possiblyContaminated: false`)                                                                               |
+| `codex`  | No workspace-level skill exclusion setting available                                                               | Checks all global skill roots and `scanInstalledSkills`; marks baseline `"possibly contaminated"` if skill is found |
+| `fake`   | Writes `<workdir>/.agents/skills.json` with `{ "exclude": ["<name>"] }`                                            | Clean (`possiblyContaminated: false`)                                                                               |
 
 ## Plans and actions
 

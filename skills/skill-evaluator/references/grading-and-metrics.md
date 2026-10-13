@@ -55,7 +55,7 @@
 | `command`      | Runs shell command in `workdir` (30s timeout) and compares exit code to `expect` (default `0`)                              | Syntax checks (`node --check`), schema validation scripts, or CLI dry runs       |
 | `string`       | Evaluated by the blind LLM grader against `<task_prompt>`, `<expected_output>`, `<agent_response>`, and `<workspace_files>` | Checking explanation quality, reasoning steps, or semantic structure             |
 
-**Blind Grader Evidence Rule:** The grader prompt never reveals whether a run is `with_skill`, `without_skill`, or `old_skill`. Any string assertion where the grader returns empty or whitespace-only `evidence` is automatically forced to `passed: false`.
+**Grading Order and Blind Grader Evidence Rule:** Deterministic scripted assertions run first before the workspace file summary is captured and sent to the blind LLM grader. The grader prompt never reveals whether a run is `with_skill`, `without_skill`, or `old_skill`. Any string assertion where the grader returns empty or whitespace-only `evidence` is automatically forced to `passed: false`.
 
 ## 3. Trigger Query Schema and Stratified Split
 
@@ -75,8 +75,9 @@ Results are stored outside the repository under `~/.agents/agents-config/evals/<
 - `iteration-<N>/benchmark.json`:
   - `metadata`: `skill_name`, `runner`, `timestamp`, `runs_per_configuration`, `baseline_status` (`"clean"`, `"possibly contaminated"`, or `"skipped"`), `warnings`.
   - `run_summary`: `with_skill`, `without_skill`, `old_skill`, `delta`, `old_skill_delta` (`pass_rate`, `time_seconds`, `tokens` with `mean`, `stddev`, `min`, `max`).
-  - `cases`: per-case variant summaries, assertion classifications (`differentiating`, `non-discriminating`, `regressing`, `failing`), and per-run grading/timing records.
+  - `cases`: per-case variant summaries, assertion classifications (`differentiating`, `non-discriminating`, `regressing`, `failing`, `flaky`), and per-run grading/timing records.
   - `non_discriminating_assertions`: list of `<case_id>: <assertion>` entries that passed 100% in both `with_skill` and baseline runs.
+  - `assertion_analysis`: object grouping `<case_id>: <assertion>` entries into `pass_only_with_skill`, `pass_in_both`, `fail_in_both`, and `flaky`.
 - `triggers-<N>/triggers.json`:
   - `metrics`: `recall`, `precision`, `specificity`, `false_positive_rate`, `accuracy`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`.
 

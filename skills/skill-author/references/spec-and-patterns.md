@@ -14,10 +14,10 @@ Strict validation (`yarn agents-config skill validate skills/<name>`) enforces t
 
 | Field           | Required | Constraints                                                                                                                      |
 | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `name`          | Yes      | 1–64 chars; lowercase `a-z`, `0-9`, and single `-`; cannot start/end with `-` or contain `--`; must match parent directory name. |
-| `description`   | Yes      | 1–1024 chars; non-empty string; must state what the skill does and when to use it (`Use when...`).                               |
+| `name`          | Yes      | 1-64 chars; lowercase `a-z`, `0-9`, and single `-`; cannot start/end with `-` or contain `--`; must match parent directory name. |
+| `description`   | Yes      | 1-1024 chars; non-empty string; must state what the skill does and when to use it (`Use when...`).                               |
 | `license`       | No       | Non-empty string (for example `MIT` or `Apache-2.0`).                                                                            |
-| `compatibility` | No       | 1–500 chars describing runtime, OS, or binary requirements.                                                                      |
+| `compatibility` | No       | 1-500 chars describing runtime, OS, or binary requirements.                                                                      |
 | `metadata`      | No       | Map of string keys to string values only (nested objects or numbers fail strict validation).                                     |
 | `allowed-tools` | No       | Space-delimited string of pre-approved tool names.                                                                               |
 
@@ -42,9 +42,9 @@ The skill `description` is always loaded in the agent's system prompt metadata l
 
 Keep `SKILL.md` focused on the core workflow (<300 lines) and organize supporting files by role:
 
-- **Pattern A — High-level workflow with variant references:**
-  Put the universal 4–6 step workflow in `SKILL.md`, and place framework- or provider-specific configurations in `references/<variant>.md`. In `SKILL.md`, tell the agent which reference file to read based on the files detected in the workspace.
-- **Pattern B — Deterministic helper scripts + concise instructions:**
+- **Pattern A: High-level workflow with variant references:**
+  Put the universal 4-6 step workflow in `SKILL.md`, and place framework- or provider-specific configurations in `references/<variant>.md`. In `SKILL.md`, tell the agent which reference file to read based on the files detected in the workspace.
+- **Pattern B: Deterministic helper scripts + concise instructions:**
   Put repeatable verification or transformation logic in `scripts/<action>.mjs` and instruct the agent to run `node <skill-dir>/scripts/<action>.mjs <target>` instead of re-deriving complex shell pipelines.
 - **One-hop rule:**
   Every file in `references/` must be linked directly from `SKILL.md` using a relative markdown link (`references/<topic>.md`) and must not link to any other markdown file in `references/`.
@@ -56,6 +56,7 @@ Keep `SKILL.md` focused on the core workflow (<300 lines) and organize supportin
 When adding scripts under `skills/<name>/scripts/`:
 
 - Use Node.js (`#!/usr/bin/env node` with `.mjs`) or POSIX/Bash (`#!/usr/bin/env bash`) without external network calls.
+- Prefer established, focused libraries over hand-rolled parsing, schema validation, or path lookup logic when writing helper scripts or recommending project dependencies.
 - Never block on interactive stdin prompts; fail fast with usage instructions when required flags are missing.
 - Support `--help` and exit `0` when printing help.
 - Keep `evals/` out of runtime dependencies: `copySkillTree` strips `evals/` when installing skills to `~/.agents/skills/<name>`.

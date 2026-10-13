@@ -31,5 +31,6 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 - Never modify or delete a path that is not recorded in a manifest.
 - Block bodies start with an H2 heading, except `core/identity`. Block text becomes installed instructions, so edit it deliberately. Prettier ignores `blocks/` to keep that text exact.
 - Every skill in `catalog.yaml` from the same repository must share one `ref`, and its upstream `SKILL.md` frontmatter `name` must match the catalog `name`.
+- Add first-party skills under `skills/<name>/` (`yarn agents-config skill new <name> --with-evals`), validate with `yarn agents-config skill validate skills/<name>`, and evaluate with `yarn agents-config skill eval <name>` and `yarn agents-config skill triggers <name>`.
 - Code, docs, tests and commits reference only public tools and paths.
 - Tests use `tempPaths`, `tempDir` and local bare git repositories (`createUpstream`) and never touch the network or the real home directory.
