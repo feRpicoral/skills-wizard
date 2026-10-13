@@ -114,3 +114,64 @@ test('rejects fields the catalog does not define', async (t) => {
     CatalogError,
   );
 });
+
+test('rejects refs git could read as options or invalid ref names', async (t) => {
+  const refs = [
+    '--upload-pack=touch /tmp/pwned',
+    '-v1',
+    'v1..v2',
+    'feature/',
+    'v1.lock',
+    'has space',
+    'a:b',
+    'topic^',
+    '.hidden',
+    '@',
+  ];
+
+  const results = await Promise.allSettled(
+    refs.map((ref) => load(t, [entry('mermaid', [`ref: '${ref}'`])])),
+  );
+
+  assert.deepEqual(
+    results.map((result) => result.status),
+    refs.map(() => 'rejected'),
+  );
+});
+
+test('accepts branch, tag and commit refs', async (t) => {
+  const refs = ['main', 'release/2.0', 'v1.2.3', 'a'.repeat(40)];
+
+  const catalogs = await Promise.all(
+    refs.map((ref) => load(t, [entry('mermaid', [`ref: '${ref}'`])])),
+  );
+
+  assert.deepEqual(
+    catalogs.map((catalog) => catalog.skills[0]?.ref),
+    refs,
+  );
+});
+
+test('rejects path segments that start with a dash', async (t) => {
+  await assert.rejects(
+    load(t, [
+      entry('mermaid').replace('path: skills/mermaid', 'path: skills/-x'),
+    ]),
+    CatalogError,
+  );
+});
+
+test('rejects repository names that are dot segments', async (t) => {
+  const repos = ['owner/.', 'owner/..', '-owner/repo'];
+
+  const results = await Promise.allSettled(
+    repos.map((repo) =>
+      load(t, [entry('mermaid').replace('repo: owner/repo', `repo: ${repo}`)]),
+    ),
+  );
+
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ['rejected', 'rejected', 'rejected'],
+  );
+});
