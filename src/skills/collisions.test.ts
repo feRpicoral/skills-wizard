@@ -96,3 +96,52 @@ test('scanInstalledSkills skips broken and unreadable unmanaged symlink targets 
     join(paths.geminiHome, 'config', 'skills', 'unreadable'),
   ]);
 });
+
+test('scanInstalledSkills reads a tool skills folder that links to ~/.agents/skills once', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.agents/skills/notes/SKILL.md': skillSource('notes'),
+  });
+  await mkdir(paths.claudeHome, { recursive: true });
+  await symlink(paths.skillsDir, join(paths.claudeHome, 'skills'));
+
+  const scan = await scanInstalledSkills(paths, null);
+
+  assert.deepEqual(
+    {
+      collisions: scan.collisions,
+      unmanaged: scan.unmanaged.map((skill) => skill.locations),
+    },
+    { collisions: [], unmanaged: [[join(paths.skillsDir, 'notes')]] },
+  );
+});
+
+test('scanInstalledSkills merges links that reach the same folder under another name', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.agents/skills/notes/SKILL.md': skillSource('notes'),
+  });
+  await mkdir(join(paths.claudeHome, 'skills'), { recursive: true });
+  await symlink(
+    join(paths.skillsDir, 'notes'),
+    join(paths.claudeHome, 'skills', 'my-notes'),
+  );
+
+  const scan = await scanInstalledSkills(paths, null);
+
+  assert.deepEqual(
+    {
+      collisions: scan.collisions,
+      unmanaged: scan.unmanaged.map((skill) => skill.locations),
+    },
+    {
+      collisions: [],
+      unmanaged: [
+        [
+          join(paths.skillsDir, 'notes'),
+          join(paths.claudeHome, 'skills', 'my-notes'),
+        ],
+      ],
+    },
+  );
+});
