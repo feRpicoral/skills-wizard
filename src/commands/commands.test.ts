@@ -6,8 +6,10 @@ import { test, type TestContext } from 'node:test';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { loadCatalog } from '../skills/catalog.ts';
+import { sourceCommit } from '../skills/sources.ts';
 import { readProjects, recordProject } from '../state/projects.ts';
 import {
+  blockSource,
   skillSource,
   tempDir,
   tempPaths,
@@ -411,4 +413,130 @@ test('adopt refuses a skill whose folder name differs from its declared name', a
   await assert.rejects(lstat(join(ctx.paths.stateDir, 'backups')), {
     code: 'ENOENT',
   });
+});
+
+interface InitProjectParams {
+  ctx: Context;
+  projectDir: string;
+}
+
+async function initProject({
+  ctx,
+  projectDir,
+}: InitProjectParams): Promise<void> {
+  await runInit(ctx, {
+    scope: 'project',
+    projectDir,
+    tools: ['codex'],
+    blocks: ['core/identity'],
+    skills: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+}
+
+test('update forgets missing projects only once the update is confirmed', async (t) => {
+  const { ctx } = await testContext(t);
+  await initGlobal(ctx);
+  const vanished = join(await tempDir(t), 'vanished');
+  await recordProject(ctx.paths, vanished);
+
+  const unconfirmed = await runUpdate(ctx, { yes: false, dryRun: false });
+  const dryRun = await runUpdate(ctx, { yes: true, dryRun: true });
+
+  assert.equal(unconfirmed, 1);
+  assert.equal(dryRun, 0);
+  assert.deepEqual(await readProjects(ctx.paths), [vanished]);
+
+  const confirmed = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(confirmed, 0);
+  assert.deepEqual(await readProjects(ctx.paths), []);
+});
+
+test('update warns about a corrupt project registry and still updates the global install', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await initGlobal(ctx);
+  await writeFiles(ctx.paths.stateDir, { 'projects.json': '{ broken' });
+  await writeFiles(repoRoot, {
+    'blocks/core/identity.md': blockSource('Follow the new rules.', {
+      title: 'Identity',
+      group: 'core',
+    }),
+  });
+
+  const code = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Skipping recorded projects: .*projects\.json is not valid JSON/,
+  );
+  assert.match(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+});
+
+test('update skips a project with a broken manifest and refreshes the others', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  const good = await realpath(await tempDir(t));
+  const broken = await realpath(await tempDir(t));
+  await initProject({ ctx, projectDir: good });
+  await initProject({ ctx, projectDir: broken });
+  await writeFiles(broken, { '.agents/agents-config.json': '{ broken' });
+  await writeFiles(repoRoot, {
+    'blocks/core/identity.md': blockSource('Follow the new rules.', {
+      title: 'Identity',
+      group: 'core',
+    }),
+  });
+
+  const code = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(code, 0);
+  assert.match(output.join('\n'), /Skipping .*: .*is not valid JSON/);
+  assert.match(
+    await readFile(join(good, 'AGENTS.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+  assert.doesNotMatch(
+    await readFile(join(broken, 'AGENTS.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+  assert.deepEqual(await readProjects(ctx.paths), [good, broken].sort());
+});
+
+test('update moves refreshed sources back when a later step fails', async (t) => {
+  const upstream = await createUpstream(t, {
+    'SKILL.md': skillSource('pretty-mermaid'),
+  });
+  const { ctx } = await testContext(t, { url: () => upstream.url });
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['codex'],
+    blocks: ['core/identity'],
+    skills: ['pretty-mermaid'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  await upstream.commit({
+    'SKILL.md': `${skillSource('pretty-mermaid')}\nMore steps.\n`,
+  });
+  const failing: Context = {
+    ...ctx,
+    print: (line = '') => {
+      if (line.includes('modified SKILL.md')) throw new Error('print failed');
+    },
+  };
+
+  await assert.rejects(
+    runUpdate(failing, { yes: true, dryRun: false }),
+    /print failed/,
+  );
+
+  const cache = { root: ctx.paths.sourcesDir, ...ctx.sources };
+  assert.equal(await sourceCommit(cache, 'owner/mermaid'), upstream.head);
 });
