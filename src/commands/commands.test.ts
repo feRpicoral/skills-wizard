@@ -948,3 +948,39 @@ test('skill eval prints pass-rate deltas in percentage points', async (t) => {
     /with_skill pass rate \d+\.\d% \([+-]\d+\.\d pp vs baseline\)/,
   );
 });
+
+test('skill triggers warns when a personal Claude skill shadows the staged one', async (t) => {
+  const { ctx, output } = await testContext(t);
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['shadowed-skill'],
+    withEvals: true,
+  });
+  await writeFiles(join(ctx.paths.claudeHome, 'skills', 'shadowed-skill'), {
+    'SKILL.md': skillSource('shadowed-skill'),
+  });
+  const binDir = await tempDir(t);
+  const binary = join(binDir, 'claude');
+  await writeFile(
+    binary,
+    `#!/bin/sh\necho '${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } })}'\n`,
+  );
+  await chmod(binary, 0o755);
+
+  const code = await runSkill(ctx, {
+    subcommand: 'triggers',
+    paths: ['shadowed-skill'],
+    runner: 'claude',
+    binary,
+  });
+  const summary = JSON.parse(
+    await readFile(
+      join(ctx.paths.evalsDir, 'shadowed-skill', 'triggers-1', 'triggers.json'),
+      'utf8',
+    ),
+  ) as { metadata: { possibly_contaminated: boolean } };
+
+  assert.equal(code, 0);
+  assert.match(output.join('\n'), /warning: .*personal skill/);
+  assert.equal(summary.metadata.possibly_contaminated, true);
+});

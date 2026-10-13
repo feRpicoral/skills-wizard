@@ -92,7 +92,7 @@ Results are stored outside the repository under `~/.agents/agents-config/evals/<
   - `non_discriminating_assertions`: `<case_id>: <assertion>` entries that passed in every `with_skill` and baseline run.
   - `assertion_analysis`: `<case_id>: <assertion>` entries grouped into `pass_only_with_skill` (only when a reference exists), `pass_in_both`, `fail_in_both`, `flaky`, `regressing` (against `without_skill`), and `regressing_vs_old` (against `old_skill`).
 - `triggers-<N>/triggers.json`: one file per `skill triggers` run, so a train run and a validation run land in separate `triggers-<N>` directories.
-  - `metadata`: `skill_name`, `skill_path`, `runner`, `split` (`train`, `validation`, or `all`), `runs_per_query`, `threshold`, `timestamp`.
+  - `metadata`: `skill_name`, `skill_path`, `runner`, `split` (`train`, `validation`, or `all`), `runs_per_query`, `threshold`, `timestamp`, `possibly_contaminated` (true when a personal Claude skill with the same name would be loaded instead of the staged one), and `warnings`.
   - `metrics`: `total_queries`, `positive_queries`, `negative_queries`, `errored_queries`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `recall`, `precision`, `specificity`, `false_positive_rate`, `accuracy`. A ratio with a zero denominator is `null` and renders as `n/a (0/0)`.
   - `queries`: per-query `trigger_count`, `runs`, `errored_runs`, `trigger_rate` (`null` when every run errored), and `passed`.
 

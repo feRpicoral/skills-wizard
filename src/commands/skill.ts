@@ -626,6 +626,7 @@ export async function runSkill(
       timeoutSeconds: timeout ?? 120,
       sandbox,
       keepWorkdirs,
+      paths: ctx.paths,
       env: ctx.sources.env,
       onLog: (line) => ctx.print(line),
     });

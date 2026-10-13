@@ -311,7 +311,19 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
     `- **Runs per query:** ${metadata.runs_per_query}`,
     `- **Threshold:** ${metadata.threshold}`,
     `- **Timestamp:** ${codeSpan(metadata.timestamp)}`,
+    ...(metadata.possibly_contaminated
+      ? ['- **Status:** possibly contaminated']
+      : []),
     '',
+  ];
+  if (metadata.warnings.length > 0) {
+    lines.push('## Warnings', '');
+    for (const warning of metadata.warnings) {
+      lines.push(`- ${collapseWhitespace(warning)}`);
+    }
+    lines.push('');
+  }
+  lines.push(
     '## Metrics',
     '',
     '| Metric | Value |',
@@ -331,7 +343,7 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
     '',
     '| Status | Expected | Trigger Rate | Query |',
     '| --- | --- | --- | --- |',
-  ];
+  );
 
   for (const item of queries) {
     const status =

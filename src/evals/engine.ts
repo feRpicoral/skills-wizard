@@ -27,6 +27,7 @@ import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 import {
   assertSafeGitRef,
   type EvalVariant,
+  personalSkillShadowWarning,
   prepareEvalWorkspace,
   prepareTriggerWorkspace,
   resolveSkillRepository,
@@ -393,6 +394,7 @@ export interface RunSkillTriggersParams {
   timeoutSeconds?: number;
   sandbox?: boolean;
   keepWorkdirs?: boolean;
+  paths?: Paths;
   env?: Environment;
   onLog?: (line: string) => void;
 }
@@ -422,16 +424,25 @@ export async function runSkillTriggers({
   timeoutSeconds = 120,
   sandbox = false,
   keepWorkdirs = false,
+  paths,
   env,
   onLog,
 }: RunSkillTriggersParams): Promise<RunSkillTriggersResult> {
   const allQueries = await loadTriggerQueries(skillDir);
   const selectedQueries = selectTriggerQueries(allQueries, split);
+  const warnings: string[] = [];
   if (split !== 'all') {
-    for (const warning of splitTriggerQueries(allQueries).warnings) {
-      onLog?.(`warning: ${warning}`);
-    }
+    warnings.push(...splitTriggerQueries(allQueries).warnings);
   }
+  // Every trigger workspace stages the same skill, so a personal skill that
+  // shadows it affects every run: check once.
+  const shadowWarning = await personalSkillShadowWarning({
+    runner: runner.name,
+    skillName,
+    paths,
+  });
+  if (shadowWarning !== undefined) warnings.push(shadowWarning);
+  for (const warning of warnings) onLog?.(`warning: ${warning}`);
   await runner.preflight?.();
   const outputDir = await allocateIterationDir({
     evalsRootDir,
@@ -516,6 +527,8 @@ export async function runSkillTriggers({
     threshold,
     queries: selectedQueries,
     results,
+    possiblyContaminated: shadowWarning !== undefined,
+    warnings,
   });
   const reportMarkdown = renderTriggerReport(summary);
 

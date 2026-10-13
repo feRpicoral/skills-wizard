@@ -143,6 +143,57 @@ test('runSkillTriggers evaluates trigger queries on requested split and writes t
   );
 });
 
+const triggerQueries = JSON.stringify([
+  { query: 'Please run demo-skill on my project', should_trigger: true },
+  { query: 'Help me configure demo-skill options', should_trigger: true },
+  { query: 'Unrelated database query', should_trigger: false },
+]);
+
+test('runSkillTriggers warns once and marks the summary possibly contaminated when a personal Claude skill shadows the staged one', async (t) => {
+  const paths = await tempPaths(t);
+  const repoRoot = await tempDir(t);
+  const skillDir = join(repoRoot, 'skills', 'demo-skill');
+  await writeFiles(skillDir, {
+    'SKILL.md': skillSource('demo-skill'),
+    'evals/trigger_queries.json': triggerQueries,
+  });
+  await writeFiles(join(paths.claudeHome, 'skills', 'demo-skill'), {
+    'SKILL.md': skillSource('demo-skill'),
+  });
+  const runner: EvalRunner = {
+    ...createFakeRunner({
+      onTask: ({ prompt }) => ({ triggered: prompt.includes('demo-skill') }),
+    }),
+    name: 'claude',
+  };
+  const logs: string[] = [];
+
+  const result = await runSkillTriggers({
+    skillName: 'demo-skill',
+    skillDir,
+    evalsRootDir: paths.evalsDir,
+    runner,
+    parallel: 2,
+    paths,
+    env: isolatedGitEnv(repoRoot),
+    onLog: (line) => logs.push(line),
+  });
+  const onDisk = JSON.parse(
+    await readFile(join(result.outputDir, 'triggers.json'), 'utf8'),
+  ) as { metadata: { possibly_contaminated: boolean; warnings: string[] } };
+
+  assert.equal(result.summary.metadata.possibly_contaminated, true);
+  assert.equal(result.summary.metadata.warnings.length, 1);
+  assert.match(result.summary.metadata.warnings[0] ?? '', /personal skill/);
+  assert.equal(
+    logs.filter((line) => line.includes('personal skill')).length,
+    1,
+  );
+  assert.equal(onDisk.metadata.possibly_contaminated, true);
+  assert.match(result.reportMarkdown, /possibly contaminated/);
+  assert.match(result.reportMarkdown, /## Warnings/);
+});
+
 const evalSuite = (
   assertions: unknown[] = ['The output confirms skill execution'],
 ) =>

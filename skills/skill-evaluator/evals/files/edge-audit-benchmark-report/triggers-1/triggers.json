@@ -7,7 +7,9 @@
     "split": "train",
     "runs_per_query": 3,
     "threshold": 0.5,
-    "timestamp": "2026-04-12T12:30:00.000Z"
+    "timestamp": "2026-04-12T12:30:00.000Z",
+    "possibly_contaminated": false,
+    "warnings": []
   },
   "metrics": {
     "total_queries": 12,
