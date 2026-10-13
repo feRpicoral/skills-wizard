@@ -494,6 +494,25 @@ test('a CLAUDE.md that links to AGENTS.md needs no import line', async (t) => {
   assert.ok((await lstat(join(dir, 'CLAUDE.md'))).isSymbolicLink());
 });
 
+test('an import line satisfied by a CLAUDE.md link says it links to AGENTS.md', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'AGENTS.md': '# Team\n' });
+  await symlink('AGENTS.md', join(dir, 'CLAUDE.md'));
+
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+
+  assert.equal(
+    plan.actions.find((action) => action.path === join(dir, 'CLAUDE.md'))
+      ?.label,
+    'Claude Code import (links to AGENTS.md)',
+  );
+});
+
 test('an AGENTS.md that links to CLAUDE.md gets the region and no self-import', async (t) => {
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));
@@ -509,6 +528,25 @@ test('an AGENTS.md that links to CLAUDE.md gets the region and no self-import', 
   assert.equal(
     await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
     `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+test('an import line satisfied by an AGENTS.md link says which way the link points', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+
+  const plan = await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+
+  assert.equal(
+    plan.actions.find((action) => action.path === join(dir, 'CLAUDE.md'))
+      ?.label,
+    'Claude Code import (AGENTS.md links here)',
   );
 });
 
