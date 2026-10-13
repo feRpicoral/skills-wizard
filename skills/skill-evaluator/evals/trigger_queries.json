@@ -4,47 +4,47 @@
     "should_trigger": true
   },
   {
-    "query": "Measure trigger precision, recall, and false positive rate on the held-out validation split of skills/prettier-configuration/evals/trigger_queries.json.",
+    "query": "Measure trigger precision, recall and false positive rate on the validation split for the prettier-configuration skill.",
     "should_trigger": true
   },
   {
-    "query": "Compare our current skills/eslint-configuration against main using --compare main to check if our SKILL.md edits caused any regressions.",
+    "query": "Compare our current eslint-configuration skill against main to check whether the SKILL.md edits caused any regressions.",
     "should_trigger": true
   },
   {
-    "query": "Audit ~/.agents/agents-config/evals/prettier-configuration/iteration-1/benchmark.json and identify any non-discriminating assertions that pass 100% in both variants.",
+    "query": "Audit the latest benchmark.json for prettier-configuration and find the assertions that pass in both variants.",
     "should_trigger": true
   },
   {
-    "query": "Replace the string-only expectations in skills/skill-author/evals/evals.json with deterministic file_exists, regex, json_valid, and command assertions.",
+    "query": "The assertions in skills/skill-author/evals/evals.json are all vague strings. Replace what you can with file_exists, regex, json_valid and command checks.",
     "should_trigger": true
   },
   {
-    "query": "Why did our benchmark report mark baseline_status as possibly contaminated when we ran skill eval with the codex runner?",
+    "query": "Why does our benchmark report say the baseline is possibly contaminated when we ran it with codex?",
     "should_trigger": true
   },
   {
-    "query": "Regenerate report.md from the latest benchmark iteration for eslint-configuration using yarn agents-config skill report.",
+    "query": "regenerate the report for the last eslint-configuration eval run",
     "should_trigger": true
   },
   {
-    "query": "Our skill triggers 100% on the train split but only 50% on the validation split. Help me diagnose the false negatives and tune the description without overfitting.",
+    "query": "Our skill triggers every time on the train split but only half the time on validation. Help me find the false negatives without overfitting the description.",
     "should_trigger": true
   },
   {
-    "query": "Write 10 positive and 10 near-miss negative trigger queries in evals/trigger_queries.json for our new skill.",
+    "query": "Our existing markdown-link-checker skill has no trigger queries yet. Write 10 that should trigger it and 10 near misses that shouldn't.",
     "should_trigger": true
   },
   {
-    "query": "How does the blind LLM grader in agents-config skill eval handle assertions when the grader returns empty evidence?",
+    "query": "How does the blind grader in skill eval decide whether a string assertion passed?",
     "should_trigger": true
   },
   {
-    "query": "Scaffold a brand-new first-party skill in skills/graphql-schema-design from scratch and write its SKILL.md and reference docs.",
+    "query": "Create a brand-new skill for GraphQL schema design and write its SKILL.md and reference docs.",
     "should_trigger": false
   },
   {
-    "query": "Split our 550-line skills/api-migration/SKILL.md into progressive-disclosure reference files under references/ so it passes strict validation.",
+    "query": "Split our 550-line api-migration SKILL.md into reference files so it passes the validator.",
     "should_trigger": false
   },
   {
@@ -52,31 +52,31 @@
     "should_trigger": false
   },
   {
-    "query": "Set up ESLint v9 flat config in eslint.config.mjs with typescript-eslint and simple-import-sort.",
-    "should_trigger": false
-  },
-  {
     "query": "Run yarn test and fix the failing unit test in src/state/manifest.test.ts.",
     "should_trigger": false
   },
   {
-    "query": "Add a third-party skill from github.com/anthropics/skills to catalog.yaml and run yarn agents-config update.",
+    "query": "Benchmark the cold start time of our Express server before and after the Node upgrade.",
     "should_trigger": false
   },
   {
-    "query": "Install our global AGENTS.md instructions and skills for Claude Code and Antigravity using yarn agents-config init.",
+    "query": "Our Lighthouse performance score dropped from 92 to 71 last week. Figure out which change caused the regression.",
     "should_trigger": false
   },
   {
-    "query": "Format all Markdown and TypeScript files in the repository with Prettier.",
+    "query": "Compute precision and recall for our spam classifier on the validation set in notebooks/eval.ipynb.",
     "should_trigger": false
   },
   {
-    "query": "Write a GitHub Actions workflow in .github/workflows/ci.yml that runs yarn lint, yarn typecheck, and yarn test on pull requests.",
+    "query": "Write a GitHub Actions workflow that runs yarn lint, yarn typecheck and yarn test on pull requests.",
     "should_trigger": false
   },
   {
-    "query": "Edit blocks/engineering/testing.md to update our Arrange-Act-Assert conventions.",
+    "query": "Grade these student essays against the rubric in rubric.md and explain each score.",
+    "should_trigger": false
+  },
+  {
+    "query": "Install our global AGENTS.md instructions and skills for Claude Code using agents-config init.",
     "should_trigger": false
   }
 ]
