@@ -161,7 +161,9 @@ export async function readLocationManifest(
     notify({
       ctx,
       prompting,
-      message: `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`,
+      message: project.git
+        ? `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`
+        : `The recorded git exclude entries (${path}) were left untouched because the project is no longer in a git repository.`,
       level: 'warn',
     });
   }

@@ -138,6 +138,7 @@ interface PlanFindingsParams {
   manifest: Manifest;
   library: BlockLibrary;
   blocks: string[];
+  keepLocal: boolean;
 }
 
 async function planFindings({
@@ -146,6 +147,7 @@ async function planFindings({
   manifest,
   library,
   blocks,
+  keepLocal,
 }: PlanFindingsParams): Promise<Finding[]> {
   const findings: Finding[] = [];
   const home = ctx.paths.home;
@@ -156,7 +158,7 @@ async function planFindings({
       blocks,
       variables: manifest.variables,
       linkCommand: manifest.options.linkCommand ?? false,
-      keepLocal: manifest.options.keepLocal ?? false,
+      keepLocal,
     },
     library,
     paths: ctx.paths,
@@ -232,6 +234,14 @@ export async function runDoctor(
       message: `Required blocks missing from the install: ${added.join(', ')}; agents-config sync will add them`,
     });
   }
+  const recordedLocal = manifest.options.keepLocal ?? false;
+  const keepLocal = recordedLocal && location.project?.git !== undefined;
+  if (location.project && recordedLocal && !keepLocal) {
+    findings.push({
+      level: 'warn',
+      message: `${displayPath({ path: location.project.dir, home })} is no longer in a git repository; agents-config sync will stop keeping its files local`,
+    });
+  }
   const needed = requiredVariables(selectBlocks(library, blocks, scope));
   const missing = needed.filter((name) => !manifest.variables[name]?.trim());
   if (missing.length > 0) {
@@ -241,7 +251,14 @@ export async function runDoctor(
     });
   } else {
     findings.push(
-      ...(await planFindings({ ctx, location, manifest, library, blocks })),
+      ...(await planFindings({
+        ctx,
+        location,
+        manifest,
+        library,
+        blocks,
+        keepLocal,
+      })),
     );
   }
   findings.push(...(await symlinkFindings(ctx, manifest)));
