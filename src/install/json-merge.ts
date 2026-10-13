@@ -2,7 +2,14 @@ import { getProperty, hasProperty, parsePath } from 'dot-prop';
 import type { JSONPath } from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
-import { removeJsonProperty, setJsonValue } from './json-text.ts';
+import {
+  appendArrayElements,
+  rawJson,
+  removeArrayElements,
+  removeJsonProperty,
+  replaceRawJson,
+  setJsonValue,
+} from './json-text.ts';
 import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
 
 type JsonObject = Record<string, unknown>;
@@ -99,7 +106,54 @@ interface EnsureResult {
   content: string;
   added: string[];
   wasString: boolean;
+  wasEmpty: boolean;
   createdKeys: number;
+  original?: string;
+}
+
+interface AddValuesParams {
+  existing: string | null;
+  keys: JSONPath;
+  current: readonly string[];
+  added: readonly string[];
+  appendable: boolean;
+}
+
+function addValues({
+  existing,
+  keys,
+  current,
+  added,
+  appendable,
+}: AddValuesParams): string {
+  if (existing !== null && !isBlank(existing) && appendable) {
+    return keepBom(existing, (text) =>
+      appendArrayElements({ text, keys, values: added }),
+    );
+  }
+  return setValue({ existing, keys, value: [...current, ...added] });
+}
+
+interface OriginalParams {
+  existing: string;
+  keys: JSONPath;
+  createdKeys: number;
+}
+
+function originalText({
+  existing,
+  keys,
+  createdKeys,
+}: OriginalParams): string | undefined {
+  const raw = rawJson({
+    text: withoutBom(existing),
+    keys: keys.slice(0, keys.length - createdKeys),
+  });
+  if (raw === undefined) return undefined;
+  if (createdKeys === 0) return raw;
+  return Object.keys(JSON.parse(raw) as JsonObject).length === 0
+    ? raw
+    : undefined;
 }
 
 export function ensureArrayValues({
@@ -112,16 +166,52 @@ export function ensureArrayValues({
   const original = getProperty(doc, keys);
   const current = stringValues(original, keyPath);
   const added = values.filter((value) => !current.includes(value));
-  const content =
-    added.length > 0 || existing === null
-      ? setValue({ existing, keys, value: [...current, ...added] })
-      : existing;
+  const createdKeys = added.length > 0 ? missingKeys(doc, keys) : 0;
+  const changed = added.length > 0 || existing === null;
+  const content = changed
+    ? addValues({
+        existing,
+        keys,
+        current,
+        added,
+        appendable: Array.isArray(original),
+      })
+    : existing;
+  const raw =
+    added.length > 0 && existing !== null && !isBlank(existing)
+      ? originalText({ existing, keys, createdKeys })
+      : undefined;
   return {
     content,
     added,
     wasString: typeof original === 'string',
-    createdKeys: added.length > 0 ? missingKeys(doc, keys) : 0,
+    wasEmpty: added.length > 0 && existing !== null && isBlank(existing),
+    createdKeys,
+    ...(raw === undefined ? {} : { original: raw }),
   };
+}
+
+function canonical(value: unknown): string {
+  return JSON.stringify(typeof value === 'string' ? [value] : value);
+}
+
+interface RestoreOriginalParams {
+  content: string;
+  keys: JSONPath;
+  original: string;
+}
+
+function restoreOriginal({
+  content,
+  keys,
+  original,
+}: RestoreOriginalParams): string {
+  return keepBom(content, (text) => {
+    const raw = rawJson({ text, keys });
+    if (raw === undefined) return text;
+    const same = canonical(JSON.parse(raw)) === canonical(JSON.parse(original));
+    return same ? replaceRawJson({ text, keys, raw: original }) : text;
+  });
 }
 
 interface RemoveArrayValuesParams {
@@ -130,28 +220,10 @@ interface RemoveArrayValuesParams {
   values: readonly string[];
   restoreString: boolean;
   createdKeys: number;
+  original?: string;
 }
 
-export function removeArrayValues({
-  existing,
-  keyPath,
-  values,
-  restoreString,
-  createdKeys,
-}: RemoveArrayValuesParams): string {
-  const doc = parseJsonObject(existing);
-  const keys = parseKeyPath(doc, keyPath);
-  if (!hasProperty(doc, keys)) return existing;
-
-  const current = stringValues(getProperty(doc, keys), keyPath);
-  const remaining = current.filter((value) => !values.includes(value));
-  if (remaining.length === current.length) return existing;
-  if (remaining.length > 0 || createdKeys === 0) {
-    const value =
-      restoreString && remaining.length === 1 ? remaining[0] : remaining;
-    return setValue({ existing, keys, value });
-  }
-
+function pruneCreated({ existing, keys, createdKeys }: OriginalParams): string {
   let content = removeKey({ existing, keys });
   const existingDepth = keys.length - createdKeys;
   for (let depth = keys.length - 1; depth > existingDepth; depth -= 1) {
@@ -161,6 +233,45 @@ export function removeArrayValues({
     content = removeKey({ existing: content, keys: ancestorPath });
   }
   return content;
+}
+
+export function removeArrayValues({
+  existing,
+  keyPath,
+  values,
+  restoreString,
+  createdKeys,
+  original,
+}: RemoveArrayValuesParams): string {
+  const doc = parseJsonObject(existing);
+  const keys = parseKeyPath(doc, keyPath);
+  if (!hasProperty(doc, keys)) return existing;
+
+  const value = getProperty(doc, keys);
+  const current = stringValues(value, keyPath);
+  const remaining = current.filter((item) => !values.includes(item));
+  if (remaining.length === current.length) return existing;
+
+  let content: string;
+  if (remaining.length === 0 && createdKeys > 0) {
+    content = pruneCreated({ existing, keys, createdKeys });
+  } else if (Array.isArray(value)) {
+    content = keepBom(existing, (text) =>
+      removeArrayElements({ text, keys, values }),
+    );
+    if (restoreString && remaining.length === 1 && original === undefined) {
+      content = setValue({ existing: content, keys, value: remaining[0] });
+    }
+  } else {
+    content = setValue({ existing, keys, value: remaining });
+  }
+  return original === undefined
+    ? content
+    : restoreOriginal({
+        content,
+        keys: keys.slice(0, keys.length - createdKeys),
+        original,
+      });
 }
 
 interface LegacyCreatedKeysParams {

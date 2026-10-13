@@ -40,6 +40,7 @@ test('ensureArrayValues creates a new file with two-space indentation', () => {
       '{\n  "context": {\n    "fileName": [\n      "AGENTS.md",\n      "GEMINI.md"\n    ]\n  }\n}\n',
     added: VALUES,
     wasString: false,
+    wasEmpty: false,
     createdKeys: 2,
   });
 });
@@ -56,7 +57,9 @@ test('ensureArrayValues converts a string and appends only missing values', () =
       '{\n  "context": {\n    "fileName": [\n      "GEMINI.md",\n      "AGENTS.md"\n    ]\n  }\n}\n',
     added: ['AGENTS.md'],
     wasString: true,
+    wasEmpty: false,
     createdKeys: 0,
+    original: '"GEMINI.md"',
   });
 });
 
@@ -205,6 +208,9 @@ function roundTrip({ existing, values = VALUES }: RoundTripParams) {
     values: installed.added,
     restoreString: installed.wasString,
     createdKeys: installed.createdKeys,
+    ...(installed.original === undefined
+      ? {}
+      : { original: installed.original }),
   });
   return { installed: installed.content, removed };
 }
@@ -253,4 +259,76 @@ test('removing the values restores a single-line file', () => {
   const { removed } = roundTrip({ existing });
 
   assert.equal(removed, existing);
+});
+
+test('removing the values restores a spaced list the user wrote', () => {
+  const existing = '{ "context": { "fileName": [ "GEMINI.md" ] } }\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('adding values appends to a multi-line list without reformatting it', () => {
+  const existing =
+    '{\n  "context": {\n    "fileName": [\n        "GEMINI.md"\n    ]\n  }\n}\n';
+
+  const { installed } = roundTrip({ existing });
+
+  assert.equal(
+    installed,
+    '{\n  "context": {\n    "fileName": [\n        "GEMINI.md",\n        "AGENTS.md"\n    ]\n  }\n}\n',
+  );
+});
+
+test('removing the values restores a string with escapes as written', () => {
+  const existing = '{"context": {"fileName": "GEM\\u0049NI.md"}}\n';
+
+  const { removed } = roundTrip({ existing, values: ['AGENTS.md'] });
+
+  assert.equal(removed, existing);
+});
+
+test('removing the values restores an empty list the user wrote', () => {
+  const existing = '{"context": {"fileName": [ ]}}\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('removing the values restores the whitespace inside a user-created empty parent', () => {
+  const existing = '{\n  "context": { }\n}\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('removing the values restores a root object with only whitespace', () => {
+  const existing = '{ }\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('removing values keeps a list the user changed after the install', () => {
+  const { installed } = roundTrip({
+    existing: '{"context": {"fileName": [ "GEMINI.md" ]}}',
+  });
+
+  const removed = removeArrayValues({
+    existing: installed.replace('"GEMINI.md"', '"GEMINI.md", "MINE.md"'),
+    keyPath: KEY,
+    values: ['AGENTS.md'],
+    restoreString: false,
+    createdKeys: 0,
+    original: '[ "GEMINI.md" ]',
+  });
+
+  assert.equal(
+    removed,
+    '{"context": {"fileName": [ "GEMINI.md", "MINE.md" ]}}',
+  );
 });

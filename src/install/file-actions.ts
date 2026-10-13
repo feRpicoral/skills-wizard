@@ -85,15 +85,18 @@ function wasCreated(
 
 interface RegionPreambleParams {
   target: RegionTarget;
-  existing: string | null;
+  file: ResolvedTargetFile;
   previous: ManifestEntry | null;
 }
 
 function regionPreamble({
   target,
-  existing,
+  file,
   previous,
 }: RegionPreambleParams): string | undefined {
+  // A file reached through a link is not the CLI's, so neither is its heading.
+  if (file.writePath !== target.path) return undefined;
+  const { existing } = file;
   if (existing === null || isBlank(existing)) return target.preamble;
   const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
   return preamble && existing.trimStart().startsWith(preamble)
@@ -119,11 +122,7 @@ function planRegion({
       markers: MARKDOWN_MARKERS,
       ...(target.preamble ? { preamble: target.preamble } : {}),
     });
-    const preamble = regionPreamble({
-      target,
-      existing: file.existing,
-      previous,
-    });
+    const preamble = regionPreamble({ target, file, previous });
     const entry: ManifestEntry = {
       kind: 'region',
       path: target.path,
@@ -191,15 +190,27 @@ function planLine({
 
 type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
 
-function createdKeysField(
+interface CreatedShape {
+  createdKeys?: number;
+  original?: string;
+}
+
+function shapeOf({ createdKeys, original }: CreatedShape): CreatedShape {
+  return {
+    ...(createdKeys === undefined ? {} : { createdKeys }),
+    ...(original === undefined ? {} : { original }),
+  };
+}
+
+function createdShape(
   earlier: JsonArrayEntry | null,
-  created: number,
-): { createdKeys?: number } {
-  if (!earlier) return { createdKeys: created };
+  result: CreatedShape & { createdKeys: number },
+): CreatedShape {
+  if (!earlier) return shapeOf(result);
   if (earlier.createdKeys === undefined) {
-    return created > 0 ? { createdKeys: created } : {};
+    return result.createdKeys > 0 ? shapeOf(result) : {};
   }
-  return { createdKeys: Math.max(earlier.createdKeys, created) };
+  return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
 }
 
 function planJsonArray({
@@ -232,7 +243,10 @@ function planJsonArray({
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
-        ...createdKeysField(earlier, result.createdKeys),
+        ...createdShape(earlier, result),
+        ...((earlier ? earlier.wasEmpty : result.wasEmpty)
+          ? { wasEmpty: true }
+          : {}),
         createdFile: file.createdFile,
       },
       previous,
