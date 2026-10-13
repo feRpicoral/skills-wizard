@@ -1,0 +1,143 @@
+{
+  "skill_name": "github-repo-setup",
+  "evals": [
+    {
+      "id": "casual-new-repo-setup",
+      "prompt": "We just initialized this repository for acme/billing-service (see package.json) and want to lock down the GitHub repo settings before our first push. Write the ruleset payload to .github/ruleset-main.json and a setup script at scripts/setup-github-repo.sh that applies our usual GitHub repo settings and main branch ruleset using gh.",
+      "expected_output": "Creates .github/ruleset-main.json with an active branch ruleset for ~DEFAULT_BRANCH requiring pull requests with required_approving_review_count 0, deletion, non_fast_forward, and empty bypass_actors, plus scripts/setup-github-repo.sh that inspects the repo with gh repo view first, runs gh repo edit with --enable-merge-commit=true --enable-squash-merge=false --enable-rebase-merge=false --delete-branch-on-merge=true, and applies the ruleset via gh api.",
+      "files": ["evals/files/casual-new-repo-setup/package.json"],
+      "assertions": [
+        "The setup script inspects existing repository state with gh repo view before running write commands",
+        "The ruleset requires pull requests with required_approving_review_count set to 0, blocks deletion and non_fast_forward, and sets bypass_actors to an empty array",
+        { "type": "file_exists", "path": ".github/ruleset-main.json" },
+        { "type": "json_valid", "path": ".github/ruleset-main.json" },
+        { "type": "file_exists", "path": "scripts/setup-github-repo.sh" },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"required_approving_review_count\"\\s*:\\s*0"
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"bypass_actors\"\\s*:\\s*\\[\\s*\\]"
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"non_fast_forward\""
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "--enable-merge-commit(=true|\\b)"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "--enable-squash-merge=false"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "--enable-rebase-merge=false"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "--delete-branch-on-merge(=true|\\b)"
+        }
+      ]
+    },
+    {
+      "id": "precise-ruleset-and-merge-script",
+      "prompt": "Create .github/ruleset-main.json and scripts/configure-repo.sh for feRpicoral/ledger-api based on repo-snapshot.json. Enforce merge commits only, auto-delete head branches on merge, and an active main branch ruleset on ~DEFAULT_BRANCH with pull_request (0 required approvals), deletion, non_fast_forward, and no bypass actors. Include read-only gh verification commands at the end of the script.",
+      "expected_output": "Valid .github/ruleset-main.json and scripts/configure-repo.sh that inspects feRpicoral/ledger-api, disables squash and rebase merges while enabling merge commits and delete-branch-on-merge, creates or updates the main ruleset via gh api, and verifies the resulting settings.",
+      "files": [
+        "evals/files/precise-ruleset-and-merge-script/repo-snapshot.json"
+      ],
+      "assertions": [
+        "scripts/configure-repo.sh uses gh api to apply .github/ruleset-main.json and runs read-only verification commands afterward",
+        { "type": "file_exists", "path": ".github/ruleset-main.json" },
+        { "type": "json_valid", "path": ".github/ruleset-main.json" },
+        { "type": "file_exists", "path": "scripts/configure-repo.sh" },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"~DEFAULT_BRANCH\""
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"enforcement\"\\s*:\\s*\"active\""
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"deletion\""
+        },
+        {
+          "type": "regex",
+          "path": "scripts/configure-repo.sh",
+          "pattern": "gh\\s+api"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/configure-repo.sh",
+          "pattern": "feRpicoral/ledger-api"
+        }
+      ]
+    },
+    {
+      "id": "edge-fix-squash-and-admin-bypass",
+      "prompt": "Audit and fix our existing .github/ruleset-main.json and scripts/setup-github-repo.sh, and remove the obsolete scripts/legacy-branch-protection.sh file. Right now squash merges are enabled, delete-branch-on-merge is off, the ruleset is in evaluate mode with 2 required approvals and an RepositoryRole admin bypass actor, and the script uses raw curl with GITHUB_TOKEN instead of gh.",
+      "expected_output": "Updates .github/ruleset-main.json to active enforcement with required_approving_review_count 0, empty bypass_actors, deletion, and non_fast_forward; rewrites scripts/setup-github-repo.sh to use gh (read-only view, gh repo edit for merge-commit only and delete-branch-on-merge, gh api for rulesets) without raw curl; and deletes scripts/legacy-branch-protection.sh.",
+      "files": [
+        "evals/files/edge-fix-squash-and-admin-bypass/.github/ruleset-main.json",
+        "evals/files/edge-fix-squash-and-admin-bypass/scripts/setup-github-repo.sh",
+        "evals/files/edge-fix-squash-and-admin-bypass/scripts/legacy-branch-protection.sh"
+      ],
+      "assertions": [
+        "Replaces raw curl calls with gh repo view, gh repo edit, and gh api commands",
+        "Removes the unrequested RepositoryRole bypass actor and sets enforcement to active with required_approving_review_count 0",
+        { "type": "file_exists", "path": ".github/ruleset-main.json" },
+        { "type": "json_valid", "path": ".github/ruleset-main.json" },
+        { "type": "file_exists", "path": "scripts/setup-github-repo.sh" },
+        {
+          "type": "file_absent",
+          "path": "scripts/legacy-branch-protection.sh"
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"enforcement\"\\s*:\\s*\"active\""
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"required_approving_review_count\"\\s*:\\s*0"
+        },
+        {
+          "type": "regex",
+          "path": ".github/ruleset-main.json",
+          "pattern": "\"bypass_actors\"\\s*:\\s*\\[\\s*\\]"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "^(?![\\s\\S]*curl\\s)"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "--enable-squash-merge=false"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/setup-github-repo.sh",
+          "pattern": "--delete-branch-on-merge(=true|\\b)"
+        }
+      ]
+    }
+  ]
+}

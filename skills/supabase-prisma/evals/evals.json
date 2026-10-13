@@ -1,0 +1,168 @@
+{
+  "skill_name": "supabase-prisma",
+  "evals": [
+    {
+      "id": "casual-supabase-prisma-setup",
+      "prompt": "We are setting up a new Supabase project with Prisma 7 for our Next.js app (see package.json and prisma/schema.prisma). Create prisma.config.ts, src/db.ts using @prisma/adapter-pg, and .env.example with our Supabase connection pooling and API key conventions, and let me know anything else I need to remember for a new Supabase project.",
+      "expected_output": "Creates prisma.config.ts using DATABASE_SESSION_POOLING_URL (port 5432), src/db.ts using PrismaPg with DATABASE_TRANSACTION_POOLING_URL (port 6543), and .env.example with DATABASE_TRANSACTION_POOLING_URL (:6543), DATABASE_SESSION_POOLING_URL (:5432), NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, and SUPABASE_SECRET_KEY (no legacy anon or service_role keys). Reminds the user to add the new Supabase project to feRpicoral/supabase-heartbeat.",
+      "files": [
+        "evals/files/casual-supabase-prisma-setup/package.json",
+        "evals/files/casual-supabase-prisma-setup/prisma/schema.prisma"
+      ],
+      "assertions": [
+        "Reminds the user to register the new Supabase project in feRpicoral/supabase-heartbeat so it does not pause",
+        "Explains that runtime queries use DATABASE_TRANSACTION_POOLING_URL on port 6543 while prisma.config.ts and migrations use DATABASE_SESSION_POOLING_URL on port 5432",
+        { "type": "file_exists", "path": "prisma.config.ts" },
+        { "type": "file_exists", "path": "src/db.ts" },
+        { "type": "file_exists", "path": ".env.example" },
+        {
+          "type": "regex",
+          "path": "prisma.config.ts",
+          "pattern": "DATABASE_SESSION_POOLING_URL"
+        },
+        {
+          "type": "regex",
+          "path": "src/db.ts",
+          "pattern": "DATABASE_TRANSACTION_POOLING_URL"
+        },
+        {
+          "type": "regex",
+          "path": "src/db.ts",
+          "pattern": "@prisma/adapter-pg"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "DATABASE_TRANSACTION_POOLING_URL=.*:6543"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "DATABASE_SESSION_POOLING_URL=.*:5432"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "SUPABASE_PUBLISHABLE_KEY"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "SUPABASE_SECRET_KEY"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "^(?![\\s\\S]*(ANON_KEY|SERVICE_ROLE_KEY))"
+        }
+      ]
+    },
+    {
+      "id": "precise-baseline-migration",
+      "prompt": "Running `yarn prisma migrate dev` against our Supabase database fails with schema drift because of Supabase's auth and storage schemas, and asks to reset the database. Write a repeatable script at scripts/baseline-supabase.sh that creates the 0_init baseline migration from prisma/schema.prisma and marks it applied, and add a `db:baseline` script to package.json.",
+      "expected_output": "Creates scripts/baseline-supabase.sh that makes prisma/migrations/0_init, runs prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > prisma/migrations/0_init/migration.sql, and runs prisma migrate resolve --applied 0_init (plus prisma migrate deploy), without ever calling prisma migrate reset. Adds db:baseline to package.json.",
+      "files": [
+        "evals/files/precise-baseline-migration/package.json",
+        "evals/files/precise-baseline-migration/prisma/schema.prisma",
+        "evals/files/precise-baseline-migration/prisma.config.ts"
+      ],
+      "assertions": [
+        "Explains why prisma migrate reset must not be run on Supabase and why 0_init baselining with prisma migrate diff and prisma migrate resolve --applied 0_init is used instead",
+        { "type": "file_exists", "path": "scripts/baseline-supabase.sh" },
+        { "type": "json_valid", "path": "package.json" },
+        {
+          "type": "regex",
+          "path": "scripts/baseline-supabase.sh",
+          "pattern": "prisma/migrations/0_init"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/baseline-supabase.sh",
+          "pattern": "migrate\\s+diff[\\s\\S]*--from-empty[\\s\\S]*--to-schema\\s+prisma/schema\\.prisma[\\s\\S]*--script"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/baseline-supabase.sh",
+          "pattern": "migrate\\s+resolve\\s+--applied\\s+0_init"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/baseline-supabase.sh",
+          "pattern": "^(?![\\s\\S]*migrate\\s+reset)"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"db:baseline\"\\s*:"
+        }
+      ]
+    },
+    {
+      "id": "edge-legacy-keys-and-swapped-ports",
+      "prompt": "Audit and fix our Supabase + Prisma configuration across .env.example, prisma.config.ts, src/env.ts, and src/db.ts, and delete the dangerous scripts/reset-db.sh script. Right now the pooler ports are swapped, we still use legacy anon and service_role keys, and someone checked in a script that runs prisma migrate reset.",
+      "expected_output": "Fixes .env.example so DATABASE_TRANSACTION_POOLING_URL uses port 6543 (?pgbouncer=true) and DATABASE_SESSION_POOLING_URL uses port 5432, replaces NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY with NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY and SUPABASE_SECRET_KEY in .env.example and src/env.ts, points prisma.config.ts at DATABASE_SESSION_POOLING_URL, points src/db.ts at DATABASE_TRANSACTION_POOLING_URL, and deletes scripts/reset-db.sh.",
+      "files": [
+        "evals/files/edge-legacy-keys-and-swapped-ports/.env.example",
+        "evals/files/edge-legacy-keys-and-swapped-ports/prisma.config.ts",
+        "evals/files/edge-legacy-keys-and-swapped-ports/src/env.ts",
+        "evals/files/edge-legacy-keys-and-swapped-ports/src/db.ts",
+        "evals/files/edge-legacy-keys-and-swapped-ports/scripts/reset-db.sh"
+      ],
+      "assertions": [
+        "Identifies that the transaction pooler belongs on port 6543 for runtime queries and the session pooler belongs on port 5432 for prisma.config.ts and migrations",
+        "Replaces legacy NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY with NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY and SUPABASE_SECRET_KEY",
+        { "type": "file_absent", "path": "scripts/reset-db.sh" },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "DATABASE_TRANSACTION_POOLING_URL=.*:6543"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "DATABASE_SESSION_POOLING_URL=.*:5432"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "SUPABASE_SECRET_KEY"
+        },
+        {
+          "type": "regex",
+          "path": ".env.example",
+          "pattern": "^(?![\\s\\S]*(ANON_KEY|SERVICE_ROLE_KEY))"
+        },
+        {
+          "type": "regex",
+          "path": "src/env.ts",
+          "pattern": "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
+        },
+        {
+          "type": "regex",
+          "path": "src/env.ts",
+          "pattern": "SUPABASE_SECRET_KEY"
+        },
+        {
+          "type": "regex",
+          "path": "src/env.ts",
+          "pattern": "^(?![\\s\\S]*(ANON_KEY|SERVICE_ROLE_KEY))"
+        },
+        {
+          "type": "regex",
+          "path": "prisma.config.ts",
+          "pattern": "DATABASE_SESSION_POOLING_URL"
+        },
+        {
+          "type": "regex",
+          "path": "src/db.ts",
+          "pattern": "DATABASE_TRANSACTION_POOLING_URL"
+        }
+      ]
+    }
+  ]
+}
