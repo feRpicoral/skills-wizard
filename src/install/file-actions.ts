@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
@@ -338,16 +338,35 @@ interface PlanSatisfiedLineParams extends PlanFileParams {
   satisfiedBy: string;
 }
 
+interface SameFileNoteParams {
+  path: string;
+  other: string;
+}
+
+async function pointsAt({ path, other }: SameFileNoteParams): Promise<boolean> {
+  const link = await readSymlink(path);
+  return link !== null && resolve(dirname(path), link) === other;
+}
+
+async function sameFileNote({
+  path,
+  other,
+}: SameFileNoteParams): Promise<string> {
+  const name = basename(other);
+  if (await pointsAt({ path, other })) return `links to ${name}`;
+  if (await pointsAt({ path: other, other: path })) return `${name} links here`;
+  return `same file as ${name}`;
+}
+
 async function planSatisfiedLine({
   target,
   previous,
   satisfiedBy,
   ...rest
 }: PlanSatisfiedLineParams): Promise<PlannedAction> {
-  const label = `${target.label} (links to ${basename(satisfiedBy)})`;
   const unchanged: PlannedAction = {
     path: target.path,
-    label,
+    label: `${target.label} (${await sameFileNote({ path: target.path, other: satisfiedBy })})`,
     status: 'unchanged',
     change: NONE,
     entry: null,
