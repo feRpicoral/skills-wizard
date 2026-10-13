@@ -20,7 +20,7 @@ export interface DiscoveredSkill {
   path: string;
   locations: string[];
   managed: boolean;
-  plugin: boolean;
+  readOnly: boolean;
 }
 
 export interface SkillCollision {
@@ -37,7 +37,7 @@ export interface SkillScan {
 
 interface SkillRoot {
   dir: string;
-  kind: 'canonical' | 'tool' | 'plugin';
+  kind: 'canonical' | 'tool' | 'external' | 'plugin';
 }
 
 interface RawEntry {
@@ -75,6 +75,11 @@ async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
   for (const id of TOOL_IDS) {
     const dir = TOOLS[id].global.skills?.(paths);
     if (dir) await add({ dir, kind: 'tool' });
+  }
+  for (const id of TOOL_IDS) {
+    for (const dir of TOOLS[id].global.extraSkills?.(paths) ?? []) {
+      await add({ dir, kind: 'external' });
+    }
   }
 
   const pluginsDir = join(paths.geminiHome, 'config', 'plugins');
@@ -194,7 +199,7 @@ export async function scanInstalledSkills(
       path: entry.path,
       locations: [entry.path],
       managed: ownedPaths.has(entry.path) && ownedSkills.has(entry.name),
-      plugin: entry.rootKind === 'plugin',
+      readOnly: entry.rootKind === 'external' || entry.rootKind === 'plugin',
     };
     byLocation.set(entry.real, skill);
     skills.push(skill);
@@ -210,7 +215,7 @@ export async function scanInstalledSkills(
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const unmanaged = skills
-    .filter((skill) => !skill.plugin && !skill.managed)
+    .filter((skill) => !skill.readOnly && !skill.managed)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return { skills, unmanaged, collisions, skipped };

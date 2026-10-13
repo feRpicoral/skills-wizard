@@ -145,3 +145,33 @@ test('scanInstalledSkills merges links that reach the same folder under another 
     },
   );
 });
+
+test('scanInstalledSkills reports skills in Gemini CLI and Copilot folders as collisions but not as adoptable', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.agents/skills/notes/SKILL.md': skillSource('notes'),
+    '.gemini/skills/notes/SKILL.md': skillSource('notes'),
+    '.copilot/skills/review/SKILL.md': skillSource('review'),
+  });
+
+  const scan = await scanInstalledSkills(paths, null);
+
+  assert.deepEqual(
+    {
+      collisions: scan.collisions,
+      unmanaged: scan.unmanaged.map((skill) => skill.path),
+    },
+    {
+      collisions: [
+        {
+          name: 'notes',
+          paths: [
+            join(paths.skillsDir, 'notes'),
+            join(paths.geminiHome, 'skills', 'notes'),
+          ],
+        },
+      ],
+      unmanaged: [join(paths.skillsDir, 'notes')],
+    },
+  );
+});
