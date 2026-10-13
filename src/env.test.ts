@@ -4,11 +4,13 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 
 import {
+  DEFAULT_SKILLS_SH_URL,
   gitEnvironment,
   resolveAgyBin,
   resolveAgyConfig,
   resolveAgyExtraArgs,
   resolvePaths,
+  resolveSkillsShUrl,
 } from './env.ts';
 import { EnvironmentError } from './errors.ts';
 import { tempDir } from './test-support/fixtures.ts';
@@ -193,4 +195,24 @@ test('gitEnvironment drops every variable git lists as local to a repository', a
 
   assert.ok(names.includes('GIT_DIR'));
   assert.deepEqual(env, { GIT_TERMINAL_PROMPT: '0' });
+});
+
+test('resolveSkillsShUrl defaults to https://skills.sh and validates overrides', () => {
+  assert.equal(resolveSkillsShUrl({}), DEFAULT_SKILLS_SH_URL);
+  assert.equal(
+    resolveSkillsShUrl({ SKILLS_SH_URL: '  ' }),
+    DEFAULT_SKILLS_SH_URL,
+  );
+  assert.equal(
+    resolveSkillsShUrl({ SKILLS_SH_URL: 'http://127.0.0.1:4321/' }),
+    'http://127.0.0.1:4321',
+  );
+  assert.throws(
+    () => resolveSkillsShUrl({ SKILLS_SH_URL: 'not-a-url' }),
+    EnvironmentError,
+  );
+  assert.throws(
+    () => resolveSkillsShUrl({ SKILLS_SH_URL: 'file:///tmp/skills' }),
+    EnvironmentError,
+  );
 });
