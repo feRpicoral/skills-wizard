@@ -434,6 +434,113 @@ test('a CLAUDE.md that links to AGENTS.md needs no import line', async (t) => {
   assert.ok((await lstat(join(dir, 'CLAUDE.md'))).isSymbolicLink());
 });
 
+test('an AGENTS.md that links to CLAUDE.md gets the region and no self-import', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+
+  assert.equal(
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+    `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+test('removing an install from an AGENTS.md that links to CLAUDE.md leaves no region', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+  for (let round = 0; round < 2; round += 1) {
+    await installProject({
+      paths,
+      project: { dir, title: 'app' },
+      tools: ['claude-code'],
+    });
+  }
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '# Team\n');
+});
+
+test('a self-import added before AGENTS.md became a link is removed with the region kept', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+  await rm(join(dir, 'AGENTS.md'));
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+
+  assert.equal(
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+    `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+async function linkedDotfile(paths: Paths): Promise<string> {
+  await writeFiles(paths.home, { 'dotfiles/AGENTS.md': '# Mine\n' });
+  const real = await realpath(join(paths.home, 'dotfiles', 'AGENTS.md'));
+  await mkdir(paths.claudeHome, { recursive: true });
+  await mkdir(paths.codexHome, { recursive: true });
+  await symlink(real, join(paths.claudeHome, 'CLAUDE.md'));
+  await symlink(real, join(paths.codexHome, 'AGENTS.md'));
+  return real;
+}
+
+test('two linked instructions files that share one real file get one region', async (t) => {
+  const paths = await tempPaths(t);
+  const real = await linkedDotfile(paths);
+
+  await installGlobal(paths, ['claude-code', 'codex']);
+
+  assert.equal(
+    await readFile(real, 'utf8'),
+    `# Mine\n\n${BEGIN}\n# Rules\n\nGitHub username: octocat\n\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+test('a real file shared through links keeps its region while a tool still uses it', async (t) => {
+  const paths = await tempPaths(t);
+  const real = await linkedDotfile(paths);
+  await installGlobal(paths, ['claude-code', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.match(await readFile(real, 'utf8'), new RegExp(BEGIN));
+});
+
+test('a real file shared through links loses its region once no tool uses it', async (t) => {
+  const paths = await tempPaths(t);
+  const real = await linkedDotfile(paths);
+  await installGlobal(paths, ['claude-code', 'codex']);
+  await installGlobal(paths, ['codex']);
+
+  await installGlobal(paths, []);
+
+  assert.equal(await readFile(real, 'utf8'), '# Mine\n');
+});
+
 test('removing a project install deletes the files it created', async (t) => {
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));

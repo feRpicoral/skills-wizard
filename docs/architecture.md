@@ -50,10 +50,12 @@ Each target becomes one action:
 
 Conflicts come from malformed markers, JSON files with comments or invalid syntax, unmanaged files at a path the CLI wants to own (for example `~/.local/bin/agents-config`), paths that are directories, special files or unreadable, links to missing locations, and project files whose real location is outside the project.
 
+Targets are planned in order against the content that earlier actions in the same plan leave behind, keyed by the real location with every link resolved. When two targets reach one file through different paths, such as `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` linked to the same dotfile, each write builds on the ones before it, so the file ends up with one coherent result.
+
 ## Writers
 
 - **Managed region.** Text between `<!-- BEGIN:agents-config -->` and `<!-- END:agents-config -->`. A file without markers gets the region appended after its content. Duplicate or unmatched markers are a conflict. Lines outside the region keep their own line endings, and new lines use the ending most of the file uses.
-- **Import line.** A single line such as `@AGENTS.md`, prepended to an existing `CLAUDE.md`. A `CLAUDE.md` that is a link to `AGENTS.md` needs no import line and is left alone, even before `AGENTS.md` exists.
+- **Import line.** A single line such as `@AGENTS.md`, prepended to an existing `CLAUDE.md`. A `CLAUDE.md` and an `AGENTS.md` that are one file through a link, whichever way it points, need no import line and are left alone, even before `AGENTS.md` exists. An import line the CLI added before the two became one file is removed, so the file never imports itself.
 - **JSON array values.** Adds values to a key such as `context.fileName` and removes only the values the CLI added. A string value is converted to a list and restored on removal. Files with comments are refused.
 - **Exclude region.** `# BEGIN:agents-config <dir>` markers in the repository's `info/exclude`, one region per project, with patterns relative to the repository root. When a project kept local is no longer in a git repository, the option is dropped with a notice.
 - **Symlink.** Replaced only when the manifest owns it and it still points where the CLI left it. A link someone retargeted is left alone.
@@ -75,7 +77,7 @@ A manifest stores the selection (tools, blocks, variables, options) and one entr
 
 - Only paths recorded in a manifest are ever modified or deleted.
 - A file the CLI created is deleted when its managed content is removed and nothing else is left, including the project heading it wrote. A file that existed before keeps its other content.
-- A file shared by several tools, such as `~/.gemini/AGENTS.md`, stays until no selected tool uses it.
+- A file shared by several tools, such as `~/.gemini/AGENTS.md`, stays until no selected tool uses it. Sharing is counted by real location, so this also holds for files that tools reach through links.
 - Directories the CLI created are left in place.
 
 ## Exit codes

@@ -5,11 +5,10 @@ import type { ManifestEntry } from '../state/manifest.ts';
 import {
   lstatIfExists,
   readSymlink,
-  readTextIfExists,
   resolveIfSymlink,
   statIfExists,
 } from './fs.ts';
-import { ensureLine, hasLine } from './import-line.ts';
+import { ensureLine, hasLine, removeLine } from './import-line.ts';
 import {
   ensureArrayValues,
   parseJsonObject,
@@ -25,12 +24,13 @@ import {
   conflict,
   fileKindProblem,
   leftInPlace,
-  linksTo,
   locationProblem,
   NONE,
   type PlannedAction,
+  sameFile,
   type TargetLabel,
 } from './safety.ts';
+import { readStaged, type StagedContents } from './staged.ts';
 import type {
   ExcludeRegionTarget,
   FileTarget,
@@ -280,31 +280,19 @@ function planJsonArray({
 interface PlanFileParams {
   target: FileTarget;
   previous: ManifestEntry | null;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function resolveTargetFile({
   target,
   previous,
+  staged,
   boundary,
 }: PlanFileParams): Promise<PlannedAction | ResolvedTargetFile> {
   let writePath = target.path;
   const stats = await lstatIfExists(target.path);
   if (stats?.isSymbolicLink()) {
-    if (
-      target.kind === 'line' &&
-      target.satisfiedBy &&
-      (await linksTo({ link: target.path, destination: target.satisfiedBy }))
-    ) {
-      return {
-        path: target.path,
-        label: `${target.label} (links to ${basename(target.satisfiedBy)})`,
-        status: 'unchanged',
-        change: NONE,
-        entry: null,
-        previous,
-      };
-    }
     const resolved = await resolveIfSymlink(target.path);
     if (resolved === null) {
       return conflict({
@@ -330,11 +318,55 @@ async function resolveTargetFile({
     return conflict({ target, previous, reason: kindProblem });
   }
 
-  const existing = await readTextIfExists(writePath);
+  const { current, onDisk } = await readStaged({ staged, path: writePath });
   return {
     writePath,
-    existing,
-    createdFile: wasCreated(existing, previous),
+    existing: current,
+    createdFile: wasCreated(onDisk, previous),
+  };
+}
+
+interface PlanSatisfiedLineParams extends PlanFileParams {
+  target: LineTarget;
+  satisfiedBy: string;
+}
+
+async function planSatisfiedLine({
+  target,
+  previous,
+  satisfiedBy,
+  ...rest
+}: PlanSatisfiedLineParams): Promise<PlannedAction> {
+  const label = `${target.label} (links to ${basename(satisfiedBy)})`;
+  const unchanged: PlannedAction = {
+    path: target.path,
+    label,
+    status: 'unchanged',
+    change: NONE,
+    entry: null,
+    previous,
+  };
+  if (previous?.kind !== 'line' || !previous.added) return unchanged;
+
+  const resolved = await resolveTargetFile({ target, previous, ...rest });
+  if ('status' in resolved) return resolved;
+  if (
+    resolved.existing === null ||
+    !hasLine({ content: resolved.existing, line: target.line })
+  ) {
+    return unchanged;
+  }
+  return {
+    ...unchanged,
+    ...(resolved.writePath !== target.path
+      ? { writePath: resolved.writePath }
+      : {}),
+    status: 'update',
+    change: {
+      type: 'write',
+      content: removeLine({ existing: resolved.existing, line: target.line }),
+    },
+    reason: 'removes an import of the file itself',
   };
 }
 
@@ -343,6 +375,18 @@ async function planFile({
   previous,
   ...rest
 }: PlanFileParams): Promise<PlannedAction> {
+  if (
+    target.kind === 'line' &&
+    target.satisfiedBy !== undefined &&
+    (await sameFile({ path: target.path, other: target.satisfiedBy }))
+  ) {
+    return planSatisfiedLine({
+      target,
+      previous,
+      satisfiedBy: target.satisfiedBy,
+      ...rest,
+    });
+  }
   const resolved = await resolveTargetFile({ target, previous, ...rest });
   if ('status' in resolved) return resolved;
 
@@ -361,12 +405,14 @@ async function planFile({
 export interface PlanTargetParams {
   target: Target;
   previous: ManifestEntry | null;
+  staged: StagedContents;
   boundary?: string;
 }
 
 export async function planTarget({
   target,
   previous,
+  staged,
   boundary,
 }: PlanTargetParams): Promise<PlannedAction> {
   if (target.kind === 'symlink') {
@@ -375,6 +421,7 @@ export async function planTarget({
   return planFile({
     target,
     previous,
+    staged,
     ...(boundary ? { boundary } : {}),
   });
 }

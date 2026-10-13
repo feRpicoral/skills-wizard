@@ -1,11 +1,6 @@
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import {
-  readSymlink,
-  readTextIfExists,
-  resolveIfSymlink,
-  statIfExists,
-} from './fs.ts';
+import { readSymlink, resolveIfSymlink, statIfExists } from './fs.ts';
 import { removeLine } from './import-line.ts';
 import {
   parseJsonObject,
@@ -29,6 +24,7 @@ import {
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
+import { readStaged, type StagedContents } from './staged.ts';
 
 type SymlinkEntry = Extract<ManifestEntry, { kind: 'symlink' }>;
 type FileEntry = Exclude<ManifestEntry, SymlinkEntry>;
@@ -109,11 +105,13 @@ async function planSymlinkRemoval(entry: SymlinkEntry): Promise<PlannedAction> {
 
 interface ResolveRemovalFileParams {
   entry: FileEntry;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function resolveRemovalFile({
   entry,
+  staged,
   boundary,
 }: ResolveRemovalFileParams): Promise<PlannedAction | ResolvedRemovalFile> {
   const target = { path: entry.path, label: REMOVAL_LABEL };
@@ -136,7 +134,7 @@ async function resolveRemovalFile({
   if (kindProblem) {
     return conflict({ target, previous: entry, reason: kindProblem });
   }
-  const existing = await readTextIfExists(writePath);
+  const { current: existing } = await readStaged({ staged, path: writePath });
   if (existing === null) {
     return removal({ entry, change: NONE, reason: 'already gone' });
   }
@@ -223,18 +221,30 @@ function planJsonArrayRemoval(
 
 export interface PlanRemovalParams {
   entry: ManifestEntry;
+  staged: StagedContents;
+  sharedWith?: string;
   boundary?: string;
 }
 
 export async function planRemoval({
   entry,
+  staged,
+  sharedWith,
   boundary,
 }: PlanRemovalParams): Promise<PlannedAction> {
+  if (sharedWith !== undefined) {
+    return removal({
+      entry,
+      change: NONE,
+      reason: `the same file is still used for ${sharedWith}`,
+    });
+  }
   if (entry.kind === 'symlink') {
     return planSymlinkRemoval(entry);
   }
   const resolved = await resolveRemovalFile({
     entry,
+    staged,
     ...(boundary ? { boundary } : {}),
   });
   if ('status' in resolved) return resolved;

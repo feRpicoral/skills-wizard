@@ -6,7 +6,7 @@ import {
   serializeManifest,
 } from '../state/manifest.ts';
 import { planTarget } from './file-actions.ts';
-import { readTextIfExists } from './fs.ts';
+import { readTextIfExists, realLocation } from './fs.ts';
 import { planRemoval } from './removal.ts';
 import {
   type ActionStatus,
@@ -15,6 +15,7 @@ import {
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
+import { stageAction, type StagedContents } from './staged.ts';
 import {
   keyOf,
   type PlanInput,
@@ -36,15 +37,48 @@ export interface Plan {
   projectDir?: string;
 }
 
+function entryDetail(entry: ManifestEntry): string {
+  switch (entry.kind) {
+    case 'exclude-region':
+      return entry.id;
+    case 'line':
+      return entry.line;
+    case 'json-array':
+      return entry.key;
+    default:
+      return '';
+  }
+}
+
+async function ownershipKey(entry: ManifestEntry): Promise<string | null> {
+  if (entry.kind === 'symlink') return null;
+  const real = await realLocation(entry.path);
+  return real === null ? null : `${entry.kind}:${real}:${entryDetail(entry)}`;
+}
+
+async function ownersByRealLocation(
+  actions: readonly PlannedAction[],
+): Promise<Map<string, string>> {
+  const owners = new Map<string, string>();
+  for (const action of actions) {
+    if (!action.entry) continue;
+    const key = await ownershipKey(action.entry);
+    if (key !== null && !owners.has(key)) owners.set(key, action.label);
+  }
+  return owners;
+}
+
 interface PlanTargetActionsParams {
   targets: readonly Target[];
   previousEntries: ReadonlyMap<string, ManifestEntry>;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function planTargetActions({
   targets,
   previousEntries,
+  staged,
   boundary,
 }: PlanTargetActionsParams): Promise<{
   actions: PlannedAction[];
@@ -56,18 +90,19 @@ async function planTargetActions({
     const key = keyOf(target);
     plannedKeys.add(key);
     const previous = previousEntries.get(key) ?? null;
-    actions.push(
-      await guarded({
-        target,
-        previous,
-        plan: () =>
-          planTarget({
-            target,
-            previous,
-            ...(boundary ? { boundary } : {}),
-          }),
-      }),
-    );
+    const action = await guarded({
+      target,
+      previous,
+      plan: () =>
+        planTarget({
+          target,
+          previous,
+          staged,
+          ...(boundary ? { boundary } : {}),
+        }),
+    });
+    await stageAction({ staged, action });
+    actions.push(action);
   }
   return { actions, plannedKeys };
 }
@@ -75,28 +110,37 @@ async function planTargetActions({
 interface PlanRemovalActionsParams {
   previousEntries: ReadonlyMap<string, ManifestEntry>;
   plannedKeys: ReadonlySet<string>;
+  owners: ReadonlyMap<string, string>;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function planRemovalActions({
   previousEntries,
   plannedKeys,
+  owners,
+  staged,
   boundary,
 }: PlanRemovalActionsParams): Promise<PlannedAction[]> {
   const actions: PlannedAction[] = [];
   for (const [key, entry] of previousEntries) {
     if (plannedKeys.has(key)) continue;
-    actions.push(
-      await guarded({
-        target: { path: entry.path, label: REMOVAL_LABEL },
-        previous: entry,
-        plan: () =>
-          planRemoval({
-            entry,
-            ...(boundary ? { boundary } : {}),
-          }),
-      }),
-    );
+    const action = await guarded({
+      target: { path: entry.path, label: REMOVAL_LABEL },
+      previous: entry,
+      plan: async () => {
+        const owner = await ownershipKey(entry);
+        const sharedWith = owner === null ? undefined : owners.get(owner);
+        return planRemoval({
+          entry,
+          staged,
+          ...(sharedWith ? { sharedWith } : {}),
+          ...(boundary ? { boundary } : {}),
+        });
+      },
+    });
+    await stageAction({ staged, action });
+    actions.push(action);
   }
   return actions;
 }
@@ -172,14 +216,18 @@ export async function buildPlan({
   const previousEntries = new Map(
     (previous?.entries ?? []).map((entry) => [keyOf(entry), entry]),
   );
+  const staged: StagedContents = new Map();
   const { actions: targetActions, plannedKeys } = await planTargetActions({
     targets: targetsForPlan(input),
     previousEntries,
+    staged,
     ...(boundary ? { boundary } : {}),
   });
   const removalActions = await planRemovalActions({
     previousEntries,
     plannedKeys,
+    owners: await ownersByRealLocation(targetActions),
+    staged,
     ...(boundary ? { boundary } : {}),
   });
   const actions = [...targetActions, ...removalActions];
