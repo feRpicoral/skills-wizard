@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Workspace {
-  id        String   @id @default(uuid(7))
+  id        String   @id @default(uuid(7)) @db.Uuid
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 

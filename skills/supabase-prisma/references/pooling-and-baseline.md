@@ -9,9 +9,9 @@ Supabase provides two Supavisor connection modes that map to distinct environmen
 | `DATABASE_TRANSACTION_POOLING_URL` | `6543` | `?pgbouncer=true` | Runtime `PrismaClient` via `PrismaPg` (`@prisma/adapter-pg`) | Scales across serverless and container instances by releasing connections per transaction |
 | `DATABASE_SESSION_POOLING_URL`     | `5432` | none              | `prisma.config.ts` (`datasource.url`) and `prisma migrate`   | Supports advisory locks and session-scoped statements required by Prisma Migrate          |
 
-## Canonical `prisma/schema.prisma`
+## Canonical `prisma/schema.prisma` and Prisma 7 Packages
 
-In Prisma 7, connection URLs live in `prisma.config.ts` rather than inside `datasource db` in `prisma/schema.prisma`:
+Pin `prisma@^7`, `@prisma/client@^7`, and `@prisma/adapter-pg@^7` in `package.json`. In Prisma 7, connection URLs live in `prisma.config.ts` rather than inside `datasource db` in `prisma/schema.prisma`, and UUIDv7 primary keys use `@id @default(uuid(7)) @db.Uuid`:
 
 ```prisma
 generator client {
@@ -24,7 +24,7 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(uuid(7))
+  id        String   @id @default(uuid(7)) @db.Uuid
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -32,14 +32,17 @@ model Organization {
 }
 ```
 
-## Baseline Migration Procedure (`0_init`)
+## Baseline Migration Procedure (`0_init`) and Row Level Security (RLS)
 
-Why baselining is required on Supabase:
+Why baselining and RLS are required on Supabase:
 
 - Every Supabase database includes pre-populated schemas (`auth`, `storage`, `realtime`, `supabase_migrations`, `extensions`).
 - Running `prisma migrate dev` on a fresh Prisma setup detects drift against those managed schemas and offers to reset the database, which would fail or destroy Supabase internals.
+- Supabase exposes every table in the `public` schema through the Data API (PostgREST) by default. Any table Prisma creates in `public` without Row Level Security enabled is readable and writable with the publishable key until RLS is enabled. Always append `ALTER TABLE "public"."<table>" ENABLE ROW LEVEL SECURITY;` to `0_init/migration.sql` (and every subsequent migration that creates a table in `public`).
 
-Instead, generate the initial SQL script with `prisma migrate diff` and register it as applied:
+### 1. Existing database (tables in `prisma/schema.prisma` already exist in Supabase)
+
+Generate `0_init/migration.sql`, append RLS statements for every table in `public`, mark `0_init` as already applied with `prisma migrate resolve --applied 0_init`, and run `prisma migrate deploy`:
 
 ```bash
 #!/usr/bin/env bash
@@ -53,11 +56,34 @@ yarn prisma migrate diff \
   --script \
   > prisma/migrations/0_init/migration.sql
 
+# Ensure Row Level Security is enabled on every public table
+grep -E '^CREATE TABLE "([^"]+)"' prisma/migrations/0_init/migration.sql \
+  | sed -E 's/^CREATE TABLE "([^"]+)".*/ALTER TABLE "\1" ENABLE ROW LEVEL SECURITY;/' \
+  >> prisma/migrations/0_init/migration.sql
+
+yarn prisma migrate status || true
 yarn prisma migrate resolve --applied 0_init
 yarn prisma migrate deploy
 ```
 
-When the tables in `prisma/schema.prisma` do not exist in the target Supabase database yet, run `yarn prisma migrate deploy` (which executes `0_init/migration.sql`) or apply the SQL before running `yarn prisma migrate resolve --applied 0_init`. When the tables already exist in Supabase, run `yarn prisma migrate resolve --applied 0_init` first and then `yarn prisma migrate deploy`.
+### 2. Brand-new / empty Supabase database (application tables do not exist yet)
+
+Generate `0_init/migration.sql`, append the `ENABLE ROW LEVEL SECURITY` statements, and run `yarn prisma migrate deploy` directly — do **not** run `yarn prisma migrate resolve --applied 0_init` first, because marking `0_init` as applied before `migrate deploy` causes Prisma to skip `0_init/migration.sql` and leaves the database empty:
+
+```bash
+mkdir -p prisma/migrations/0_init
+yarn prisma migrate diff \
+  --from-empty \
+  --to-schema prisma/schema.prisma \
+  --script \
+  > prisma/migrations/0_init/migration.sql
+
+grep -E '^CREATE TABLE "([^"]+)"' prisma/migrations/0_init/migration.sql \
+  | sed -E 's/^CREATE TABLE "([^"]+)".*/ALTER TABLE "\1" ENABLE ROW LEVEL SECURITY;/' \
+  >> prisma/migrations/0_init/migration.sql
+
+yarn prisma migrate deploy
+```
 
 ## Supabase API Key Naming
 

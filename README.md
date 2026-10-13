@@ -33,7 +33,7 @@ Without a terminal, commands print the plan and only write when you pass `--yes`
 | `agents-config skill triggers <name>`               | Measure trigger precision, recall and false positive rate on `evals/trigger_queries.json`                              |
 | `agents-config skill report <name> [iteration-dir]` | Regenerate `report.md` for the latest iteration, a named one (`iteration-<N>`) or a run directory                      |
 
-Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--preset <id>`, `--style lean|self-contained`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
+Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--preset <id|none>`, `--style lean|self-contained|strict`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
 
 ## Stack presets and project onboarding
 

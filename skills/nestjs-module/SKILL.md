@@ -1,8 +1,7 @@
 ---
 name: nestjs-module
 description: Scaffolds, extends, and refactors NestJS domain modules with strict controller -> service -> repository layering, Prisma isolated inside repositories, zod DTOs via createZodDto and @ZodResponse from nestjs-zod, and co-located *.spec.ts tests. Use when creating a new NestJS feature or resource module, adding endpoints or domain operations to an existing NestJS module, extracting direct PrismaService queries out of controllers or services into a repository, or replacing class-validator and class-transformer DTOs with nestjs-zod schemas. Don't use for Next.js Route Handlers or Server Actions, Express/Fastify apps without NestJS, or standalone Prisma migration setup (use supabase-prisma).
-license: MIT
-compatibility: Requires Node.js, NestJS (@nestjs/common, @nestjs/core), Prisma, and nestjs-zod
+compatibility: Requires Node.js, NestJS (@nestjs/common, @nestjs/core), Prisma 7, zod ^4.0.0, and nestjs-zod ^5.0.0
 ---
 
 # NestJS Domain Module
@@ -12,8 +11,9 @@ Build and maintain NestJS domain modules following the house `controller -> serv
 ## Start here
 
 1. **Inspect the existing workspace before writing files**:
-   - Locate where domain modules live (`src/modules/<domain>/`, `src/<domain>/`, or `apps/api/src/modules/<domain>/` in an Nx monorepo) and how `PrismaModule` / `PrismaService` is imported.
-   - Check `package.json` for `nestjs-zod`, `zod`, `@nestjs/common`, and the test runner (`jest` with `@swc/jest` or `vitest`).
+   - Locate where domain modules live (`src/modules/<domain>/`, `src/<domain>/`, or `apps/api/src/modules/<domain>/` in an Nx monorepo), how `PrismaModule` / `PrismaService` is imported, and which relative import-specifier convention the project uses (match existing modules and `tsconfig.json`: extensionless `./invoices.service` in standard NestJS builds, or `.ts` when `allowImportingTsExtensions` is enabled).
+   - Check `package.json` for `nestjs-zod` (`^5.0.0`), `zod` (`^4.0.0`, required for `z.iso.datetime()`), `@nestjs/common`, and the test runner (`jest` with `@swc/jest` or `vitest`).
+   - Check `src/app.module.ts` (and `src/main.ts`) to ensure `ZodValidationPipe` (`APP_PIPE`) and `ZodSerializerInterceptor` (`APP_INTERCEPTOR`) from `nestjs-zod` are registered; without them, `createZodDto` and `@ZodResponse` are inert metadata.
    - Check whether zod schemas live inside `<domain>.dto.ts` or in a shared `<domain>.schema.ts` / workspace library.
 
 2. **Enforce strict three-tier layering**:
@@ -74,17 +74,18 @@ export class InvoicesRepository {
 }
 ```
 
-### 3. Implement the service (`<domain>.service.ts`) and controller (`<domain>.controller.ts`)
+### 3. Implement the service (`<domain>.service.ts`), controller (`<domain>.controller.ts`), and module wiring
 
-- In `<domain>.service.ts`, inject `<Domain>Repository`, enforce domain invariants, throw NestJS exceptions when entities are missing or conflict, and map records to the response shape when needed.
+- In `<domain>.service.ts`, inject `<Domain>Repository`, enforce domain invariants, throw NestJS exceptions when entities are missing or conflict, and map Prisma `Date` fields (`createdAt: record.createdAt.toISOString()`) to ISO strings when the response DTO uses `z.iso.datetime()` so `ZodSerializerInterceptor` validates cleanly at runtime.
 - In `<domain>.controller.ts`, inject `<Domain>Service`, annotate endpoints with `@ZodResponse`, and delegate directly to the service.
 - Wire `<Domain>Controller`, `<Domain>Service`, and `<Domain>Repository` in `<domain>.module.ts` (importing `PrismaModule` if it is not `@Global()`, and exporting `<Domain>Service` when other modules consume it).
+- Register `<Domain>Module` in `src/app.module.ts`, and ensure `ZodValidationPipe` (`APP_PIPE`) and `ZodSerializerInterceptor` (`APP_INTERCEPTOR`) are registered in `AppModule` if not already present.
 
 ### 4. Add co-located unit tests (`<domain>.service.spec.ts`)
 
 Place unit tests next to the source files (`<domain>.service.spec.ts`, and `<domain>.controller.spec.ts` when controller wiring is non-trivial):
 
-- Mock `<Domain>Repository` in `<domain>.service.spec.ts` (never mock `PrismaService` in a service test).
+- Mock `<Domain>Repository` in `<domain>.service.spec.ts` using typed `jest.fn<Repository['method']>()` mocks (never mock `PrismaService` in a service test).
 - Structure every test as **arrange / act / assert** separated by a single blank line (two blank lines total per test), with **no** `// arrange`, `// act`, or `// assert` comments.
 
 See [references/module-templates.md](references/module-templates.md) for complete templates of all six files.
