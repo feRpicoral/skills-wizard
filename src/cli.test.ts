@@ -16,7 +16,7 @@ import { promisify } from 'node:util';
 
 import which from 'which';
 
-import { tempDir } from './test-support/fixtures.ts';
+import { tempDir, writeFiles } from './test-support/fixtures.ts';
 
 const run = promisify(execFile);
 const CLI = join(import.meta.dirname, 'cli.ts');
@@ -238,6 +238,46 @@ test('doctor reports a variable a block gained without crashing', async (t) => {
     /^error\s+.*githubUsername.*agents-config init --global --var githubUsername=<value>/m,
   );
   assert.equal(result.stderr, '');
+});
+
+async function doctorWithGeminiExtras(
+  home: string,
+  tools: string,
+): Promise<Result> {
+  await cli(
+    home,
+    INSTALL.map((arg) => (arg === 'codex' ? tools : arg)),
+  );
+  await writeFiles(join(home, '.gemini'), {
+    'GEMINI.md': 'extra\n',
+    'config/AGENTS.md': 'extra\n',
+    'config/GEMINI.md': 'extra\n',
+  });
+  return cli(home, ['doctor']);
+}
+
+test('doctor warns about every extra Gemini file Antigravity loads', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await doctorWithGeminiExtras(home, 'antigravity');
+
+  for (const file of ['GEMINI.md', 'config/AGENTS.md', 'config/GEMINI.md']) {
+    assert.match(
+      result.stdout,
+      new RegExp(
+        `~/\\.gemini/${file.replace('.', '\\.')} is loaded in addition`,
+      ),
+    );
+  }
+});
+
+test('doctor warns Gemini CLI users only about ~/.gemini/GEMINI.md', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await doctorWithGeminiExtras(home, 'gemini-cli');
+
+  assert.match(result.stdout, /~\/\.gemini\/GEMINI\.md is loaded in addition/);
+  assert.doesNotMatch(result.stdout, /\.gemini\/config\//);
 });
 
 const PROJECT_INSTALL = ['--yes', '--tools', 'codex'];
