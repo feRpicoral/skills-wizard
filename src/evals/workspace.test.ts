@@ -15,6 +15,7 @@ import {
 } from '../test-support/fixtures.ts';
 import { isolatedGitEnv } from '../test-support/git.ts';
 import {
+  findClaudePluginSkill,
   mapCaseFileRelativePath,
   personalSkillShadowWarning,
   prepareEvalWorkspace,
@@ -136,7 +137,10 @@ test('prepareEvalWorkspace excludes skill at workspace level for without_skill a
       join(claudeWorkspace.workdir, '.claude', 'settings.local.json'),
       'utf8',
     ),
-  ) as { skillOverrides: Record<string, string> };
+  ) as {
+    skillOverrides: Record<string, string>;
+    permissions: { deny: string[] };
+  };
   const geminiSettings = JSON.parse(
     await readFile(
       join(geminiWorkspace.workdir, '.gemini', 'settings.json'),
@@ -155,6 +159,11 @@ test('prepareEvalWorkspace excludes skill at workspace level for without_skill a
   assert.equal(agyWorkspace.possiblyContaminated, true);
   assert.match(agyWorkspace.warning ?? '', /possibly contaminated/);
   assert.equal(claudeSettings.skillOverrides['demo-skill'], 'off');
+  assert.deepEqual(claudeSettings.permissions.deny, [
+    'Skill(demo-skill)',
+    'Skill(demo-skill *)',
+    'Skill(skill:demo-skill)',
+  ]);
   assert.equal(claudeWorkspace.possiblyContaminated, false);
   assert.deepEqual(geminiSettings.skills.disabled, ['demo-skill']);
   assert.equal(geminiWorkspace.possiblyContaminated, false);
@@ -413,7 +422,8 @@ test('a personal Claude skill with the same name marks claude skill runs possibl
     env: isolatedGitEnv(root),
   });
 
-  assert.equal(claudeRun.possiblyContaminated, true);
+  assert.equal(claudeRun.skillShadowed, true);
+  assert.equal(claudeRun.possiblyContaminated, false);
   assert.match(claudeRun.warning ?? '', /personal skill/);
   assert.match(
     (await personalSkillShadowWarning({
@@ -424,6 +434,7 @@ test('a personal Claude skill with the same name marks claude skill runs possibl
     /possibly contaminated/,
   );
   assert.equal(agyRun.possiblyContaminated, false);
+  assert.equal(agyRun.skillShadowed, false);
   assert.equal(agyRun.warning, undefined);
 });
 
@@ -703,5 +714,56 @@ test('fixture SKILL.fixture.md files are staged as SKILL.md', async (t) => {
   assert.equal(
     await lstatIfExists(join(prepared.workdir, 'draft', 'SKILL.fixture.md')),
     null,
+  );
+});
+
+test('a Claude plugin skill with the same name marks the claude baseline possibly contaminated', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const skillDir = join(root, 'skills', 'demo-skill');
+  await writeFiles(skillDir, { 'SKILL.md': skillSource('demo-skill') });
+
+  const clean = await prepareEvalWorkspace({
+    runDir: join(root, 'run-clean'),
+    skillDir,
+    skillName: 'demo-skill',
+    evalCase: plainCase,
+    variant: 'without_skill',
+    runner: 'claude',
+    paths,
+    env: isolatedGitEnv(root),
+  });
+  await writeFiles(
+    join(
+      paths.claudeHome,
+      'plugins',
+      'cache',
+      'some-marketplace',
+      'some-plugin',
+      '1.0.0',
+      'skills',
+      'demo-skill',
+    ),
+    { 'SKILL.md': skillSource('demo-skill') },
+  );
+  const contaminated = await prepareEvalWorkspace({
+    runDir: join(root, 'run-plugin'),
+    skillDir,
+    skillName: 'demo-skill',
+    evalCase: plainCase,
+    variant: 'without_skill',
+    runner: 'claude',
+    paths,
+    env: isolatedGitEnv(root),
+  });
+
+  assert.equal(clean.possiblyContaminated, false);
+  assert.equal(clean.warning, undefined);
+  assert.equal(contaminated.possiblyContaminated, true);
+  assert.equal(contaminated.skillShadowed, false);
+  assert.match(contaminated.warning ?? '', /plugin skill/);
+  assert.equal(
+    await findClaudePluginSkill({ skillName: 'other-skill', paths }),
+    undefined,
   );
 });

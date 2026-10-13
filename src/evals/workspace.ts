@@ -110,7 +110,17 @@ export interface PreparedWorkspace {
   variant: EvalVariant;
   runner: EvalRunnerName;
   skillName: string;
+  /**
+   * True only for a `without_skill` workspace whose baseline may still load
+   * the skill. Use it for `metadata.baseline_status`.
+   */
   possiblyContaminated: boolean;
+  /**
+   * True only for a `with_skill` or `old_skill` workspace where another copy
+   * of the skill (a personal Claude skill) is loaded instead of the staged
+   * one. Use it for `metadata.with_skill_contaminated`.
+   */
+  skillShadowed: boolean;
   warning?: string;
 }
 
@@ -468,6 +478,53 @@ async function isSkillInstalledGlobally({
   return scan.skills.some((skill) => skill.name === skillName);
 }
 
+const PLUGIN_SCAN_MAX_DEPTH = 8;
+const PLUGIN_SCAN_SKIPPED = new Set(['.git', 'node_modules']);
+
+interface ClaudePluginSkillParams {
+  skillName: string;
+  paths?: Paths;
+}
+
+/**
+ * Finds a `skills/<name>` folder anywhere under `~/.claude/plugins`, without
+ * following links. Claude Code namespaces plugin skills as
+ * `<plugin>:<name>`, and `skillOverrides` does not apply to them.
+ */
+export async function findClaudePluginSkill({
+  skillName,
+  paths,
+}: ClaudePluginSkillParams): Promise<string | undefined> {
+  if (!paths) return undefined;
+  const pending: { dir: string; depth: number }[] = [
+    { dir: join(paths.claudeHome, 'plugins'), depth: 0 },
+  ];
+  while (pending.length > 0) {
+    const next = pending.shift();
+    if (!next) break;
+    let entries;
+    try {
+      entries = await readDirIfExists(next.dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries ?? []) {
+      if (!entry.isDirectory() || PLUGIN_SCAN_SKIPPED.has(entry.name)) {
+        continue;
+      }
+      const dir = join(next.dir, entry.name);
+      if (entry.name === 'skills') {
+        const candidate = join(dir, skillName);
+        if ((await lstatIfExists(candidate)) !== null) return candidate;
+      }
+      if (next.depth < PLUGIN_SCAN_MAX_DEPTH) {
+        pending.push({ dir, depth: next.depth + 1 });
+      }
+    }
+  }
+  return undefined;
+}
+
 export async function applyBaselineExclusion({
   workdir,
   skillName,
@@ -483,8 +540,11 @@ export async function applyBaselineExclusion({
 
   if (runner === 'claude') {
     // Documented in the Claude Code skills and permissions docs: a
-    // `skillOverrides` entry of "off" hides a personal or project skill, and
-    // deny rules block in every permission mode, including bypassPermissions.
+    // `skillOverrides` entry of "off" hides a personal or project skill, deny
+    // rules block in every permission mode, including bypassPermissions, and
+    // the parameter form `Skill(skill:<name>)` matches the skill under any of
+    // its names, such as an alias or display name. Neither is documented to
+    // cover a plugin skill, so one is reported as possible contamination.
     const file = join(workdir, '.claude', 'settings.local.json');
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
@@ -493,13 +553,24 @@ export async function applyBaselineExclusion({
         {
           skillOverrides: { [skillName]: 'off' },
           permissions: {
-            deny: [`Skill(${skillName})`, `Skill(${skillName} *)`],
+            deny: [
+              `Skill(${skillName})`,
+              `Skill(${skillName} *)`,
+              `Skill(skill:${skillName})`,
+            ],
           },
         },
         null,
         2,
       )}\n`,
     );
+    const pluginSkill = await findClaudePluginSkill({ skillName, paths });
+    if (pluginSkill !== undefined) {
+      return {
+        possiblyContaminated: true,
+        warning: `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; baseline is possibly contaminated.`,
+      };
+    }
     return { possiblyContaminated: false };
   }
 
@@ -597,7 +668,8 @@ export async function prepareEvalWorkspace({
       variant,
       runner,
       skillName,
-      possiblyContaminated: warning !== undefined,
+      possiblyContaminated: false,
+      skillShadowed: warning !== undefined,
       ...(warning ? { warning } : {}),
     };
   }
@@ -614,6 +686,7 @@ export async function prepareEvalWorkspace({
     runner,
     skillName,
     possiblyContaminated: exclusion.possiblyContaminated,
+    skillShadowed: false,
     ...(exclusion.warning ? { warning: exclusion.warning } : {}),
   };
 }
