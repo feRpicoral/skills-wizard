@@ -713,6 +713,25 @@ test('a project file recreated after deletion is removed with its heading', asyn
   await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
 });
 
+test('a blank AGENTS.md that existed is left empty once the install is removed', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'AGENTS.md': ' \n' });
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.equal(await readFile(join(dir, 'AGENTS.md'), 'utf8'), '');
+});
+
 test('a CLAUDE.md link to an AGENTS.md that does not exist yet needs no import line', async (t) => {
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));

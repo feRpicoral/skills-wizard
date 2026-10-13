@@ -149,11 +149,12 @@ function planRegionRemoval(
     const markers =
       entry.kind === 'region' ? MARKDOWN_MARKERS : excludeMarkers(entry.id);
     const preamble = entry.kind === 'region' ? entry.preamble : undefined;
+    const remaining = removeRegion(file.existing, markers);
     return rewriteOrDelete({
       entry,
       file,
-      next: removeRegion(file.existing, markers),
-      emptyWhen: (next) => next === '' || next.trim() === preamble,
+      next: preamble && remaining.trim() === preamble ? '' : remaining,
+      emptyWhen: (next) => next === '',
     });
   } catch (error) {
     if (error instanceof ManagedRegionError) {

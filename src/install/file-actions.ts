@@ -14,6 +14,7 @@ import {
   parseJsonObject,
   serializeJson,
 } from './json-merge.ts';
+import { isBlank } from './lines.ts';
 import {
   excludeMarkers,
   MARKDOWN_MARKERS,
@@ -139,7 +140,7 @@ function regionPreamble({
   existing,
   previous,
 }: RegionPreambleParams): string | undefined {
-  if (existing === null) return target.preamble;
+  if (isBlank(existing)) return target.preamble;
   return previous?.kind === 'region' ? previous.preamble : undefined;
 }
 

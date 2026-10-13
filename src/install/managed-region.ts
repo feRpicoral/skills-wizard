@@ -1,5 +1,11 @@
 import { ManagedRegionError } from '../errors.ts';
-import { joinLines, type Line, lineEnding, splitLines } from './lines.ts';
+import {
+  isBlank,
+  joinLines,
+  type Line,
+  lineEnding,
+  splitLines,
+} from './lines.ts';
 
 interface Markers {
   begin: string;
@@ -76,7 +82,7 @@ export function upsertRegion({
   const eol = lineEnding(existing);
   const region = regionText({ body, markers, eol });
 
-  if (existing === null || existing.trim() === '') {
+  if (existing === null || isBlank(existing)) {
     const prefix = preamble ? `${preamble}${eol}${eol}` : '';
     return `${prefix}${region}${eol}`;
   }

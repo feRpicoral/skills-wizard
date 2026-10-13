@@ -76,7 +76,7 @@ A manifest stores the selection (tools, blocks, variables, options) and one entr
 ## Ownership rules
 
 - Only paths recorded in a manifest are ever modified or deleted.
-- A file the CLI created is deleted when its managed content is removed and nothing else is left, including the project heading it wrote. A file that existed before keeps its other content.
+- A file the CLI created is deleted when its managed content is removed and nothing else is left, including the project heading it wrote. A file that existed before keeps its other content. A blank file that existed before gets the project heading too, and is left empty once the region is removed.
 - A file shared by several tools, such as `~/.gemini/AGENTS.md`, stays until no selected tool uses it. Sharing is counted by real location, so this also holds for files that tools reach through links.
 - Directories the CLI created are left in place.
 
