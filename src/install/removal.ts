@@ -226,7 +226,10 @@ function planJsonArrayRemoval(
         }),
       ...(entry.original === undefined ? {} : { original: entry.original }),
     });
-    const next = entry.wasEmpty && isEmptyJsonObject(removed) ? '' : removed;
+    const next =
+      entry.wasEmpty && isEmptyJsonObject(removed)
+        ? (entry.blankText ?? '')
+        : removed;
     if (next === file.existing) {
       return removal({ entry, change: NONE, reason: NOTHING_LEFT });
     }

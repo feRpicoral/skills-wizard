@@ -268,6 +268,19 @@ test('deselecting Gemini CLI leaves an empty settings file empty again', async (
   );
 });
 
+test('deselecting Gemini CLI puts back a whitespace-only settings file', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, { '.gemini/settings.json': '  \n' });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.equal(
+    await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
+    '  \n',
+  );
+});
+
 test('deselecting Gemini CLI restores a context file name with escapes as written', async (t) => {
   const paths = await tempPaths(t);
   const settings = '{"context": {"fileName": "GEM\\u0049NI.md"}}\n';
@@ -984,6 +997,28 @@ test('a created AGENTS.md later reached through a link keeps its heading on remo
   });
 
   assert.equal(await readFile(moved, 'utf8'), '# app\n');
+});
+
+test('a blank AGENTS.md reached through a link gets no heading and is left empty', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'docs/AGENTS.md': '' });
+  await symlink(join('docs', 'AGENTS.md'), join(dir, 'AGENTS.md'));
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
+  const installed = await readFile(join(dir, 'docs', 'AGENTS.md'), 'utf8');
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.doesNotMatch(installed, /^# app/);
+  assert.equal(await readFile(join(dir, 'docs', 'AGENTS.md'), 'utf8'), '');
 });
 
 test('a created AGENTS.md synced through a link keeps its heading on removal', async (t) => {
