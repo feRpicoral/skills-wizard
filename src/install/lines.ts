@@ -5,6 +5,10 @@ export interface Line {
   eol: string;
 }
 
+export function isBlank(content: string | null): boolean {
+  return content === null || content.trim() === '';
+}
+
 export function lineEnding(content: string | null): string {
   return content ? detectNewlineGraceful(content) : '\n';
 }
