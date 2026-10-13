@@ -9,6 +9,7 @@ import {
   tempDir,
   writeFiles,
 } from '../test-support/fixtures.ts';
+import { composeGlobal, defaultBlockIds } from './compose.ts';
 import { loadBlockLibrary } from './library.ts';
 
 const repoBlocks = join(import.meta.dirname, '..', '..', 'blocks');
@@ -16,8 +17,32 @@ const repoBlocks = join(import.meta.dirname, '..', '..', 'blocks');
 test('loads the repository block library starting with the identity block', async () => {
   const library = await loadBlockLibrary(repoBlocks);
 
-  assert.equal(library.blocks[0]?.id, 'core/identity');
-  assert.deepEqual(library.blocks[0]?.variables, ['githubUsername']);
+  const firstBlock = library.blocks[0];
+
+  assert.equal(firstBlock?.id, 'core/identity');
+  assert.deepEqual(firstBlock?.variables, ['githubUsername']);
+});
+
+test('repository stack blocks are project-scoped only and global instructions stay at 200 lines', async () => {
+  const library = await loadBlockLibrary(repoBlocks);
+
+  const stackBlocks = library.blocks.filter((block) => block.group === 'stack');
+  const globalIds = defaultBlockIds(library, 'global');
+  const composedGlobal = composeGlobal(library, globalIds, {
+    githubUsername: 'feRpicoral',
+  });
+
+  assert.equal(stackBlocks.length, 14);
+  for (const block of stackBlocks) {
+    assert.deepEqual(block.scopes, ['project']);
+    assert.deepEqual(block.defaults, []);
+  }
+  assert.equal(globalIds.includes('git/github-repo-setup'), false);
+  assert.equal(globalIds.includes('stack/supabase-prisma'), false);
+  assert.equal(
+    composedGlobal.split('\n').filter((line) => line.trim().length > 0).length,
+    205,
+  );
 });
 
 test('loads blocks with their frontmatter and trimmed body', async (t) => {
