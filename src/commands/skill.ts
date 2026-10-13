@@ -350,12 +350,12 @@ async function runSkillNew({
         evals: [
           {
             id: 'starter-case',
-            prompt: `Apply ${name} to sample.txt and summarize what changed.`,
-            expected_output: `Processed sample.txt following ${name} instructions.`,
+            prompt: `Can you run sample.txt through ${name} and save the result to output.md?`,
+            expected_output: `output.md contains sample.txt processed following the ${name} instructions.`,
             files: ['evals/files/starter-case/sample.txt'],
             assertions: [
-              `The response explains how ${name} was applied to sample.txt`,
-              { type: 'file_exists', path: 'sample.txt' },
+              `output.md reflects the ${name} workflow applied to the content of sample.txt`,
+              { type: 'file_exists', path: 'output.md' },
             ],
           },
         ],
@@ -366,11 +366,11 @@ async function runSkillNew({
     files['evals/trigger_queries.json'] = `${JSON.stringify(
       [
         {
-          query: `Please use ${name} logic to update the configuration in this repo`,
+          query: `Can you set up ${name} for this repo? I'm not sure where to start.`,
           should_trigger: true,
         },
         {
-          query: `[negative] Unrelated task that should not trigger ${name}`,
+          query: 'Summarize what the last three commits in this repo changed.',
           should_trigger: false,
         },
       ],
