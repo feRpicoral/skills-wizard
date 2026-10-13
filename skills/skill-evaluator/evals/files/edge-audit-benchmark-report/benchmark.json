@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "metadata": {
     "skill_name": "dockerfile-hardener",
     "skill_path": "/repo/skills/dockerfile-hardener",
@@ -7,7 +8,7 @@
     "runs_per_configuration": 3,
     "baseline_status": "possibly contaminated",
     "warnings": [
-      "Runner \"codex\" has no documented workspace-level skill exclusion flag and \"dockerfile-hardener\" is installed globally; baseline is possibly contaminated."
+      "Runner \"codex\" has no documented workspace-level skill exclusion and \"dockerfile-hardener\" is installed globally; baseline is possibly contaminated."
     ]
   },
   "run_summary": {
@@ -27,16 +28,28 @@
       "tokens": "+2300"
     }
   },
-  "non_discriminating_assertions": [
-    "pin-base-image: file_exists: Dockerfile",
-    "pin-base-image: Dockerfile uses FROM instruction",
-    "pin-base-image: Dockerfile exposes a port"
-  ],
   "cases": [
     {
       "case_id": "pin-base-image",
-      "prompt": "Harden the Dockerfile for production deployment.",
-      "expected_output": "Non-root USER, pinned digest, multi-stage build.",
+      "prompt": "can you get our Dockerfile ready for prod?",
+      "expected_output": "Non-root USER, base image pinned by digest, multi-stage build.",
+      "variants": {
+        "with_skill": {
+          "pass_rate": { "mean": 0.75, "stddev": 0, "min": 0.75, "max": 0.75 },
+          "time_seconds": {
+            "mean": 18.4,
+            "stddev": 1.2,
+            "min": 17.2,
+            "max": 19.6
+          },
+          "tokens": { "mean": 4200, "stddev": 150, "min": 4050, "max": 4350 }
+        },
+        "without_skill": {
+          "pass_rate": { "mean": 0.75, "stddev": 0, "min": 0.75, "max": 0.75 },
+          "time_seconds": { "mean": 9.1, "stddev": 0.8, "min": 8.3, "max": 9.9 },
+          "tokens": { "mean": 1900, "stddev": 100, "min": 1800, "max": 2000 }
+        }
+      },
       "assertions": [
         {
           "text": "file_exists: Dockerfile",
@@ -46,7 +59,7 @@
           "classification": "non-discriminating"
         },
         {
-          "text": "Dockerfile uses FROM instruction",
+          "text": "Dockerfile uses a FROM instruction",
           "kind": "string",
           "with_skill_pass_rate": 1,
           "baseline_pass_rate": 1,
@@ -69,5 +82,22 @@
       ],
       "runs": []
     }
-  ]
+  ],
+  "non_discriminating_assertions": [
+    "pin-base-image: file_exists: Dockerfile",
+    "pin-base-image: Dockerfile uses a FROM instruction",
+    "pin-base-image: Dockerfile exposes a port"
+  ],
+  "assertion_analysis": {
+    "pass_only_with_skill": [],
+    "pass_in_both": [
+      "pin-base-image: file_exists: Dockerfile",
+      "pin-base-image: Dockerfile uses a FROM instruction",
+      "pin-base-image: Dockerfile exposes a port"
+    ],
+    "fail_in_both": ["pin-base-image: regex: Dockerfile matches /^USER\\s+node$/m"],
+    "flaky": [],
+    "regressing": [],
+    "regressing_vs_old": []
+  }
 }
