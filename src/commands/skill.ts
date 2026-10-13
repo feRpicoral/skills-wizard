@@ -11,7 +11,10 @@ import { styleText } from 'node:util';
 
 import type { Context } from '../context.ts';
 import { SourceError, UsageError } from '../errors.ts';
-import type { BenchmarkSummary } from '../evals/aggregate.ts';
+import {
+  type BenchmarkSummary,
+  loadBenchmarkFromIteration,
+} from '../evals/aggregate.ts';
 import type { TriggerSplit } from '../evals/cases.ts';
 import {
   regenerateSkillReport,
@@ -274,16 +277,27 @@ async function resolveEvalRunner({
   sandbox,
 }: ResolveEvalRunnerParams): Promise<EvalRunner> {
   let runnerName: EvalRunnerName;
+  // --binary wins over AGY_BIN, so AGY_BIN is not read (or validated) then;
+  // otherwise it is read only for auto-detection and agy runs.
+  const readAgyBin = () => (binary ? undefined : ctx.agy?.bin());
+  let agyBin: string | undefined;
   if (rawRunner) {
     runnerName = parseEvalRunnerName(rawRunner);
+    if (runnerName === 'agy') agyBin = readAgyBin();
   } else {
-    const agyBin = ctx.agy?.bin();
+    agyBin = readAgyBin();
     runnerName = await detectDefaultRunner({
       searchPath: ctx.searchPath,
       ...(agyBin ? { agyConfig: { bin: agyBin, extraArgs: [] } } : {}),
     });
   }
-  const agyConfig = runnerName === 'agy' ? ctx.agy?.config() : undefined;
+  const agyConfig =
+    runnerName === 'agy'
+      ? {
+          ...(agyBin ? { bin: agyBin } : {}),
+          extraArgs: ctx.agy?.extraArgs() ?? [],
+        }
+      : undefined;
   const runner = createEvalRunner({
     runner: runnerName,
     binary,
@@ -651,9 +665,20 @@ export async function runSkill(
         'Usage: agents-config skill report <name|run-dir> [iteration-dir]',
       );
     }
+    const target = await resolveReportDir({ ctx, args: paths });
+    if (target.skillName !== undefined && target.iterationDir !== undefined) {
+      const { metadata } = await loadBenchmarkFromIteration(
+        target.iterationDir,
+      );
+      if (metadata.skill_name !== target.skillName) {
+        throw new UsageError(
+          `${displayPath({ path: target.iterationDir, home: ctx.paths.home })} holds a benchmark for "${metadata.skill_name}", not "${target.skillName}"`,
+        );
+      }
+    }
     const result = await regenerateSkillReport({
       evalsRootDir: ctx.paths.evalsDir,
-      ...(await resolveReportDir({ ctx, args: paths })),
+      ...target,
     });
     printBenchmarkSummary(ctx, result.benchmark);
     ctx.print(

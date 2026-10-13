@@ -7,6 +7,7 @@ import {
   gitEnvironment,
   resolveAgyBin,
   resolveAgyConfig,
+  resolveAgyExtraArgs,
   resolvePaths,
 } from './env.ts';
 import { EnvironmentError } from './errors.ts';
@@ -105,6 +106,14 @@ test('resolveAgyBin ignores AGY_EXTRA_ARGS so other runners never parse it', () 
     resolveAgyBin({ AGY_BIN: '/opt/agy', AGY_EXTRA_ARGS: 'not-json' }),
     '/opt/agy',
   );
+});
+
+test('resolveAgyExtraArgs ignores AGY_BIN so --binary can replace it', () => {
+  assert.deepEqual(
+    resolveAgyExtraArgs({ AGY_BIN: 'relative/agy', AGY_EXTRA_ARGS: '["-v"]' }),
+    ['-v'],
+  );
+  assert.deepEqual(resolveAgyExtraArgs({}), []);
 });
 
 test('resolveAgyConfig rejects invalid AGY_EXTRA_ARGS JSON or non-string arrays', () => {

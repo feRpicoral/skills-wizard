@@ -899,7 +899,7 @@ test('skill eval reads the agy settings only for the agy runner', async (t) => {
   let configReads = 0;
   ctx.agy = {
     bin: () => undefined,
-    config: () => {
+    extraArgs: () => {
       configReads += 1;
       throw new EnvironmentError('AGY_EXTRA_ARGS must be a JSON array');
     },
@@ -1017,5 +1017,75 @@ test('skill triggers reports queries excluded because every run failed', async (
     new RegExp(
       `, ${summary.metrics.errored_queries}/${summary.metrics.total_queries} queries excluded \\(failed runs\\)\\.`,
     ),
+  );
+});
+
+test('skill eval --runner agy --binary skips AGY_BIN but keeps AGY_EXTRA_ARGS', async (t) => {
+  const { ctx } = await testContext(t);
+  const binDir = await tempDir(t);
+  const argsLog = join(binDir, 'args.log');
+  const stub = join(binDir, 'agy');
+  await writeFile(
+    stub,
+    `#!/bin/sh\nprintf '%s\\n' "$@" >> '${argsLog}'\nexit 1\n`,
+  );
+  await chmod(stub, 0o755);
+  ctx.agy = {
+    bin: () => {
+      throw new EnvironmentError('AGY_BIN must be an absolute path');
+    },
+    extraArgs: () => ['--from-agy-extra-args'],
+  };
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['agy-binary-skill'],
+    withEvals: true,
+  });
+
+  const code = await runSkill(ctx, {
+    subcommand: 'eval',
+    paths: ['agy-binary-skill'],
+    runner: 'agy',
+    binary: stub,
+    baseline: false,
+    timeout: 30,
+  });
+
+  assert.equal(code, 0);
+  assert.match(await readFile(argsLog, 'utf8'), /^--from-agy-extra-args$/m);
+});
+
+test('skill report <name> <dir> rejects a directory that holds another skill benchmark', async (t) => {
+  const { ctx } = await testContext(t);
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['first-skill'],
+    withEvals: true,
+  });
+  await runSkill(ctx, {
+    subcommand: 'eval',
+    paths: ['first-skill'],
+    runner: 'fake',
+    baseline: false,
+  });
+  const iterationDir = join(ctx.paths.evalsDir, 'first-skill', 'iteration-1');
+  await rm(join(iterationDir, 'report.md'));
+
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'report',
+      paths: ['second-skill', iterationDir],
+    }),
+    /holds a benchmark for "first-skill", not "second-skill"/,
+  );
+  await assert.rejects(lstat(join(iterationDir, 'report.md')), {
+    code: 'ENOENT',
+  });
+  assert.equal(
+    await runSkill(ctx, {
+      subcommand: 'report',
+      paths: ['first-skill', iterationDir],
+    }),
+    0,
   );
 });
