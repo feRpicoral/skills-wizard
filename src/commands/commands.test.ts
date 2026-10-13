@@ -277,6 +277,7 @@ test('skill new, eval, triggers, and report scaffold and evaluate skills with th
     runner: 'fake',
     runs: 1,
     baseline: true,
+    cases: ['starter-case'],
   });
   const triggersCode = await runSkill(ctx, {
     subcommand: 'triggers',
@@ -286,9 +287,13 @@ test('skill new, eval, triggers, and report scaffold and evaluate skills with th
     runs: 1,
     threshold: 0.5,
   });
-  const reportCode = await runSkill(ctx, {
+  const reportByNameCode = await runSkill(ctx, {
     subcommand: 'report',
     paths: ['demo-eval-skill'],
+  });
+  const reportByDirCode = await runSkill(ctx, {
+    subcommand: 'report',
+    paths: [join(ctx.paths.evalsDir, 'demo-eval-skill', 'iteration-1')],
   });
   const scaffoldedSkill = await readFile(
     join(repoRoot, 'skills', 'demo-eval-skill', 'SKILL.md'),
@@ -302,7 +307,8 @@ test('skill new, eval, triggers, and report scaffold and evaluate skills with th
   assert.equal(newCode, 0);
   assert.equal(evalCode, 0);
   assert.equal(triggersCode, 0);
-  assert.equal(reportCode, 0);
+  assert.equal(reportByNameCode, 0);
+  assert.equal(reportByDirCode, 0);
   assert.match(scaffoldedSkill, /name: demo-eval-skill/);
   assert.match(reportMd, /Skill Evaluation Report: `demo-eval-skill`/);
   assert.match(output.join('\n'), /Evaluated demo-eval-skill with fake/);

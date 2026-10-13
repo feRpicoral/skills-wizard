@@ -37,7 +37,7 @@ Commands:
   skill new <name>          Scaffold a new first-party skill in skills/<name>
   skill eval <name>         Run with-skill vs baseline benchmark and grade assertions
   skill triggers <name>     Measure trigger precision/recall on trigger_queries.json
-  skill report <name> [dir] Regenerate report.md from an existing benchmark iteration
+  skill report <name> [dir] Regenerate report.md from an existing benchmark iteration or run-dir
   help                      Show this help
 
 Run without a command in a terminal to open the interactive menu.
@@ -57,9 +57,10 @@ Options:
   --runner <name>       skill eval/triggers: agy, claude, codex, gemini, or fake
   --binary <path>       skill eval/triggers: override runner CLI binary path
   --runs <n>            skill eval/triggers: runs per configuration or query (default: 1)
-  --baseline            skill eval: run without_skill baseline (default; use --no-baseline to skip)
+  --baseline [none|ref] skill eval: run without_skill baseline (default; use --no-baseline or --baseline none to skip, or --baseline <ref> to compare against a git ref)
   --compare <ref>       skill eval: also run old_skill snapshot from <ref>:skills/<name>
   --case <id>           skill eval: filter to a single eval case ID
+  --cases <ids>         skill eval: comma-separated eval case IDs
   --parallel <n>        skill eval/triggers: concurrent runs (default: 2)
   --timeout <seconds>   skill eval/triggers: per-run timeout in seconds
   --sandbox             skill eval/triggers: pass --sandbox to runners that support it
@@ -90,6 +91,7 @@ const OPTIONS = {
   baseline: { type: 'boolean' },
   compare: { type: 'string' },
   case: { type: 'string' },
+  cases: { type: 'string' },
   parallel: { type: 'string' },
   timeout: { type: 'string' },
   sandbox: { type: 'boolean' },
@@ -106,6 +108,12 @@ const OPTIONS = {
 } as const;
 
 type OptionName = keyof typeof OPTIONS;
+
+const STRING_OPTIONS = new Set<string>(
+  Object.entries(OPTIONS)
+    .filter(([, def]) => def.type === 'string')
+    .map(([name]) => `--${name}`),
+);
 
 const COMMANDS = [
   'init',
@@ -146,6 +154,7 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'baseline',
     'compare',
     'case',
+    'cases',
     'parallel',
     'timeout',
     'sandbox',
@@ -154,6 +163,66 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'threshold',
   ],
 };
+
+function normalizeBaselineArgv(argv: readonly string[]): string[] {
+  const normalized: string[] = [];
+  let positionalCount = 0;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === undefined) continue;
+    if (token === '--') {
+      normalized.push(...argv.slice(index));
+      break;
+    }
+    if (token.startsWith('--baseline=')) {
+      const val = token.slice('--baseline='.length).trim();
+      if (val === '' || val === 'true') {
+        normalized.push('--baseline');
+      } else if (val === 'false' || val === 'none') {
+        normalized.push('--no-baseline');
+      } else {
+        normalized.push('--no-baseline', '--compare', val);
+      }
+      continue;
+    }
+    if (token === '--baseline') {
+      const next = argv[index + 1];
+      if (next === 'none' || next === 'false') {
+        normalized.push('--no-baseline');
+        index += 1;
+        continue;
+      }
+      if (next === 'true') {
+        normalized.push('--baseline');
+        index += 1;
+        continue;
+      }
+      if (next !== undefined && !next.startsWith('-') && positionalCount >= 3) {
+        normalized.push('--no-baseline', '--compare', next);
+        index += 1;
+        continue;
+      }
+      normalized.push('--baseline');
+      continue;
+    }
+    if (STRING_OPTIONS.has(token)) {
+      normalized.push(token);
+      const next = argv[index + 1];
+      if (next !== undefined) {
+        normalized.push(next);
+        index += 1;
+      }
+      continue;
+    }
+    if (!token.startsWith('-')) {
+      positionalCount += 1;
+    }
+    normalized.push(token);
+  }
+
+  return normalized;
+}
 
 function isCommand(value: string): value is Command {
   return (COMMANDS as readonly string[]).includes(value);
@@ -254,7 +323,7 @@ async function main(argv: string[]): Promise<number> {
   let parsed;
   try {
     parsed = parseArgs({
-      args: argv,
+      args: normalizeBaselineArgv(argv),
       options: OPTIONS,
       allowPositionals: true,
       allowNegative: true,
@@ -393,6 +462,7 @@ async function main(argv: string[]): Promise<number> {
         value: values.threshold,
         flagName: 'threshold',
       });
+      const cases = parseList(values.cases);
       return runSkill(ctx, {
         subcommand: positionals[1],
         paths: positionals.slice(2),
@@ -407,6 +477,7 @@ async function main(argv: string[]): Promise<number> {
         ...(values.baseline !== undefined ? { baseline: values.baseline } : {}),
         ...(values.compare !== undefined ? { compare: values.compare } : {}),
         ...(values.case !== undefined ? { caseId: values.case } : {}),
+        ...(cases !== undefined ? { cases } : {}),
         ...(parallel !== undefined ? { parallel } : {}),
         ...(timeout !== undefined ? { timeout } : {}),
         ...(values.sandbox !== undefined ? { sandbox: values.sandbox } : {}),

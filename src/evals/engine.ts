@@ -130,6 +130,7 @@ export interface RunSkillEvalParams {
   baseline?: boolean;
   compareRef?: string;
   caseId?: string;
+  caseIds?: readonly string[];
   parallel?: number;
   timeoutSeconds?: number;
   sandbox?: boolean;
@@ -161,6 +162,7 @@ export async function runSkillEval({
   baseline = true,
   compareRef,
   caseId,
+  caseIds,
   parallel = 2,
   timeoutSeconds = 600,
   sandbox = false,
@@ -170,14 +172,19 @@ export async function runSkillEval({
   onLog,
 }: RunSkillEvalParams): Promise<RunSkillEvalResult> {
   const suite = await loadEvalSuite(skillDir);
-  const selectedCases = caseId
-    ? suite.evals.filter((item) => item.id === caseId)
-    : suite.evals;
+  const requestedIds = [...(caseId ? [caseId] : []), ...(caseIds ?? [])];
+  for (const id of requestedIds) {
+    if (!suite.evals.some((item) => item.id === id)) {
+      throw new EvalError(`Eval case "${id}" was not found in ${skillName}`);
+    }
+  }
+  const selectedCases =
+    requestedIds.length > 0
+      ? suite.evals.filter((item) => requestedIds.includes(item.id))
+      : suite.evals;
 
   if (selectedCases.length === 0) {
-    throw new EvalError(
-      `Eval case "${caseId ?? ''}" was not found in ${skillName}`,
-    );
+    throw new EvalError(`No eval cases found in ${skillName}`);
   }
 
   const variants: EvalVariant[] = ['with_skill'];
@@ -436,7 +443,7 @@ export async function runSkillTriggers({
 
 export interface RegenerateSkillReportParams {
   evalsRootDir: string;
-  skillName: string;
+  skillName?: string;
   iterationDir?: string;
 }
 
@@ -451,8 +458,15 @@ export async function regenerateSkillReport({
   skillName,
   iterationDir,
 }: RegenerateSkillReportParams): Promise<RegenerateSkillReportResult> {
-  const targetDir =
-    iterationDir ?? (await findLatestIterationDir({ evalsRootDir, skillName }));
+  let targetDir = iterationDir;
+  if (!targetDir) {
+    if (!skillName) {
+      throw new EvalError(
+        'Either skillName or iterationDir is required to regenerate a report',
+      );
+    }
+    targetDir = await findLatestIterationDir({ evalsRootDir, skillName });
+  }
   const benchmark = await loadBenchmarkFromIteration(targetDir);
   const reportMarkdown = renderBenchmarkReport(benchmark);
   await writeFile(join(targetDir, 'report.md'), reportMarkdown);
