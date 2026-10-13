@@ -394,6 +394,25 @@ test('a keep-local project copied into another repository still syncs', async (t
   assert.match(result.stdout, /belong to another repository/);
 });
 
+test('without a terminal, no arguments print the help', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, []);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /^Usage: agents-config/);
+});
+
+test('without a terminal, flags without a command are a usage error', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, ['--global', '--tools', 'codex']);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--global, --tools must follow a command/);
+  assert.equal(result.stdout, '');
+});
+
 test('names of built-in object properties are unknown commands', async (t) => {
   const home = await tempDir(t);
 
