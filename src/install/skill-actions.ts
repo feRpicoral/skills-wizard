@@ -24,9 +24,14 @@ export const SHARED_FOLDER = 'tool reads the shared skills folder';
 
 export type InstalledState = 'missing' | 'owned' | 'changed' | 'unmanaged';
 
+interface InstalledStateOptions {
+  sourceHasSetup?: boolean;
+}
+
 export async function installedState(
   path: string,
   prior: SkillEntry | null,
+  { sourceHasSetup = false }: InstalledStateOptions = {},
 ): Promise<InstalledState> {
   const stats = await lstatIfExists(path);
   if (!stats) return 'missing';
@@ -37,10 +42,10 @@ export async function installedState(
       : 'changed';
   }
   if (!stats.isDirectory()) return 'changed';
-  const hash = await hashInstalledCopy({
-    dir: path,
-    setup: prior.install.setup === true,
-  });
+  // Records written before the setup flag existed have no `setup` field, so
+  // the current source decides whether setup output is expected.
+  const setup = prior.install.setup ?? sourceHasSetup;
+  const hash = await hashInstalledCopy({ dir: path, setup });
   return hash === prior.install.hash ? 'owned' : 'changed';
 }
 
@@ -228,7 +233,9 @@ export async function planSkill({
       : target.label;
   const base = { path: target.path, label, entry, previous };
 
-  const state = await installedState(target.path, prior);
+  const state = await installedState(target.path, prior, {
+    sourceHasSetup: source.setup !== undefined,
+  });
   if (state === 'missing') {
     return {
       ...base,
