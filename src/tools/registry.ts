@@ -31,6 +31,7 @@ export interface ToolDefinition {
   global: {
     instructions: (paths: Paths) => string;
     skills?: (paths: Paths) => string;
+    extraSkills?: (paths: Paths) => string[];
     settings?: (paths: Paths) => ArraySetting;
     shadowedBy?: (paths: Paths) => string;
     limits?: SizeLimits;
@@ -87,6 +88,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     detect: { dirs: () => [], bins: ['gemini'] },
     global: {
       instructions: sharedGeminiInstructions,
+      extraSkills: (paths) => [join(paths.geminiHome, 'skills')],
       settings: (paths) => ({
         file: join(paths.geminiHome, 'settings.json'),
         key: 'context.fileName',
@@ -132,6 +134,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     global: {
       instructions: (paths) =>
         join(paths.copilotHome, 'copilot-instructions.md'),
+      extraSkills: (paths) => [join(paths.copilotHome, 'skills')],
     },
     project: {},
   },
