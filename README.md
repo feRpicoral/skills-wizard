@@ -48,7 +48,7 @@ flowchart LR
 
 ## Adding or editing a block
 
-1. Create `blocks/<group>/<id>.md` with frontmatter: `title`, `summary`, `group`, `scopes`, `defaults` and, if needed, `variables` and `requires` (blocks it depends on, listed earlier in the order).
+1. Create `blocks/<group>/<id>.md` with frontmatter: `title`, `summary`, `group`, `scopes`, `defaults` and, if needed, `variables` and `requires` (blocks it depends on or whose sections it refers to, listed earlier in the order).
 2. Add its id to `blocks/index.yaml` where it should appear in the composed file.
 3. Run `yarn test`.
 4. Run `agents-config init` and select the new block. `sync` only re-renders the blocks an install already recorded, so it picks up edits to existing blocks but never adds new ones. When an edit adds a variable to a recorded block, `sync` looks the value up the way `init` does and otherwise asks you to set it with `agents-config init --var name=value`.
