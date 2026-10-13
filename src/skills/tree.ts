@@ -214,7 +214,7 @@ export async function copySkillTree({
       const linked = await readlink(entry.absolute);
       if (await linkEscapes({ root: source, path: entry.path })) {
         throw new UnsafeWriteError(
-          `refusing to copy ${entry.path}: it links outside the skill (${linked})`,
+          `refusing to copy ${entry.path}: it does not resolve inside the skill (${linked})`,
         );
       }
       await symlink(linked, target);

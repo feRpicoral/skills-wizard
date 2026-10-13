@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
 
+import which from 'which';
 import { stringify } from 'yaml';
 
 import { type Paths, resolvePaths } from '../env.ts';
@@ -10,6 +11,20 @@ import { type Paths, resolvePaths } from '../env.ts';
 export async function tempDir(t: TestContext): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agents-config-test-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+// A directory holding links to only the given executables, for a PATH that
+// keeps child processes away from everything else installed on the machine.
+export async function tempSearchPath(
+  t: TestContext,
+  commands: readonly string[],
+): Promise<string> {
+  const dir = await tempDir(t);
+  for (const command of commands) {
+    const binary = command === 'node' ? process.execPath : await which(command);
+    await symlink(binary, join(dir, command));
+  }
   return dir;
 }
 

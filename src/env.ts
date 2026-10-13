@@ -100,9 +100,12 @@ export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
 }
 
-// What `git rev-parse --local-env-vars` lists, which git itself clears before
-// it works in another repository, plus GIT_NAMESPACE. User-level settings
-// such as GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM are kept.
+// What `git rev-parse --local-env-vars` lists, plus GIT_NAMESPACE and the
+// GIT_CONFIG_KEY_n/VALUE_n pairs. This also drops `-c` settings a caller
+// passed (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT); put settings the cache
+// needs, such as proxies or extra headers, in the global git config instead.
+// User-level settings such as GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM are
+// kept.
 const REPOSITORY_GIT_VARIABLES = new Set([
   'GIT_ALTERNATE_OBJECT_DIRECTORIES',
   'GIT_COMMON_DIR',

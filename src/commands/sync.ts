@@ -8,7 +8,7 @@ import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
 import { loadSkillLibrary } from '../skills/library.ts';
 import {
   confirmAndApply,
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
@@ -16,6 +16,7 @@ import {
   notifyLeftGit,
   readLocationManifest,
   resolveLocation,
+  resolveVariables,
   warnTrackedFiles,
 } from './shared.ts';
 
@@ -44,11 +45,12 @@ export async function runSync(
   }
 
   const library = await loadLibrary(ctx);
-  const known = dropUnknownBlocks({
+  const known = dropUnavailableBlocks({
     ctx,
     prompting,
     library,
     ids: previous.blocks,
+    scope,
   });
   const { ids: blocks, added } = withRequirements(library, known);
   if (added.length > 0) {
@@ -58,6 +60,14 @@ export async function runSync(
       message: `Added required blocks: ${added.join(', ')}`,
     });
   }
+  const variables = await resolveVariables({
+    ctx,
+    prompting,
+    library,
+    blocks,
+    location,
+    recorded: previous.variables,
+  });
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
   const skills = dropUnknownSkills({
     ctx,
@@ -82,7 +92,7 @@ export async function runSync(
       tools: previous.tools,
       blocks,
       skills,
-      variables: previous.variables,
+      variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,

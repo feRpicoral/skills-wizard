@@ -467,20 +467,22 @@ async function main(argv: string[]): Promise<number> {
         `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
       );
     }
-    if (command === undefined && terminal) {
+    if (command === undefined) {
       const provided = Object.keys(values);
       if (provided.length > 0) {
         throw new UsageError(
           `${flags(provided)} must follow a command such as init`,
         );
       }
-      return runMenu(
-        createContext({
-          repoRoot: REPO_ROOT,
-          cwd: process.cwd(),
-          interactive: true,
-        }),
-      );
+      if (terminal) {
+        return runMenu(
+          createContext({
+            repoRoot: REPO_ROOT,
+            cwd: process.cwd(),
+            interactive: true,
+          }),
+        );
+      }
     }
     print(HELP);
     return 0;

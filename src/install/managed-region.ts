@@ -1,5 +1,12 @@
 import { ManagedRegionError } from '../errors.ts';
-import { joinLines, type Line, lineEnding, splitLines } from './lines.ts';
+import {
+  isBlank,
+  joinLines,
+  keepBom,
+  type Line,
+  lineEnding,
+  splitLines,
+} from './lines.ts';
 
 interface Markers {
   begin: string;
@@ -27,9 +34,11 @@ function locate(lines: readonly Line[], markers: Markers): Bounds | null {
   const begins: number[] = [];
   const ends: number[] = [];
   lines.forEach((line, index) => {
+    // Markers are compared trimmed on both sides, so an id that ends in
+    // whitespace (a directory such as `app `) still finds its own region.
     const trimmed = line.text.trim();
-    if (trimmed === markers.begin) begins.push(index);
-    if (trimmed === markers.end) ends.push(index);
+    if (trimmed === markers.begin.trim()) begins.push(index);
+    if (trimmed === markers.end.trim()) ends.push(index);
   });
 
   if (begins.length === 0 && ends.length === 0) return null;
@@ -69,6 +78,14 @@ interface UpsertRegionParams {
 
 export function upsertRegion({
   existing,
+  ...rest
+}: UpsertRegionParams): string {
+  if (existing === null) return upsertText({ existing, ...rest });
+  return keepBom(existing, (text) => upsertText({ existing: text, ...rest }));
+}
+
+function upsertText({
+  existing,
   body,
   markers = MARKDOWN_MARKERS,
   preamble,
@@ -76,7 +93,7 @@ export function upsertRegion({
   const eol = lineEnding(existing);
   const region = regionText({ body, markers, eol });
 
-  if (existing === null || existing.trim() === '') {
+  if (existing === null || isBlank(existing)) {
     const prefix = preamble ? `${preamble}${eol}${eol}` : '';
     return `${prefix}${region}${eol}`;
   }
@@ -97,6 +114,10 @@ export function removeRegion(
   existing: string,
   markers: Markers = MARKDOWN_MARKERS,
 ): string {
+  return keepBom(existing, (text) => removeText(text, markers));
+}
+
+function removeText(existing: string, markers: Markers): string {
   const lines = splitLines(existing);
   const bounds = locate(lines, markers);
   if (!bounds) return existing;

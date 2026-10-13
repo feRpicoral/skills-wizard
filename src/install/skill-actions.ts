@@ -44,17 +44,11 @@ export async function installedState(
   if (!stats.isDirectory()) return 'changed';
   // Copies always record `setup`; records written before the flag existed
   // have none, so the current source decides whether setup output is
-  // expected. Without a source (removal), either reading is accepted.
-  const recorded = prior.install.setup ?? sourceHasSetup;
-  const readings = recorded === undefined ? [false, true] : [recorded];
-  for (const setup of readings) {
-    if (
-      (await hashInstalledCopy({ dir: path, setup })) === prior.install.hash
-    ) {
-      return 'owned';
-    }
-  }
-  return 'changed';
+  // expected. Without a source (removal), setup output is not assumed, so a
+  // legacy copy is never deleted together with files a user added.
+  const setup = prior.install.setup ?? sourceHasSetup ?? false;
+  const hash = await hashInstalledCopy({ dir: path, setup });
+  return hash === prior.install.hash ? 'owned' : 'changed';
 }
 
 interface InstallPairParams {

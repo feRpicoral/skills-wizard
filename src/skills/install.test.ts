@@ -105,7 +105,7 @@ test('a skill whose link chain leaves the skill folder is skipped with a problem
   assert.equal(sources.has('notes'), false);
   assert.equal(
     problems.get('notes'),
-    'leak links outside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
+    'leak does not resolve inside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
   );
 });
 
