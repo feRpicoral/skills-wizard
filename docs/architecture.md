@@ -62,7 +62,7 @@ Targets are planned in order against the content that earlier actions in the sam
 
 A target that is itself a symlink, such as a `CLAUDE.md` linked from a dotfiles repository, is written through: the CLI edits the file the link points to and keeps the link. In a project, this only happens when the real location, with every link resolved, is inside the project. A committed link or linked directory that leads elsewhere is a conflict, so a repository cannot point the CLI at files such as `~/.zshrc`. The git exclude file is the one exception, because git itself reports where it is.
 
-Writes are atomic: content goes to a temporary file, which is then renamed over the target. The file keeps its permissions.
+Writes are atomic: content goes to a temporary file, which is then renamed over the target. The file keeps its permissions and a leading UTF-8 byte order mark.
 
 ## Manifests
 

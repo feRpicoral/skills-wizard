@@ -2,6 +2,7 @@ import { ManagedRegionError } from '../errors.ts';
 import {
   isBlank,
   joinLines,
+  keepBom,
   type Line,
   lineEnding,
   splitLines,
@@ -75,6 +76,14 @@ interface UpsertRegionParams {
 
 export function upsertRegion({
   existing,
+  ...rest
+}: UpsertRegionParams): string {
+  if (existing === null) return upsertText({ existing, ...rest });
+  return keepBom(existing, (text) => upsertText({ existing: text, ...rest }));
+}
+
+function upsertText({
+  existing,
   body,
   markers = MARKDOWN_MARKERS,
   preamble,
@@ -103,6 +112,10 @@ export function removeRegion(
   existing: string,
   markers: Markers = MARKDOWN_MARKERS,
 ): string {
+  return keepBom(existing, (text) => removeText(text, markers));
+}
+
+function removeText(existing: string, markers: Markers): string {
   const lines = splitLines(existing);
   const bounds = locate(lines, markers);
   if (!bounds) return existing;
