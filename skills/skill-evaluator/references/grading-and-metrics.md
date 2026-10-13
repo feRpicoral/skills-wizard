@@ -82,8 +82,8 @@
 Results are stored outside the repository under `~/.agents/agents-config/evals/<skill>/`. Both artifacts carry `"schema_version": 1` at the top level.
 
 - `iteration-<N>/benchmark.json`:
-  - `metadata`: `skill_name`, `skill_path`, `runner`, `timestamp`, `runs_per_configuration`, `compare_ref`, `baseline_status` (`"clean"`, `"possibly contaminated"`, or `"skipped"`), `warnings`.
-  - `baseline_status` describes only the `without_skill` baseline. A personal Claude Code skill with the same name (in `$CLAUDE_CONFIG_DIR/skills/`) shadows the staged working copy in `with_skill` runs; that is reported as its own warning, not through `baseline_status`.
+  - `metadata`: `skill_name`, `skill_path`, `runner`, `timestamp`, `runs_per_configuration`, `compare_ref`, `baseline_status` (`"clean"`, `"possibly contaminated"`, or `"skipped"`), `with_skill_contaminated` (optional boolean), `warnings`.
+  - `baseline_status` describes only the `without_skill` baseline. A personal Claude Code skill with the same name (in `$CLAUDE_CONFIG_DIR/skills/`) shadows the staged working copy in `with_skill` runs; that sets `with_skill_contaminated: true` and adds its own warning rather than changing `baseline_status`.
   - How the `without_skill` baseline hides the skill: Claude Code gets `skillOverrides` plus permission deny rules, and Gemini CLI gets `skills.disabled`, which it honors only in trusted folders. Codex and `agy` have no documented workspace-level exclusion, so their baseline is `possibly contaminated` whenever the skill is also installed system-wide.
   - `run_summary`: `with_skill`, `without_skill`, `old_skill`, plus `delta` (`with_skill` minus `without_skill`) and `old_skill_delta` (`with_skill` minus `old_skill`). Each variant has `runs`, `failed_runs`, `usage_reported_runs`, and `pass_rate`, `time_seconds`, `tokens` summaries (`mean`, `stddev`, `min`, `max`; means and sample standard deviations across case runs). `tokens` is `null` when no run of that variant reported usage.
   - Statistics are stored unrounded; rounding happens only when rendering.
