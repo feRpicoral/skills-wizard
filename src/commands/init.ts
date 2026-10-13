@@ -18,8 +18,8 @@ import { buildPlan } from '../install/plan.ts';
 import {
   defaultMcpServerNames,
   detectedMcpServerNames,
-  type McpCatalog,
   outOfScopeMcpServerNames,
+  type SelectMcpServersParams,
   unknownMcpServerNames,
 } from '../mcp/model.ts';
 import type { ProjectDetection } from '../project/detect.ts';
@@ -132,11 +132,11 @@ function checkExplicitSkills(
   }
 }
 
-function checkExplicitMcp(
-  catalog: McpCatalog,
-  names: readonly string[],
-  scope: Scope,
-): void {
+function checkExplicitMcp({
+  catalog,
+  names,
+  scope,
+}: SelectMcpServersParams): void {
   const unknown = unknownMcpServerNames(catalog, names);
   if (unknown.length > 0) {
     throw new UsageError(`Unknown MCP servers: ${unknown.join(', ')}`);
@@ -498,7 +498,7 @@ export async function runInit(
       : DEFAULT_SKILL_MODE;
 
   if (requestedMcp) {
-    checkExplicitMcp(mcpCatalog, requestedMcp, scope);
+    checkExplicitMcp({ catalog: mcpCatalog, names: requestedMcp, scope });
   }
   const recordedMcp = previous
     ? dropUnavailableMcpServers({
@@ -529,7 +529,11 @@ export async function runInit(
           ]
         : defaultMcpServerNames(mcpCatalog, scope));
   const mcp = prompting
-    ? await promptMcpServers(mcpCatalog, scope, initialMcp)
+    ? await promptMcpServers({
+        catalog: mcpCatalog,
+        scope,
+        initial: initialMcp,
+      })
     : initialMcp;
 
   const previousLink = previous?.options.linkCommand ?? false;

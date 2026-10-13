@@ -3,10 +3,6 @@ import * as clack from '@clack/prompts';
 import { withRequirements } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
-import {
-  DEFAULT_GITHUB_MCP_REGISTRY_URL,
-  DEFAULT_OFFICIAL_MCP_REGISTRY_URL,
-} from '../env.ts';
 import { isSystemError, McpError, UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { fsErrorReason } from '../install/fs.ts';
@@ -20,6 +16,7 @@ import {
   mcpCatalogPath,
   type McpServerDefinition,
   outOfScopeMcpServerNames,
+  type SelectMcpServersParams,
   unknownMcpServerNames,
 } from '../mcp/model.ts';
 import { searchMcpRegistry } from '../mcp/search.ts';
@@ -143,11 +140,11 @@ async function runMcpList({
   return 0;
 }
 
-function validateRequestedServers(
-  catalog: McpCatalog,
-  names: readonly string[],
-  scope: Scope,
-): void {
+function validateRequestedServers({
+  catalog,
+  names,
+  scope,
+}: SelectMcpServersParams): void {
   const unknown = unknownMcpServerNames(catalog, names);
   if (unknown.length > 0) {
     throw new UsageError(`Unknown MCP servers: ${unknown.join(', ')}`);
@@ -209,7 +206,7 @@ async function applyMcpSelectionChange({
   const uniqueNames = [...new Set(names)];
   let mcp: string[];
   if (mode === 'add') {
-    validateRequestedServers(catalog, uniqueNames, scope);
+    validateRequestedServers({ catalog, names: uniqueNames, scope });
     const priorMcp = dropUnavailableMcpServers({
       ctx,
       prompting,
@@ -237,7 +234,12 @@ async function applyMcpSelectionChange({
     });
   }
 
-  const tools = requestedTools ?? previous.tools;
+  const tools =
+    requestedTools !== undefined
+      ? requestedTools.length === 0
+        ? []
+        : [...new Set([...previous.tools, ...requestedTools])]
+      : previous.tools;
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
@@ -376,19 +378,12 @@ async function runMcpSearch({
     );
   }
 
-  const rawUrl = ctx.sources.mcpRegistryUrl;
-  const baseUrl =
-    typeof rawUrl === 'function'
-      ? rawUrl(official)
-      : (rawUrl ??
-        (official
-          ? DEFAULT_OFFICIAL_MCP_REGISTRY_URL
-          : DEFAULT_GITHUB_MCP_REGISTRY_URL));
-
   const candidates = await searchMcpRegistry({
     query: trimmed,
-    baseUrl,
     official,
+    ...(ctx.sources.mcpRegistryUrl !== undefined
+      ? { baseUrl: ctx.sources.mcpRegistryUrl }
+      : {}),
     ...(limit !== undefined ? { limit } : {}),
     ...(ctx.sources.fetch ? { fetchFn: ctx.sources.fetch } : {}),
   });

@@ -67,7 +67,7 @@ test('selectMcpServers filters by scope and rejects unknown or out-of-scope serv
   assert.throws(selectOutOfScope, McpError);
 });
 
-test('parseMcpCatalog rejects duplicate names, defaults outside scopes, invalid secrets, and non-http URLs', () => {
+test('parseMcpCatalog rejects duplicate names, defaults outside scopes, invalid secrets, multiline descriptions, and unsafe URLs', () => {
   const duplicateRaw = {
     servers: [
       {
@@ -117,7 +117,40 @@ test('parseMcpCatalog rejects duplicate names, defaults outside scopes, invalid 
         description: 'First',
         scopes: ['global'],
         transport: 'http',
-        url: 'ftp://example.com/mcp',
+        url: 'http://example.com/mcp',
+      },
+    ],
+  };
+  const credentialUrlRaw = {
+    servers: [
+      {
+        name: 'alpha',
+        description: 'First',
+        scopes: ['global'],
+        transport: 'http',
+        url: 'https://user:secret@example.com/mcp',
+      },
+    ],
+  };
+  const multilineDescriptionRaw = {
+    servers: [
+      {
+        name: 'alpha',
+        description: 'Line one\nLine two',
+        scopes: ['global'],
+        transport: 'stdio',
+        command: 'npx',
+      },
+    ],
+  };
+  const localhostHttpRaw = {
+    servers: [
+      {
+        name: 'local-dev',
+        description: 'Localhost HTTP server',
+        scopes: ['project'],
+        transport: 'http',
+        url: 'http://127.0.0.1:8787/mcp',
       },
     ],
   };
@@ -126,11 +159,19 @@ test('parseMcpCatalog rejects duplicate names, defaults outside scopes, invalid 
   const runBadDefaults = () => parseMcpCatalog(badDefaultsRaw, 'servers.yaml');
   const runBadSecret = () => parseMcpCatalog(badSecretRaw, 'servers.yaml');
   const runBadUrl = () => parseMcpCatalog(badUrlRaw, 'servers.yaml');
+  const runCredentialUrl = () =>
+    parseMcpCatalog(credentialUrlRaw, 'servers.yaml');
+  const runMultiline = () =>
+    parseMcpCatalog(multilineDescriptionRaw, 'servers.yaml');
+  const parsedLocalhost = parseMcpCatalog(localhostHttpRaw, 'servers.yaml');
 
   assert.throws(runDuplicate, /listed twice/);
   assert.throws(runBadDefaults, /defaults outside its scopes/);
   assert.throws(runBadSecret, /environment variable name/);
-  assert.throws(runBadUrl, /http:\/\/ or https:\/\/ URL/);
+  assert.throws(runBadUrl, /https:\/\/ URL/);
+  assert.throws(runCredentialUrl, /without credentials/);
+  assert.throws(runMultiline, /single line/);
+  assert.equal(parsedLocalhost.servers[0]?.name, 'local-dev');
 });
 
 test('appendMcpServers preserves existing YAML comments and formatting while appending a validated server', async (t) => {

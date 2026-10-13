@@ -304,7 +304,10 @@ function mcpFindings({
     }
   }
 
-  if (manifest.tools.includes('antigravity')) {
+  if (
+    manifest.tools.includes('antigravity') ||
+    manifest.tools.includes('antigravity-cli')
+  ) {
     const stdioSecretServers = servers.filter(
       (server) =>
         server.transport === 'stdio' && allServerSecrets(server).length > 0,

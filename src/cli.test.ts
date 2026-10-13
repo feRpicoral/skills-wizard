@@ -1195,13 +1195,21 @@ test('init auto-detects project MCP servers and mcp subcommands manage and valid
     project,
     '--yes',
   ]);
-  const [badSubcommand, badListFlag, badRemoveTools, badSearchScope] =
-    await Promise.all([
-      cli(['mcp', 'invalid']),
-      cli(['mcp', 'list', '--yes']),
-      cli(['mcp', 'remove', 'nx', '--tools', 'codex']),
-      cli(['mcp', 'search', 'sentry', '--global']),
-    ]);
+  const [
+    badSubcommand,
+    badListFlag,
+    badRemoveTools,
+    badSearchScope,
+    badSearchYes,
+    badSearchDryRun,
+  ] = await Promise.all([
+    cli(['mcp', 'invalid']),
+    cli(['mcp', 'list', '--yes']),
+    cli(['mcp', 'remove', 'nx', '--tools', 'codex']),
+    cli(['mcp', 'search', 'sentry', '--global']),
+    cli(['mcp', 'search', 'sentry', '--yes']),
+    cli(['mcp', 'search', 'sentry', '--dry-run']),
+  ]);
   const mcpJson = JSON.parse(
     await readFile(join(project, '.mcp.json'), 'utf8'),
   ) as {
@@ -1227,4 +1235,14 @@ test('init auto-detects project MCP servers and mcp subcommands manage and valid
   assert.match(badRemoveTools.stderr, /--tools does not apply to mcp remove/);
   assert.equal(badSearchScope.code, 2);
   assert.match(badSearchScope.stderr, /--global does not apply to mcp search/);
+  assert.equal(badSearchYes.code, 2);
+  assert.match(
+    badSearchYes.stderr,
+    /--yes only applies to mcp search with --add/,
+  );
+  assert.equal(badSearchDryRun.code, 2);
+  assert.match(
+    badSearchDryRun.stderr,
+    /--dry-run only applies to mcp search with --add/,
+  );
 });

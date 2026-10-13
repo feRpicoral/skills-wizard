@@ -1920,6 +1920,60 @@ test('runMcp lists, adds, removes, and searches MCP servers and preserves MCP ac
   assert.match(output.join('\n'), /context7\s+\[installed\]/);
 });
 
+test('runMcp merges --tools into existing tools and preserves manifest.mcp when mcp remove conflicts', async (t) => {
+  const { ctx, repoRoot } = await testContext(t);
+  const project = await realpath(await tempDir(t));
+  await writeFiles(repoRoot, {
+    'mcp/servers.yaml': await readFile(mcpCatalogPath(REPO_ROOT), 'utf8'),
+  });
+  await runInit(ctx, {
+    scope: 'project',
+    projectDir: project,
+    tools: ['claude-code'],
+    blocks: ['core/identity'],
+    skills: [],
+    mcp: ['nx'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+
+  const addWithToolsCode = await runMcp(ctx, {
+    subcommand: 'add',
+    args: ['supabase'],
+    scope: 'project',
+    projectDir: project,
+    tools: ['codex'],
+    yes: true,
+    dryRun: false,
+  });
+  const manifestAfterAdd = await readManifest(
+    join(project, '.agents', 'agents-config.json'),
+  );
+  await writeFile(join(project, '.mcp.json'), '{ invalid json');
+  await writeFile(
+    join(project, '.codex', 'config.toml'),
+    '# BEGIN:agents-config-mcp\nbroken\n',
+  );
+  const conflictedRemoveCode = await runMcp(ctx, {
+    subcommand: 'remove',
+    args: ['supabase'],
+    scope: 'project',
+    projectDir: project,
+    yes: true,
+    dryRun: false,
+  });
+  const manifestAfterConflict = await readManifest(
+    join(project, '.agents', 'agents-config.json'),
+  );
+
+  assert.equal(addWithToolsCode, 0);
+  assert.deepEqual(manifestAfterAdd?.tools, ['claude-code', 'codex']);
+  assert.deepEqual(manifestAfterAdd?.mcp, ['nx', 'supabase']);
+  assert.equal(conflictedRemoveCode, 1);
+  assert.deepEqual(manifestAfterConflict?.mcp, ['nx', 'supabase']);
+});
+
 test('runDoctor reports missing MCP secrets, Antigravity stdio notes, project trust notes, Gemini tool counts, and tampered MCP manifest paths', async (t) => {
   const { ctx, repoRoot, output } = await testContext(t);
   const project = await realpath(await tempDir(t));
@@ -1930,7 +1984,7 @@ test('runDoctor reports missing MCP secrets, Antigravity stdio notes, project tr
   await runInit(ctx, {
     scope: 'project',
     projectDir: project,
-    tools: ['antigravity', 'claude-code', 'codex', 'gemini-cli'],
+    tools: ['antigravity-cli', 'claude-code', 'codex', 'gemini-cli'],
     blocks: ['core/identity'],
     skills: [],
     mcp: ['supabase', 'sentry'],

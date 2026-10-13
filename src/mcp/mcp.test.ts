@@ -23,6 +23,7 @@ import {
 import {
   allServerSecrets,
   loadMcpCatalog,
+  type McpCatalog,
   mcpCatalogPath,
   type McpServerDefinition,
   requiredServerSecrets,
@@ -441,6 +442,130 @@ test('buildPlan marks a conflict when an unmanaged server has the same name and 
   assert.equal(tomlAfter, initialToml);
 });
 
+test('buildPlan and applyPlan remove stale Claude permissions.deny entries when an MCP server is removed and restore blank co-owned Gemini settings.json', async (t) => {
+  const paths = await tempPaths(t);
+  const projectDir = await realpath(await tempDir(t));
+  const customCatalog: McpCatalog = {
+    servers: [
+      {
+        name: 'alpha',
+        description: 'Alpha server',
+        scopes: ['project'],
+        defaults: [],
+        transport: 'stdio',
+        command: 'npx',
+        args: ['alpha-mcp'],
+        env: {},
+        tools: { deny: ['drop-db'] },
+      },
+      {
+        name: 'beta',
+        description: 'Beta server',
+        scopes: ['project'],
+        defaults: [],
+        transport: 'stdio',
+        command: 'npx',
+        args: ['beta-mcp'],
+        env: {},
+        tools: { deny: ['exec-shell'] },
+      },
+    ],
+  };
+  await writeFiles(projectDir, {
+    '.claude/settings.json': JSON.stringify(
+      { permissions: { deny: ['Bash(rm:*)'] } },
+      null,
+      2,
+    ),
+    '.gemini/settings.json': '  \n',
+  });
+
+  const installBothPlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['claude-code', 'gemini-cli'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['alpha', 'beta'],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog: customCatalog,
+  });
+  await applyPlan(installBothPlan);
+  const afterBothManifest = await readProjectManifest(
+    projectManifestPath(projectDir),
+    { dir: projectDir },
+  );
+  const removeBetaPlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['claude-code', 'gemini-cli'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['alpha'],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: afterBothManifest?.manifest ?? null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog: customCatalog,
+  });
+  await applyPlan(removeBetaPlan);
+  const claudeAfterRemoveBeta = JSON.parse(
+    await readFile(join(projectDir, '.claude', 'settings.json'), 'utf8'),
+  ) as { permissions: { deny: string[] } };
+  const afterAlphaManifest = await readProjectManifest(
+    projectManifestPath(projectDir),
+    { dir: projectDir },
+  );
+  const removeAllPlan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: [],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: [],
+      variables: {},
+      linkCommand: false,
+      keepLocal: false,
+      skillMode: 'copy',
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: afterAlphaManifest?.manifest ?? null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog: customCatalog,
+  });
+  await applyPlan(removeAllPlan);
+  const geminiAfterRemoveAll = await readFile(
+    join(projectDir, '.gemini', 'settings.json'),
+    'utf8',
+  );
+
+  assert.deepEqual(claudeAfterRemoveBeta.permissions.deny, [
+    'Bash(rm:*)',
+    'mcp__alpha__drop-db',
+  ]);
+  assert.equal(geminiAfterRemoveAll, '  \n');
+});
+
 test('searchMcpRegistry converts npm, pypi, and remote servers and enforces response bounds', async () => {
   const requestedUrls: string[] = [];
   const payload = {
@@ -448,14 +573,19 @@ test('searchMcpRegistry converts npm, pypi, and remote servers and enforces resp
       {
         server: {
           name: 'io.github.upstash/context7-mcp',
-          description: 'Upstash Context7 server',
+          description: 'Upstash Context7\nserver\twith   newlines',
           version: '1.2.0',
           packages: [
+            {
+              registryType: 'npm',
+              identifier: '--eval=malicious',
+            },
             {
               registryType: 'npm',
               identifier: '@upstash/context7-mcp',
               packageArguments: [
                 { type: 'named', name: 'transport', default: 'stdio' },
+                { type: 'positional', value: 'bad\u0000arg' },
               ],
               environmentVariables: [
                 { name: 'CONTEXT7_API_KEY', isSecret: true, isRequired: false },
@@ -540,6 +670,7 @@ test('searchMcpRegistry converts npm, pypi, and remote servers and enforces resp
   );
   assert.equal(candidates.length, 3);
   assert.ok(npmServer);
+  assert.equal(npmServer.description, 'Upstash Context7 server with newlines');
   assert.equal(npmServer.transport, 'stdio');
   assert.deepEqual(npmServer.args, [
     '-y',

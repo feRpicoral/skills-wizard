@@ -11,6 +11,12 @@ const MCP_CATALOG_DIR = 'mcp';
 const MCP_CATALOG_FILE = 'servers.yaml';
 const MCP_SERVER_NAME = /^[a-z0-9-]+$/;
 const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SINGLE_LINE = /^[^\r\n\p{Cc}]+$/u;
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
+  'localhost',
+  '127.0.0.1',
+  '[::1]',
+]);
 const YAML_OUTPUT = { lineWidth: 0, flowCollectionPadding: false } as const;
 
 export const MCP_TRANSPORTS = ['stdio', 'http', 'sse'] as const;
@@ -30,7 +36,9 @@ export function isEnvVarName(name: string): boolean {
 function isHttpUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    if (parsed.username !== '' || parsed.password !== '') return false;
+    if (parsed.protocol === 'https:') return true;
+    return parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname);
   } catch {
     return false;
   }
@@ -94,7 +102,7 @@ const baseServerFields = {
       isMcpServerName,
       'must contain only lowercase letters, digits, and hyphens',
     ),
-  description: z.string().min(1),
+  description: z.string().min(1).regex(SINGLE_LINE, 'must be a single line'),
   scopes: z.array(z.enum(SCOPES)).min(1),
   defaults: z.array(z.enum(SCOPES)).default([]),
   detect: z.enum(MCP_DETECT_KEYS).optional(),
@@ -114,14 +122,24 @@ const stdioServerSchema = z.strictObject({
 const httpServerSchema = z.strictObject({
   ...baseServerFields,
   transport: z.literal('http'),
-  url: z.string().refine(isHttpUrl, 'must be an http:// or https:// URL'),
+  url: z
+    .string()
+    .refine(
+      isHttpUrl,
+      'must be an https:// URL (or http:// on localhost) without credentials',
+    ),
   headers: z.record(z.string().min(1), mcpValueSchema).default({}),
 });
 
 const sseServerSchema = z.strictObject({
   ...baseServerFields,
   transport: z.literal('sse'),
-  url: z.string().refine(isHttpUrl, 'must be an http:// or https:// URL'),
+  url: z
+    .string()
+    .refine(
+      isHttpUrl,
+      'must be an https:// URL (or http:// on localhost) without credentials',
+    ),
   headers: z.record(z.string().min(1), mcpValueSchema).default({}),
 });
 
@@ -340,7 +358,12 @@ function serverNode(doc: Document, server: McpServerDefinition) {
   return node;
 }
 
-function catalogDocument(source: string | null, file: string): Document {
+interface CatalogDocumentParams {
+  source: string | null;
+  file: string;
+}
+
+function catalogDocument({ source, file }: CatalogDocumentParams): Document {
   if (source === null || source.trim() === '') {
     return new Document({ servers: [] });
   }
@@ -358,7 +381,7 @@ export async function appendMcpServers(
   servers: readonly McpServerDefinition[],
 ): Promise<McpCatalog> {
   const source = await readTextIfExists(file);
-  const doc = catalogDocument(source, file);
+  const doc = catalogDocument({ source, file });
   const current = parseMcpCatalog(doc.toJS(), file);
   const next = extendMcpCatalog({ catalog: current, servers, file });
 
