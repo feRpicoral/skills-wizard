@@ -2,9 +2,15 @@ import { join } from 'node:path';
 
 import { withRequirements } from '../blocks/compose.ts';
 import type { Context } from '../context.ts';
-import { CatalogError, UsageError } from '../errors.ts';
+import { CatalogError, isSystemError, UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
-import { lstatIfExists } from '../install/fs.ts';
+import {
+  fsErrorReason,
+  lstatIfExists,
+  readTextIfExists,
+  removePath,
+  writeTextAtomic,
+} from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
 import { type AdoptChoice, promptAdoptSkills } from '../prompts/selection.ts';
 import {
@@ -179,6 +185,29 @@ function checkFolderNames({
   );
 }
 
+async function appendEntries(
+  file: string,
+  entries: readonly CatalogEntry[],
+): Promise<void> {
+  try {
+    await appendCatalogEntries(file, entries);
+  } catch (error) {
+    if (!isSystemError(error)) throw error;
+    throw new CatalogError(
+      `Could not update ${file} (${fsErrorReason(error) ?? error.message}), so nothing was adopted.`,
+      { cause: error },
+    );
+  }
+}
+
+async function restoreCatalog(
+  file: string,
+  original: string | null,
+): Promise<void> {
+  if (original === null) await removePath(file);
+  else await writeTextAtomic({ path: file, content: original });
+}
+
 export async function runAdopt(
   ctx: Context,
   { names, tools: requestedTools, yes, dryRun }: AdoptOptions,
@@ -333,9 +362,27 @@ export async function runAdopt(
     adopt: { names: new Set(picked), backupDir },
   });
 
-  const result = await confirmAndApply(ctx, plan, { yes, dryRun });
+  let catalogBefore: string | null | undefined;
+  const writeCatalog = async () => {
+    if (newCatalogEntries.length === 0) return;
+    const original = await readTextIfExists(file);
+    await appendEntries(file, newCatalogEntries);
+    catalogBefore = original;
+  };
+  let result;
+  try {
+    result = await confirmAndApply(ctx, plan, {
+      yes,
+      dryRun,
+      beforeApply: writeCatalog,
+    });
+  } catch (error) {
+    if (catalogBefore !== undefined) {
+      await restoreCatalog(file, catalogBefore);
+    }
+    throw error;
+  }
   if (result.applied && newCatalogEntries.length > 0) {
-    await appendCatalogEntries(file, newCatalogEntries);
     notify({
       ctx,
       prompting,
