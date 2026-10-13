@@ -41,10 +41,19 @@ test('a failing setup reports the end of its stderr', async (t) => {
     }),
     (error: unknown) => {
       assert.ok(error instanceof SetupError);
-      assert.match(error.message, /exited with code 3: error: missing tool$/);
+      assert.match(error.message, /failed: error: missing tool$/);
       assert.ok(error.message.length < 1_000);
       return true;
     },
+  );
+});
+
+test('a failing setup without stderr reports its exit code', async (t) => {
+  const dir = await tempDir(t);
+
+  await assert.rejects(
+    runSetup({ dir, command: 'exit 4' }),
+    /"exit 4" failed: exited with code 4$/,
   );
 });
 
@@ -52,7 +61,7 @@ test('a setup that runs too long is stopped', async (t) => {
   const dir = await tempDir(t);
 
   await assert.rejects(
-    runSetup({ dir, command: 'sleep 30', timeoutMs: 100 }),
+    runSetup({ dir, command: 'echo working >&2; sleep 30', timeoutMs: 100 }),
     /timed out after 0\.1 seconds/,
   );
 });
