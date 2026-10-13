@@ -85,7 +85,8 @@ test('evaluateScriptedAssertion checks file_exists, file_absent, regex, json_val
 });
 
 test('normalizeGraderResults marks assertions with empty evidence as failed', () => {
-  const results = normalizeGraderResults(['First claim', 'Second claim'], {
+  const assertions = ['First claim', 'Second claim'];
+  const rawOutput = {
     results: [
       {
         assertion: 'First claim',
@@ -98,14 +99,16 @@ test('normalizeGraderResults marks assertions with empty evidence as failed', ()
         evidence: '   ',
       },
     ],
-  });
+  };
+
+  const results = normalizeGraderResults(assertions, rawOutput);
 
   assert.equal(results[0]?.passed, true);
   assert.equal(results[1]?.passed, false);
   assert.match(results[1]?.evidence ?? '', /no supporting evidence/i);
 });
 
-test('gradeEvalRun combines blind grader and scripted assertions and writes grading.json and timing.json', async (t) => {
+test('gradeEvalRun evaluates scripted assertions before blind grader and writes grading.json and timing.json', async (t) => {
   const root = await tempDir(t);
   const workdir = join(root, 'workdir');
   const runDir = join(root, 'run');
@@ -145,6 +148,11 @@ test('gradeEvalRun combines blind grader and scripted assertions and writes grad
         'Response explains the configuration change',
         'Response includes unsupported claim',
         { type: 'json_valid', path: 'output.json' },
+        {
+          type: 'command',
+          run: 'node -e "require(\\"node:fs\\").writeFileSync(\\"scripted-ran.txt\\", \\"yes\\")"',
+          expect: 0,
+        },
       ],
     },
     workdir,
@@ -162,7 +170,6 @@ test('gradeEvalRun combines blind grader and scripted assertions and writes grad
     runner,
     timeoutSeconds: 30,
   });
-
   const diskGrading = JSON.parse(
     await readFile(join(runDir, 'grading.json'), 'utf8'),
   ) as GradingReport;
@@ -172,8 +179,9 @@ test('gradeEvalRun combines blind grader and scripted assertions and writes grad
 
   assert.equal(capturedGraderPrompt.includes('with_skill'), false);
   assert.equal(capturedGraderPrompt.includes('without_skill'), false);
-  assert.equal(grading.summary.total, 3);
-  assert.equal(grading.summary.passed, 2);
+  assert.match(capturedGraderPrompt, /scripted-ran\.txt/);
+  assert.equal(grading.summary.total, 4);
+  assert.equal(grading.summary.passed, 3);
   assert.equal(grading.summary.failed, 1);
   assert.deepEqual(diskGrading, grading);
   assert.deepEqual(diskTiming, timing);
