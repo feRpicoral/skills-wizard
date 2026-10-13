@@ -34,9 +34,11 @@ function locate(lines: readonly Line[], markers: Markers): Bounds | null {
   const begins: number[] = [];
   const ends: number[] = [];
   lines.forEach((line, index) => {
+    // Markers are compared trimmed on both sides, so an id that ends in
+    // whitespace (a directory such as `app `) still finds its own region.
     const trimmed = line.text.trim();
-    if (trimmed === markers.begin) begins.push(index);
-    if (trimmed === markers.end) ends.push(index);
+    if (trimmed === markers.begin.trim()) begins.push(index);
+    if (trimmed === markers.end.trim()) ends.push(index);
   });
 
   if (begins.length === 0 && ends.length === 0) return null;
