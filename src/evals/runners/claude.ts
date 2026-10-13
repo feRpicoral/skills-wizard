@@ -1,17 +1,22 @@
 import type { Environment } from '../../env.ts';
 import { RunnerError } from '../../errors.ts';
 import {
+  buildTaskResult,
+  checkRunnerBinary,
   type EvalRunner,
-  extractJsonFromText,
+  isRecordObject,
+  isUsageReported,
+  mentionsSkillFile,
   normalizeUsage,
   type ParsedGraderOutput,
+  type ParsedTaskStream,
+  parseGraderProcess,
   parseJsonDocument,
   parseJsonLines,
   type RunnerGraderRequest,
   type RunnerGraderResult,
   type RunnerTaskRequest,
   type RunnerTaskResult,
-  type RunnerUsage,
   spawnRunnerProcess,
 } from './types.ts';
 
@@ -21,6 +26,10 @@ export interface BuildClaudeTaskArgsParams {
   excludeSkill?: boolean;
 }
 
+/**
+ * `--disallowedTools` is variadic, and prompts may start with `-`, so the
+ * prompt always follows `--`.
+ */
 export function buildClaudeTaskArgs({
   prompt,
   skillName,
@@ -33,6 +42,7 @@ export function buildClaudeTaskArgs({
     'stream-json',
     '--verbose',
     ...(excludeSkill ? ['--disallowedTools', `Skill(${skillName})`] : []),
+    '--',
     prompt,
   ];
 }
@@ -42,17 +52,33 @@ export interface BuildClaudeGraderArgsParams {
   schema: Record<string, unknown>;
 }
 
+/**
+ * The grader gets no built-in tools (`--tools ""`), no MCP tools
+ * (`--disallowedTools=mcp__*`) and `dontAsk`, which denies any tool call that
+ * would need approval. Everything it needs is in the prompt.
+ *
+ * `--json-schema` still works: `--tools` only restricts built-in tools, and
+ * the structured-output tool it synthesizes is not one of them (the
+ * documented `--tools ""` + `--json-schema` combination is the known-good
+ * headless setup). `--disallowedTools "*"` is avoided because it removes
+ * every tool, including that one.
+ */
 export function buildClaudeGraderArgs({
   prompt,
   schema,
 }: BuildClaudeGraderArgsParams): string[] {
   return [
     '-p',
-    '--dangerously-skip-permissions',
+    '--tools',
+    '',
+    '--disallowedTools=mcp__*',
+    '--permission-mode',
+    'dontAsk',
     '--output-format',
     'json',
     '--json-schema',
     JSON.stringify(schema),
+    '--',
     prompt,
   ];
 }
@@ -63,12 +89,7 @@ export interface ParseClaudeStreamParams {
   fallbackDurationMs?: number;
 }
 
-export interface ParsedClaudeStream {
-  response: string;
-  triggered: boolean;
-  durationMs: number;
-  usage: RunnerUsage;
-}
+export type ParsedClaudeStream = ParsedTaskStream;
 
 interface ClaudeToolUseTriggerParams {
   block: Record<string, unknown>;
@@ -81,27 +102,51 @@ function isClaudeToolUseTrigger({
 }: ClaudeToolUseTriggerParams): boolean {
   if (block.type !== 'tool_use') return false;
   const name = block.name;
-  const input =
-    typeof block.input === 'object' && block.input !== null
-      ? (block.input as Record<string, unknown>)
-      : undefined;
+  const input = isRecordObject(block.input) ? block.input : undefined;
   if (!input) return false;
 
-  const targetSuffix = `/${skillName}/SKILL.md`;
-  const targetSubstr = `${skillName}/SKILL.md`;
-
-  if (name === 'Skill' && typeof input.skill === 'string') {
-    return input.skill === skillName || input.skill.endsWith(`:${skillName}`);
+  if (name === 'Skill') {
+    const skill =
+      typeof input.skill === 'string'
+        ? input.skill
+        : typeof input.command === 'string'
+          ? input.command
+          : undefined;
+    return (
+      skill !== undefined &&
+      (skill === skillName || skill.endsWith(`:${skillName}`))
+    );
   }
   if (name === 'Read' && typeof input.file_path === 'string') {
-    const normalized = input.file_path.replaceAll('\\', '/');
-    return normalized.endsWith(targetSuffix) || normalized === targetSubstr;
+    return mentionsSkillFile(input.file_path, skillName);
   }
   if (name === 'Bash' && typeof input.command === 'string') {
-    const normalized = input.command.replaceAll('\\', '/');
-    return normalized.includes(targetSubstr);
+    return mentionsSkillFile(input.command, skillName);
   }
   return false;
+}
+
+/**
+ * The error a Claude `result` message reports: `is_error: true` or an
+ * `error_*` subtype (`error_max_turns`, `error_during_execution`, ...).
+ */
+export function claudeResultError(
+  event: Record<string, unknown>,
+): string | undefined {
+  const subtype = typeof event.subtype === 'string' ? event.subtype : '';
+  const isError = event.is_error === true || subtype.startsWith('error');
+  if (!isError) return undefined;
+  const details = Array.isArray(event.errors)
+    ? event.errors.filter((item): item is string => typeof item === 'string')
+    : [];
+  const message =
+    details.length > 0
+      ? details.join('; ')
+      : typeof event.result === 'string' && event.result.length > 0
+        ? event.result
+        : undefined;
+  const label = subtype || 'error';
+  return message ? `${label}: ${message}` : label;
 }
 
 export function parseClaudeStreamJson({
@@ -114,46 +159,34 @@ export function parseClaudeStreamJson({
   let response = '';
   let durationMs = fallbackDurationMs;
   let usage = normalizeUsage(undefined);
+  let usageReported = false;
   let sawResult = false;
+  let error: string | undefined;
 
   for (const event of events) {
-    if (
-      event.type === 'assistant' &&
-      typeof event.message === 'object' &&
-      event.message !== null
-    ) {
-      const msg = event.message as Record<string, unknown>;
-      if (Array.isArray(msg.content)) {
-        for (const item of msg.content) {
-          if (typeof item === 'object' && item !== null) {
-            if (
-              isClaudeToolUseTrigger({
-                block: item as Record<string, unknown>,
-                skillName,
-              })
-            ) {
-              triggered = true;
-            }
+    if (event.type === 'assistant' && isRecordObject(event.message)) {
+      const content = event.message.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (
+            isRecordObject(block) &&
+            isClaudeToolUseTrigger({ block, skillName })
+          ) {
+            triggered = true;
           }
         }
       }
     }
     if (event.type === 'result') {
       sawResult = true;
-      if (typeof event.result === 'string') {
-        response = event.result;
-      } else if (typeof event.response === 'string') {
-        response = event.response;
-      }
+      response = typeof event.result === 'string' ? event.result : '';
       if (typeof event.duration_ms === 'number') {
         durationMs = event.duration_ms;
       }
       usage = normalizeUsage(event.usage);
+      usageReported = isUsageReported(event.usage);
+      error = claudeResultError(event);
     }
-  }
-
-  if (!sawResult) {
-    throw new RunnerError('claude stream ended without a final result event');
   }
 
   return {
@@ -161,6 +194,9 @@ export function parseClaudeStreamJson({
     triggered,
     durationMs,
     usage,
+    usageReported,
+    sawResult,
+    ...(error !== undefined ? { error } : {}),
   };
 }
 
@@ -178,46 +214,43 @@ export function parseClaudeGraderJson({
     typeof doc.duration_ms === 'number' ? doc.duration_ms : fallbackDurationMs;
   const usage = normalizeUsage(doc.usage);
 
-  if (doc.structured_output !== undefined) {
-    return {
-      output: doc.structured_output,
-      durationMs,
-      usage,
-    };
+  const error = claudeResultError(doc);
+  if (error !== undefined) {
+    throw new RunnerError(`claude grader failed: ${error}`);
   }
-  if (typeof doc.result === 'string') {
-    return {
-      output: extractJsonFromText(doc.result),
-      durationMs,
-      usage,
-    };
+  // With `--json-schema`, a `success` result without `structured_output` is
+  // a failure (Agent SDK structured outputs docs), not text to parse.
+  if (doc.structured_output === undefined || doc.structured_output === null) {
+    throw new RunnerError(
+      'claude grader result contained no structured_output',
+    );
   }
-  if (typeof doc.response === 'string') {
-    return {
-      output: extractJsonFromText(doc.response),
-      durationMs,
-      usage,
-    };
-  }
-
-  throw new RunnerError(
-    'claude grader output contained neither structured_output nor result',
-  );
+  return {
+    output: doc.structured_output,
+    durationMs,
+    usage,
+  };
 }
 
 export interface CreateClaudeRunnerParams {
   binary?: string;
-  env?: Environment;
+  env: Environment;
 }
 
 export function createClaudeRunner({
   binary,
   env,
-}: CreateClaudeRunnerParams = {}): EvalRunner {
+}: CreateClaudeRunnerParams): EvalRunner {
   const resolvedBin = binary ?? 'claude';
 
   return {
     name: 'claude',
+    // Claude Code has no sandbox flag; `--sandbox` cannot be honored.
+    sandboxSupported: false,
+    async preflight(): Promise<void> {
+      await checkRunnerBinary({ binary: resolvedBin, env });
+    },
+
     async runTask({
       prompt,
       workdir,
@@ -226,14 +259,9 @@ export function createClaudeRunner({
       timeoutSeconds,
       excludeSkill,
     }: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const args = buildClaudeTaskArgs({
-        prompt,
-        skillName,
-        excludeSkill,
-      });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
-        args,
+        args: buildClaudeTaskArgs({ prompt, skillName, excludeSkill }),
         cwd: workdir,
         runDir,
         timeoutSeconds,
@@ -244,16 +272,12 @@ export function createClaudeRunner({
         skillName,
         fallbackDurationMs: proc.durationMs,
       });
-      return {
-        response: parsed.response,
-        triggered: parsed.triggered,
-        durationMs: parsed.durationMs,
-        usage: parsed.usage,
-        exitCode: proc.exitCode,
-        timedOut: proc.timedOut,
-        rawStdout: proc.stdout,
-        rawStderr: proc.stderr,
-      };
+      return buildTaskResult({
+        label: 'claude',
+        proc,
+        parsed,
+        timeoutSeconds,
+      });
     },
 
     async runGrader({
@@ -263,30 +287,25 @@ export function createClaudeRunner({
       runDir,
       timeoutSeconds,
     }: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const args = buildClaudeGraderArgs({
-        prompt,
-        schema,
-      });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
-        args,
+        args: buildClaudeGraderArgs({ prompt, schema }),
         cwd: workdir,
         runDir,
         timeoutSeconds,
         env,
         logPrefix: 'grader',
       });
-      const parsed = parseClaudeGraderJson({
-        stdout: proc.stdout,
-        fallbackDurationMs: proc.durationMs,
+      return parseGraderProcess({
+        label: 'claude grader',
+        proc,
+        timeoutSeconds,
+        parse: () =>
+          parseClaudeGraderJson({
+            stdout: proc.stdout,
+            fallbackDurationMs: proc.durationMs,
+          }),
       });
-      return {
-        output: parsed.output,
-        durationMs: parsed.durationMs,
-        usage: parsed.usage,
-        rawStdout: proc.stdout,
-        rawStderr: proc.stderr,
-      };
     },
   };
 }

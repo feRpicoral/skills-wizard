@@ -2,17 +2,12 @@ import { dirname } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import {
-  readSymlink,
-  readTextIfExists,
-  resolveIfSymlink,
-  statIfExists,
-} from './fs.ts';
+import { readSymlink, resolveIfSymlink, statIfExists } from './fs.ts';
 import { removeLine } from './import-line.ts';
 import {
-  parseJsonObject,
+  isEmptyJsonObject,
+  legacyCreatedKeys,
   removeArrayValues,
-  serializeJson,
 } from './json-merge.ts';
 import {
   excludeMarkers,
@@ -31,7 +26,13 @@ import {
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
-import { installedState, type SkillEntry } from './skill-actions.ts';
+import {
+  installedState,
+  SHARED_FOLDER,
+  sharesSkillsFolder,
+  type SkillEntry,
+} from './skill-actions.ts';
+import { readStaged, type StagedContents } from './staged.ts';
 
 type SymlinkEntry = Extract<ManifestEntry, { kind: 'symlink' }>;
 type FileEntry = Exclude<ManifestEntry, SymlinkEntry | SkillEntry>;
@@ -123,11 +124,13 @@ async function planSkillRemoval(entry: SkillEntry): Promise<PlannedAction> {
 
 interface ResolveRemovalFileParams {
   entry: FileEntry;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function resolveRemovalFile({
   entry,
+  staged,
   boundary,
 }: ResolveRemovalFileParams): Promise<PlannedAction | ResolvedRemovalFile> {
   const target = { path: entry.path, label: REMOVAL_LABEL };
@@ -150,7 +153,7 @@ async function resolveRemovalFile({
   if (kindProblem) {
     return conflict({ target, previous: entry, reason: kindProblem });
   }
-  const existing = await readTextIfExists(writePath);
+  const { current: existing } = await readStaged({ staged, path: writePath });
   if (existing === null) {
     return removal({ entry, change: NONE, reason: 'already gone' });
   }
@@ -165,11 +168,14 @@ function planRegionRemoval(
     const markers =
       entry.kind === 'region' ? MARKDOWN_MARKERS : excludeMarkers(entry.id);
     const preamble = entry.kind === 'region' ? entry.preamble : undefined;
+    const remaining = removeRegion(file.existing, markers);
+    // Through a link the file is not the CLI's, so a heading it once wrote stays.
+    const strip = preamble && !file.viaLink && remaining.trim() === preamble;
     return rewriteOrDelete({
       entry,
       file,
-      next: removeRegion(file.existing, markers),
-      emptyWhen: (next) => next === '' || next.trim() === preamble,
+      next: strip ? '' : remaining,
+      emptyWhen: (next) => next === '',
     });
   } catch (error) {
     if (error instanceof ManagedRegionError) {
@@ -207,22 +213,27 @@ function planJsonArrayRemoval(
   file: ResolvedRemovalFile,
 ): PlannedAction {
   try {
-    const before = parseJsonObject(file.existing);
-    const after = removeArrayValues({
-      doc: before,
+    const removed = removeArrayValues({
+      existing: file.existing,
       keyPath: entry.key,
       values: entry.added,
       restoreString: entry.wasString,
+      createdKeys:
+        entry.createdKeys ??
+        legacyCreatedKeys({
+          keyPath: entry.key,
+          createdFile: entry.createdFile,
+        }),
+      ...(entry.original === undefined ? {} : { original: entry.original }),
     });
-    if (JSON.stringify(after) === JSON.stringify(before)) {
+    const next =
+      entry.wasEmpty && isEmptyJsonObject(removed)
+        ? (entry.blankText ?? '')
+        : removed;
+    if (next === file.existing) {
       return removal({ entry, change: NONE, reason: NOTHING_LEFT });
     }
-    return rewriteOrDelete({
-      entry,
-      file,
-      next: serializeJson(after, file.existing),
-      emptyWhen: () => Object.keys(after).length === 0,
-    });
+    return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
       return conflict({
@@ -237,13 +248,24 @@ function planJsonArrayRemoval(
 
 export interface PlanRemovalParams {
   entry: ManifestEntry;
+  staged: StagedContents;
+  sharedWith?: string;
   boundary?: string;
 }
 
 export async function planRemoval({
   entry,
+  staged,
+  sharedWith,
   boundary,
 }: PlanRemovalParams): Promise<PlannedAction> {
+  if (sharedWith !== undefined) {
+    return removal({
+      entry,
+      change: NONE,
+      reason: `the same file is still used for ${sharedWith}`,
+    });
+  }
   if (entry.kind === 'symlink' || entry.kind === 'skill') {
     if (boundary !== undefined) {
       const problem = await locationProblem({
@@ -258,12 +280,15 @@ export async function planRemoval({
         });
       }
     }
-    return entry.kind === 'symlink'
-      ? planSymlinkRemoval(entry)
-      : planSkillRemoval(entry);
+    if (entry.kind === 'skill') return planSkillRemoval(entry);
+    if (await sharesSkillsFolder(entry)) {
+      return removal({ entry, change: NONE, reason: SHARED_FOLDER });
+    }
+    return planSymlinkRemoval(entry);
   }
   const resolved = await resolveRemovalFile({
     entry,
+    staged,
     ...(boundary ? { boundary } : {}),
   });
   if ('status' in resolved) return resolved;

@@ -1,10 +1,10 @@
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import type { Scope } from '../blocks/library.ts';
 import type { SkillSource } from '../skills/install.ts';
-import { hashTree } from '../skills/tree.ts';
+import { hashInstalledCopy, hashTree } from '../skills/tree.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import { lstatIfExists, readSymlink } from './fs.ts';
+import { lstatIfExists, readSymlink, realLocation } from './fs.ts';
 import {
   type Change,
   CHANGED_OUTSIDE,
@@ -20,11 +20,18 @@ import type { SkillTarget, SymlinkTarget } from './targets.ts';
 
 export type SkillEntry = Extract<ManifestEntry, { kind: 'skill' }>;
 
+export const SHARED_FOLDER = 'tool reads the shared skills folder';
+
 export type InstalledState = 'missing' | 'owned' | 'changed' | 'unmanaged';
+
+interface InstalledStateOptions {
+  sourceHasSetup?: boolean;
+}
 
 export async function installedState(
   path: string,
   prior: SkillEntry | null,
+  { sourceHasSetup }: InstalledStateOptions = {},
 ): Promise<InstalledState> {
   const stats = await lstatIfExists(path);
   if (!stats) return 'missing';
@@ -35,7 +42,13 @@ export async function installedState(
       : 'changed';
   }
   if (!stats.isDirectory()) return 'changed';
-  return (await hashTree(path)) === prior.install.hash ? 'owned' : 'changed';
+  // Copies always record `setup`; records written before the flag existed
+  // have none, so the current source decides whether setup output is
+  // expected. Without a source (removal), setup output is not assumed, so a
+  // legacy copy is never deleted together with files a user added.
+  const setup = prior.install.setup ?? sourceHasSetup ?? false;
+  const hash = await hashInstalledCopy({ dir: path, setup });
+  return hash === prior.install.hash ? 'owned' : 'changed';
 }
 
 interface InstallPairParams {
@@ -45,7 +58,9 @@ interface InstallPairParams {
 
 function sameInstall({ current, next }: InstallPairParams): boolean {
   return current.mode === 'copy'
-    ? next.mode === 'copy' && next.hash === current.hash
+    ? next.mode === 'copy' &&
+        next.hash === current.hash &&
+        (next.setup ?? false) === (current.setup ?? false)
     : next.mode === 'link' && next.target === current.target;
 }
 
@@ -68,6 +83,29 @@ function placeSkill({ source, install, backup }: PlaceSkillParams): Change {
   };
 }
 
+async function folderLocation(dir: string): Promise<string | null> {
+  const real = await realLocation(dir);
+  if (real !== null) return real;
+  const target = await readSymlink(dir);
+  return target === null ? null : realLocation(resolve(dirname(dir), target));
+}
+
+interface SharedFolderParams {
+  path: string;
+  target: string;
+}
+
+export async function sharesSkillsFolder({
+  path,
+  target,
+}: SharedFolderParams): Promise<boolean> {
+  const [linkFolder, copyFolder] = await Promise.all([
+    folderLocation(dirname(path)),
+    folderLocation(dirname(resolve(dirname(path), target))),
+  ]);
+  return linkFolder !== null && linkFolder === copyFolder;
+}
+
 export interface PlanSymlinkParams {
   target: SymlinkTarget;
   previous: ManifestEntry | null;
@@ -79,6 +117,17 @@ export async function planSymlink({
   previous,
   boundary,
 }: PlanSymlinkParams): Promise<PlannedAction> {
+  if (target.skill !== undefined && (await sharesSkillsFolder(target))) {
+    return {
+      path: target.path,
+      label: target.label,
+      status: 'unchanged',
+      change: NONE,
+      entry: null,
+      previous,
+      reason: SHARED_FOLDER,
+    };
+  }
   const problem = await locationProblem({
     path: dirname(target.path),
     ...(boundary ? { boundary } : {}),
@@ -168,7 +217,11 @@ export async function planSkill({
   const install: SkillEntry['install'] =
     target.mode === 'link'
       ? { mode: 'link', target: source.dir }
-      : { mode: 'copy', hash: await hashTree(source.dir) };
+      : {
+          mode: 'copy',
+          hash: await hashTree(source.dir),
+          setup: source.setup !== undefined,
+        };
   const entry: ManifestEntry = {
     kind: 'skill',
     path: target.path,
@@ -182,7 +235,9 @@ export async function planSkill({
       : target.label;
   const base = { path: target.path, label, entry, previous };
 
-  const state = await installedState(target.path, prior);
+  const state = await installedState(target.path, prior, {
+    sourceHasSetup: source.setup !== undefined,
+  });
   if (state === 'missing') {
     return {
       ...base,

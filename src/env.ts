@@ -53,12 +53,24 @@ export function resolvePaths(env: Environment = process.env): Paths {
   };
 }
 
-export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
-  const bin = env.AGY_BIN?.trim() || undefined;
-  const rawExtra = env.AGY_EXTRA_ARGS?.trim();
-  if (!rawExtra) {
-    return { ...(bin ? { bin } : {}), extraArgs: [] };
+// AGY_BIN must be absolute so the eval runner never depends on the PATH or
+// the working directory of each isolated eval workspace.
+export function resolveAgyBin(
+  env: Environment = process.env,
+): string | undefined {
+  const value = env.AGY_BIN?.trim();
+  if (!value) return undefined;
+  if (!isAbsolute(value)) {
+    throw new EnvironmentError(
+      `AGY_BIN must be an absolute path, got "${value}"`,
+    );
   }
+  return value;
+}
+
+export function resolveAgyExtraArgs(env: Environment = process.env): string[] {
+  const rawExtra = env.AGY_EXTRA_ARGS?.trim();
+  if (!rawExtra) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawExtra);
@@ -76,13 +88,53 @@ export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
       'AGY_EXTRA_ARGS must be a JSON array of strings',
     );
   }
-  return { ...(bin ? { bin } : {}), extraArgs: parsed };
+  return parsed;
+}
+
+export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
+  const bin = resolveAgyBin(env);
+  return { ...(bin ? { bin } : {}), extraArgs: resolveAgyExtraArgs(env) };
 }
 
 export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
 }
 
+// What `git rev-parse --local-env-vars` lists, plus GIT_NAMESPACE and the
+// GIT_CONFIG_KEY_n/VALUE_n pairs. This also drops `-c` settings a caller
+// passed (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT); put settings the cache
+// needs, such as proxies or extra headers, in the global git config instead.
+// User-level settings such as GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM are
+// kept.
+const REPOSITORY_GIT_VARIABLES = new Set([
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_CONFIG',
+  'GIT_CONFIG_COUNT',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_DIR',
+  'GIT_GRAFT_FILE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_NAMESPACE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_PREFIX',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_SHALLOW_FILE',
+  'GIT_WORK_TREE',
+]);
+const REPOSITORY_GIT_PATTERN = /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/;
+
+function isRepositoryGitVariable(name: string): boolean {
+  return (
+    REPOSITORY_GIT_VARIABLES.has(name) || REPOSITORY_GIT_PATTERN.test(name)
+  );
+}
+
 export function gitEnvironment(env: Environment = process.env): Environment {
-  return { ...env, GIT_TERMINAL_PROMPT: '0' };
+  const kept = Object.entries(env).filter(
+    ([name]) => !isRepositoryGitVariable(name),
+  );
+  return { ...Object.fromEntries(kept), GIT_TERMINAL_PROMPT: '0' };
 }

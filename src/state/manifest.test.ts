@@ -12,9 +12,11 @@ import { test } from 'node:test';
 import { ManifestError } from '../errors.ts';
 import { tempDir } from '../test-support/fixtures.ts';
 import {
+  checkSkillEntries,
   type Manifest,
   MANIFEST_VERSION,
   projectManifestPath,
+  readGlobalManifest,
   readManifest,
   readProjectManifest,
   writeManifest,
@@ -168,4 +170,157 @@ test('a recorded skill name must follow the skill naming rules', async (t) => {
     readProjectManifest(file, { dir: project }),
     /must be a valid skill name/,
   );
+});
+
+const projectFolders = {
+  copies: '/work/app/.agents/skills',
+  links: ['/work/app/.claude/skills'],
+};
+
+const copyInstall = { mode: 'copy', hash: 'sha256:0' } as const;
+
+test('a skill entry must sit in the skills folder under its own name', () => {
+  assert.throws(
+    () =>
+      checkSkillEntries({
+        file: 'manifest.json',
+        entries: [
+          {
+            kind: 'skill',
+            path: '/work/app/src/lib',
+            name: 'lib',
+            source: { type: 'local', path: 'skills/lib' },
+            install: copyInstall,
+          },
+        ],
+        folders: projectFolders,
+        scope: 'project',
+      }),
+    /the lib skill must be recorded at \/work\/app\/\.agents\/skills\/lib/,
+  );
+});
+
+test('a skill entry named after another folder is refused', () => {
+  assert.throws(
+    () =>
+      checkSkillEntries({
+        file: 'manifest.json',
+        entries: [
+          {
+            kind: 'skill',
+            path: '/work/app/.agents/skills/other',
+            name: 'notes',
+            source: { type: 'local', path: 'skills/notes' },
+            install: copyInstall,
+          },
+        ],
+        folders: projectFolders,
+        scope: 'project',
+      }),
+    ManifestError,
+  );
+});
+
+test('a project symlink entry outside the tool skills folders is refused', () => {
+  assert.throws(
+    () =>
+      checkSkillEntries({
+        file: 'manifest.json',
+        entries: [
+          { kind: 'symlink', path: '/work/app/src/lib', target: 'elsewhere' },
+        ],
+        folders: projectFolders,
+        scope: 'project',
+      }),
+    /is not a skill link in a tool skills folder/,
+  );
+});
+
+test('a symlink entry in a tool skills folder must be named after a skill', () => {
+  assert.throws(
+    () =>
+      checkSkillEntries({
+        file: 'manifest.json',
+        entries: [
+          {
+            kind: 'symlink',
+            path: '/home/me/.claude/skills/Not_A_Skill',
+            target: '/home/me/.agents/skills/notes',
+          },
+        ],
+        folders: {
+          copies: '/home/me/.agents/skills',
+          links: ['/home/me/.claude/skills'],
+        },
+        scope: 'global',
+      }),
+    /is not a skill link in a tool skills folder/,
+  );
+});
+
+test('global skill entries and the command link pass the check', () => {
+  assert.doesNotThrow(() =>
+    checkSkillEntries({
+      file: 'manifest.json',
+      entries: [
+        {
+          kind: 'skill',
+          path: '/home/me/.agents/skills/notes',
+          name: 'notes',
+          source: { type: 'local', path: 'skills/notes' },
+          install: copyInstall,
+        },
+        {
+          kind: 'symlink',
+          path: '/home/me/.claude/skills/notes',
+          target: '/home/me/.agents/skills/notes',
+        },
+        {
+          kind: 'symlink',
+          path: '/home/me/.local/bin/agents-config',
+          target: '/repo/src/cli.ts',
+        },
+      ],
+      folders: {
+        copies: '/home/me/.agents/skills',
+        links: ['/home/me/.claude/skills'],
+      },
+      scope: 'global',
+    }),
+  );
+});
+
+test('system-wide manifests cannot use relative paths', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  await storeRaw(file, [
+    { kind: 'region', path: '.codex/AGENTS.md', createdFile: true },
+  ]);
+
+  await assert.rejects(readGlobalManifest(file), /must be absolute/);
+});
+
+test('system-wide manifests cannot record relative symlink targets', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  await storeRaw(file, [
+    {
+      kind: 'symlink',
+      path: join(dir, 'agents-config'),
+      target: 'src/cli.ts',
+    },
+  ]);
+
+  await assert.rejects(readGlobalManifest(file), /must be absolute/);
+});
+
+test('system-wide manifests with absolute paths are read', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  const entries: Manifest['entries'] = [
+    { kind: 'region', path: join(dir, 'AGENTS.md'), createdFile: true },
+  ];
+  await storeRaw(file, entries);
+
+  assert.deepEqual((await readGlobalManifest(file))?.entries, entries);
 });

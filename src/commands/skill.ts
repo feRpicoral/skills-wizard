@@ -1,19 +1,32 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 import { styleText } from 'node:util';
 
 import type { Context } from '../context.ts';
 import { SourceError, UsageError } from '../errors.ts';
-import type { BenchmarkSummary } from '../evals/aggregate.ts';
+import {
+  type BenchmarkSummary,
+  loadBenchmarkFromIteration,
+} from '../evals/aggregate.ts';
 import type { TriggerSplit } from '../evals/cases.ts';
 import {
   regenerateSkillReport,
   runSkillEval,
   runSkillTriggers,
 } from '../evals/engine.ts';
+import { formatPassRateDelta, formatRate } from '../evals/report.ts';
 import {
   createEvalRunner,
   detectDefaultRunner,
+  type EvalRunner,
+  type EvalRunnerName,
   parseEvalRunnerName,
 } from '../evals/runners/index.ts';
 import { displayPath } from '../install/describe.ts';
@@ -85,14 +98,22 @@ function printBenchmarkSummary(
   benchmark: BenchmarkSummary,
 ): void {
   const { metadata, run_summary: summary } = benchmark;
-  const withMean = (summary.with_skill.pass_rate.mean * 100).toFixed(1);
-  const deltaStr = summary.delta
-    ? ` (delta vs baseline: ${summary.delta.pass_rate})`
-    : summary.old_skill_delta
-      ? ` (delta vs old_skill: ${summary.old_skill_delta.pass_rate})`
-      : '';
+  const withMean = formatRate(summary.with_skill.pass_rate.mean);
+  const deltas = [
+    ...(summary.without_skill
+      ? [
+          `${formatPassRateDelta(summary.with_skill, summary.without_skill)} vs baseline`,
+        ]
+      : []),
+    ...(summary.old_skill
+      ? [
+          `${formatPassRateDelta(summary.with_skill, summary.old_skill)} vs old_skill`,
+        ]
+      : []),
+  ];
+  const deltaStr = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
   ctx.print(
-    `Evaluated ${metadata.skill_name} with ${metadata.runner}: with_skill pass rate ${withMean}%${deltaStr}.`,
+    `Evaluated ${metadata.skill_name} with ${metadata.runner}: with_skill pass rate ${withMean}${deltaStr}.`,
   );
 }
 
@@ -224,6 +245,117 @@ function parseSplit(value: string | undefined): TriggerSplit {
   return found;
 }
 
+interface WarnUnsupportedSandboxParams {
+  ctx: Context;
+  runner: EvalRunner;
+  sandbox: boolean;
+}
+
+/** Warns when --sandbox was requested but the runner cannot honor it. */
+export function warnUnsupportedSandbox({
+  ctx,
+  runner,
+  sandbox,
+}: WarnUnsupportedSandboxParams): void {
+  if (!sandbox || runner.sandboxSupported !== false) return;
+  ctx.print(
+    `${WARN_LABEL}  --sandbox is not supported by the ${runner.name} runner; its runs are not sandboxed and use your real home directory.`,
+  );
+}
+
+interface ResolveEvalRunnerParams {
+  ctx: Context;
+  rawRunner: string | undefined;
+  binary: string | undefined;
+  sandbox: boolean;
+}
+
+async function resolveEvalRunner({
+  ctx,
+  rawRunner,
+  binary,
+  sandbox,
+}: ResolveEvalRunnerParams): Promise<EvalRunner> {
+  let runnerName: EvalRunnerName;
+  // --binary wins over AGY_BIN, so AGY_BIN is not read (or validated) then;
+  // otherwise it is read only for auto-detection and agy runs.
+  const readAgyBin = () => (binary ? undefined : ctx.agy?.bin());
+  let agyBin: string | undefined;
+  if (rawRunner) {
+    runnerName = parseEvalRunnerName(rawRunner);
+    if (runnerName === 'agy') agyBin = readAgyBin();
+  } else {
+    agyBin = readAgyBin();
+    runnerName = await detectDefaultRunner({
+      searchPath: ctx.searchPath,
+      ...(agyBin ? { agyConfig: { bin: agyBin, extraArgs: [] } } : {}),
+    });
+  }
+  const agyConfig =
+    runnerName === 'agy'
+      ? {
+          ...(agyBin ? { bin: agyBin } : {}),
+          extraArgs: ctx.agy?.extraArgs() ?? [],
+        }
+      : undefined;
+  const runner = createEvalRunner({
+    runner: runnerName,
+    binary,
+    cwd: ctx.cwd,
+    agyConfig,
+    env: ctx.sources.env,
+  });
+  warnUnsupportedSandbox({ ctx, runner, sandbox });
+  return runner;
+}
+
+interface ResolveReportDirParams {
+  ctx: Context;
+  args: readonly string[];
+}
+
+interface ResolvedReportDir {
+  skillName?: string;
+  iterationDir?: string;
+}
+
+async function resolveReportDir({
+  ctx,
+  args,
+}: ResolveReportDirParams): Promise<ResolvedReportDir> {
+  const [first, second] = args;
+  if (first === undefined) return {};
+  if (second === undefined) {
+    const candidateDir = resolve(ctx.cwd, first);
+    if ((await lstatIfExists(join(candidateDir, 'benchmark.json'))) !== null) {
+      return { iterationDir: candidateDir };
+    }
+    if (!isSkillName(first)) {
+      throw new UsageError(
+        `"${first}" is neither a skill name nor a directory containing benchmark.json`,
+      );
+    }
+    return { skillName: first };
+  }
+  if (!isSkillName(first)) {
+    throw new UsageError(`Invalid skill name "${first}"`);
+  }
+  if (isAbsolute(second)) return { skillName: first, iterationDir: second };
+  const fromCwd = resolve(ctx.cwd, second);
+  if ((await lstatIfExists(fromCwd)) !== null) {
+    return { skillName: first, iterationDir: fromCwd };
+  }
+  const skillEvalsDir = join(ctx.paths.evalsDir, first);
+  const fromEvals = resolve(skillEvalsDir, second);
+  const inside = relative(skillEvalsDir, fromEvals);
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    throw new UsageError(
+      `Iteration directory "${second}" must be inside the ${first} evals directory`,
+    );
+  }
+  return { skillName: first, iterationDir: fromEvals };
+}
+
 interface RenderScaffoldSkillMdParams {
   name: string;
   template: SkillTemplate;
@@ -341,12 +473,12 @@ async function runSkillNew({
         evals: [
           {
             id: 'starter-case',
-            prompt: `Apply ${name} to sample.txt and summarize what changed.`,
-            expected_output: `Processed sample.txt following ${name} instructions.`,
+            prompt: `Can you run sample.txt through ${name} and save the result to output.md?`,
+            expected_output: `output.md contains sample.txt processed following the ${name} instructions.`,
             files: ['evals/files/starter-case/sample.txt'],
             assertions: [
-              `The response explains how ${name} was applied to sample.txt`,
-              { type: 'file_exists', path: 'sample.txt' },
+              `output.md reflects the ${name} workflow applied to the content of sample.txt`,
+              { type: 'file_exists', path: 'output.md' },
             ],
           },
         ],
@@ -357,11 +489,11 @@ async function runSkillNew({
     files['evals/trigger_queries.json'] = `${JSON.stringify(
       [
         {
-          query: `Please use ${name} logic to update the configuration in this repo`,
+          query: `Can you set up ${name} for this repo? I'm not sure where to start.`,
           should_trigger: true,
         },
         {
-          query: `[negative] Unrelated task that should not trigger ${name}`,
+          query: 'Summarize what the last three commits in this repo changed.',
           should_trigger: false,
         },
       ],
@@ -455,22 +587,10 @@ export async function runSkill(
       ctx,
       nameOrPath: paths[0],
     });
-    const runnerName = rawRunner
-      ? parseEvalRunnerName(rawRunner)
-      : await detectDefaultRunner({
-          searchPath: ctx.searchPath,
-          agyConfig: ctx.agy,
-        });
-    const runner = createEvalRunner({
-      runner: runnerName,
-      binary,
-      agyConfig: ctx.agy,
-      env: ctx.sources.env,
-    });
+    const runner = await resolveEvalRunner({ ctx, rawRunner, binary, sandbox });
     const result = await runSkillEval({
       skillName,
       skillDir,
-      repoRoot: ctx.repoRoot,
       evalsRootDir: ctx.paths.evalsDir,
       runner,
       runs: runs ?? 1,
@@ -508,18 +628,7 @@ export async function runSkill(
     if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
       throw new UsageError('--threshold must be a number between 0 and 1');
     }
-    const runnerName = rawRunner
-      ? parseEvalRunnerName(rawRunner)
-      : await detectDefaultRunner({
-          searchPath: ctx.searchPath,
-          agyConfig: ctx.agy,
-        });
-    const runner = createEvalRunner({
-      runner: runnerName,
-      binary,
-      agyConfig: ctx.agy,
-      env: ctx.sources.env,
-    });
+    const runner = await resolveEvalRunner({ ctx, rawRunner, binary, sandbox });
     const result = await runSkillTriggers({
       skillName,
       skillDir,
@@ -532,12 +641,17 @@ export async function runSkill(
       timeoutSeconds: timeout ?? 120,
       sandbox,
       keepWorkdirs,
+      paths: ctx.paths,
       env: ctx.sources.env,
       onLog: (line) => ctx.print(line),
     });
     const { metrics } = result.summary;
+    const excluded =
+      metrics.errored_queries > 0
+        ? `, ${metrics.errored_queries}/${metrics.total_queries} queries excluded (failed runs)`
+        : '';
     ctx.print(
-      `Triggers for ${skillName} (${split}): recall ${(metrics.recall * 100).toFixed(1)}%, precision ${(metrics.precision * 100).toFixed(1)}%, false positive rate ${(metrics.false_positive_rate * 100).toFixed(1)}%, accuracy ${(metrics.accuracy * 100).toFixed(1)}%.`,
+      `Triggers for ${skillName} (${split}): recall ${formatRate(metrics.recall)}, precision ${formatRate(metrics.precision)}, false positive rate ${formatRate(metrics.false_positive_rate)}, accuracy ${formatRate(metrics.accuracy)}${excluded}.`,
     );
     ctx.print(
       `Report: ${displayPath({ path: join(result.outputDir, 'triggers.md'), home: ctx.paths.home })}`,
@@ -551,20 +665,20 @@ export async function runSkill(
         'Usage: agents-config skill report <name|run-dir> [iteration-dir]',
       );
     }
-    const firstArg = paths[0];
-    const candidateDir = resolve(ctx.cwd, firstArg);
-    const isDirectRunDir =
-      paths.length === 1 &&
-      (await lstatIfExists(join(candidateDir, 'benchmark.json'))) !== null;
-    const iterationDir = isDirectRunDir
-      ? candidateDir
-      : paths[1]
-        ? resolve(ctx.cwd, paths[1])
-        : undefined;
+    const target = await resolveReportDir({ ctx, args: paths });
+    if (target.skillName !== undefined && target.iterationDir !== undefined) {
+      const { metadata } = await loadBenchmarkFromIteration(
+        target.iterationDir,
+      );
+      if (metadata.skill_name !== target.skillName) {
+        throw new UsageError(
+          `${displayPath({ path: target.iterationDir, home: ctx.paths.home })} holds a benchmark for "${metadata.skill_name}", not "${target.skillName}"`,
+        );
+      }
+    }
     const result = await regenerateSkillReport({
       evalsRootDir: ctx.paths.evalsDir,
-      ...(isDirectRunDir ? {} : { skillName: firstArg }),
-      iterationDir,
+      ...target,
     });
     printBenchmarkSummary(ctx, result.benchmark);
     ctx.print(
@@ -574,6 +688,6 @@ export async function runSkill(
   }
 
   throw new UsageError(
-    'Usage: agents-config skill validate [path...] [--catalog] | new <name> | eval <name> | triggers <name> | report <name>',
+    'Usage: agents-config skill validate [path...] [--catalog] | new <name> | eval <name> | triggers <name> | report <name|run-dir> [iteration-dir]',
   );
 }

@@ -1,19 +1,30 @@
 import type { Environment } from '../../env.ts';
 import { RunnerError } from '../../errors.ts';
 import {
+  buildTaskResult,
+  checkRunnerBinary,
   type EvalRunner,
   extractJsonFromText,
+  isRecordObject,
+  isUsageReported,
+  mentionsSkillFile,
   normalizeUsage,
   type ParsedGraderOutput,
+  type ParsedTaskStream,
+  parseGraderProcess,
   parseJsonLines,
   type RunnerGraderRequest,
   type RunnerGraderResult,
   type RunnerTaskRequest,
   type RunnerTaskResult,
-  type RunnerUsage,
   spawnRunnerProcess,
 } from './types.ts';
 
+/**
+ * Task runs always use `--sandbox workspace-write`: writes are confined to the
+ * workspace and temp dirs. `--` keeps prompts that start with `-` or match a
+ * subcommand name (`resume`, `review`, `help`) positional.
+ */
 export function buildCodexTaskArgs(prompt: string): string[] {
   return [
     'exec',
@@ -21,6 +32,7 @@ export function buildCodexTaskArgs(prompt: string): string[] {
     'workspace-write',
     '--ephemeral',
     '--json',
+    '--',
     prompt,
   ];
 }
@@ -30,6 +42,10 @@ export interface BuildCodexGraderArgsParams {
   schemaPath: string;
 }
 
+/**
+ * The grader runs read-only in an empty directory that is not a git
+ * repository, hence `--skip-git-repo-check`.
+ */
 export function buildCodexGraderArgs({
   prompt,
   schemaPath,
@@ -38,10 +54,12 @@ export function buildCodexGraderArgs({
     'exec',
     '--sandbox',
     'read-only',
+    '--skip-git-repo-check',
     '--ephemeral',
     '--json',
     '--output-schema',
     schemaPath,
+    '--',
     prompt,
   ];
 }
@@ -52,11 +70,14 @@ export interface ParseCodexStreamParams {
   fallbackDurationMs?: number;
 }
 
-export interface ParsedCodexStream {
-  response: string;
-  triggered: boolean;
-  durationMs: number;
-  usage: RunnerUsage;
+export type ParsedCodexStream = ParsedTaskStream;
+
+function codexErrorMessage(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (isRecordObject(value) && typeof value.message === 'string') {
+    return value.message;
+  }
+  return undefined;
 }
 
 export function parseCodexStreamJson({
@@ -68,44 +89,59 @@ export function parseCodexStreamJson({
   let triggered = false;
   let response = '';
   let usage = normalizeUsage(undefined);
+  let usageReported = false;
   let sawResult = false;
-  const targetSubstr = `${skillName}/SKILL.md`;
+  let turnCompleted = false;
+  let turnError: string | undefined;
+  let streamError: string | undefined;
 
   for (const event of events) {
     if (
       (event.type === 'item.started' || event.type === 'item.completed') &&
-      typeof event.item === 'object' &&
-      event.item !== null
+      isRecordObject(event.item)
     ) {
-      const item = event.item as Record<string, unknown>;
+      const item = event.item;
       if (
         item.type === 'command_execution' &&
         typeof item.command === 'string' &&
-        item.command.replaceAll('\\', '/').includes(targetSubstr)
+        mentionsSkillFile(item.command, skillName)
       ) {
         triggered = true;
       }
-      if (item.type === 'agent_message' && typeof item.text === 'string') {
+      if (
+        event.type === 'item.completed' &&
+        item.type === 'agent_message' &&
+        typeof item.text === 'string'
+      ) {
         response = item.text;
       }
     }
     if (event.type === 'turn.completed') {
       sawResult = true;
+      turnCompleted = true;
+      // `cached_input_tokens` is a subset of `input_tokens`.
       usage = normalizeUsage(event.usage);
+      usageReported = isUsageReported(event.usage);
+    }
+    if (event.type === 'turn.failed') {
+      sawResult = true;
+      turnError = codexErrorMessage(event.error) ?? 'turn failed';
+    }
+    if (event.type === 'error') {
+      streamError = codexErrorMessage(event.message) ?? 'stream error';
     }
   }
-
-  if (!sawResult) {
-    throw new RunnerError(
-      'codex stream ended without a final turn.completed event',
-    );
-  }
+  // A top-level `error` event only fails the run when no turn completed.
+  const error = turnError ?? (turnCompleted ? undefined : streamError);
 
   return {
     response,
     triggered,
     durationMs: fallbackDurationMs,
     usage,
+    usageReported,
+    sawResult,
+    ...(error !== undefined ? { error } : {}),
   };
 }
 
@@ -123,9 +159,19 @@ export function parseCodexGraderJson({
     skillName: '',
     fallbackDurationMs,
   });
-  const text = stream.response || stdout;
+  if (stream.error !== undefined) {
+    throw new RunnerError(`codex grader failed: ${stream.error}`);
+  }
+  if (!stream.sawResult) {
+    throw new RunnerError(
+      'codex grader output ended without a turn.completed event',
+    );
+  }
+  if (!stream.response) {
+    throw new RunnerError('codex grader returned no agent message');
+  }
   return {
-    output: extractJsonFromText(text),
+    output: extractJsonFromText(stream.response),
     durationMs: stream.durationMs,
     usage: stream.usage,
   };
@@ -133,17 +179,23 @@ export function parseCodexGraderJson({
 
 export interface CreateCodexRunnerParams {
   binary?: string;
-  env?: Environment;
+  env: Environment;
 }
 
 export function createCodexRunner({
   binary,
   env,
-}: CreateCodexRunnerParams = {}): EvalRunner {
+}: CreateCodexRunnerParams): EvalRunner {
   const resolvedBin = binary ?? 'codex';
 
   return {
     name: 'codex',
+    // Task runs are always confined by `--sandbox workspace-write`.
+    sandboxSupported: true,
+    async preflight(): Promise<void> {
+      await checkRunnerBinary({ binary: resolvedBin, env });
+    },
+
     async runTask({
       prompt,
       workdir,
@@ -151,10 +203,9 @@ export function createCodexRunner({
       skillName,
       timeoutSeconds,
     }: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const args = buildCodexTaskArgs(prompt);
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
-        args,
+        args: buildCodexTaskArgs(prompt),
         cwd: workdir,
         runDir,
         timeoutSeconds,
@@ -165,16 +216,12 @@ export function createCodexRunner({
         skillName,
         fallbackDurationMs: proc.durationMs,
       });
-      return {
-        response: parsed.response,
-        triggered: parsed.triggered,
-        durationMs: parsed.durationMs,
-        usage: parsed.usage,
-        exitCode: proc.exitCode,
-        timedOut: proc.timedOut,
-        rawStdout: proc.stdout,
-        rawStderr: proc.stderr,
-      };
+      return buildTaskResult({
+        label: 'codex',
+        proc,
+        parsed,
+        timeoutSeconds,
+      });
     },
 
     async runGrader({
@@ -184,30 +231,25 @@ export function createCodexRunner({
       runDir,
       timeoutSeconds,
     }: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const args = buildCodexGraderArgs({
-        prompt,
-        schemaPath,
-      });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
-        args,
+        args: buildCodexGraderArgs({ prompt, schemaPath }),
         cwd: workdir,
         runDir,
         timeoutSeconds,
         env,
         logPrefix: 'grader',
       });
-      const parsed = parseCodexGraderJson({
-        stdout: proc.stdout,
-        fallbackDurationMs: proc.durationMs,
+      return parseGraderProcess({
+        label: 'codex grader',
+        proc,
+        timeoutSeconds,
+        parse: () =>
+          parseCodexGraderJson({
+            stdout: proc.stdout,
+            fallbackDurationMs: proc.durationMs,
+          }),
       });
-      return {
-        output: parsed.output,
-        durationMs: parsed.durationMs,
-        usage: parsed.usage,
-        rawStdout: proc.stdout,
-        rawStderr: proc.stderr,
-      };
     },
   };
 }

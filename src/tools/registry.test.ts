@@ -30,3 +30,17 @@ test('only tools that do not read ~/.agents/skills get skill links', () => {
     ['claude-code', '/home/me/.claude/skills'],
   ]);
 });
+
+test('Gemini CLI and Copilot also read skills from their own folders', () => {
+  const paths = resolvePaths({ HOME: '/home/me' });
+
+  const extra = TOOL_IDS.flatMap((id) => {
+    const dirs = TOOLS[id].global.extraSkills?.(paths) ?? [];
+    return dirs.map((dir) => [id, dir]);
+  });
+
+  assert.deepEqual(extra, [
+    ['gemini-cli', '/home/me/.gemini/skills'],
+    ['copilot', '/home/me/.copilot/skills'],
+  ]);
+});

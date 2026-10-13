@@ -1,8 +1,15 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 
 import { z } from 'zod';
 
-import { SCOPES } from '../blocks/library.ts';
+import { type Scope, SCOPES } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import { ManifestError } from '../errors.ts';
 import {
@@ -37,7 +44,11 @@ const skillSourceSchema = z.discriminatedUnion('type', [
 export type SkillSourceRecord = z.infer<typeof skillSourceSchema>;
 
 const skillInstallSchema = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('copy'), hash: z.string().min(1) }),
+  z.object({
+    mode: z.literal('copy'),
+    hash: z.string().min(1),
+    setup: z.boolean().optional(),
+  }),
   z.object({ mode: z.literal('link'), target: pathField }),
 ]);
 
@@ -67,6 +78,13 @@ const entrySchema = z.discriminatedUnion('kind', [
     key: z.string().min(1),
     added: z.array(z.string()),
     wasString: z.boolean(),
+    createdKeys: z.number().int().min(0).optional(),
+    original: z.string().optional(),
+    wasEmpty: z.boolean().optional(),
+    blankText: z
+      .string()
+      .regex(/^[\s\uFEFF]*$/, 'must hold only whitespace')
+      .optional(),
     createdFile: z.boolean(),
   }),
   z.object({
@@ -142,6 +160,45 @@ function resolveProjectEntry(
   return { ...entry, path };
 }
 
+export interface SkillFolders {
+  copies: string;
+  links: readonly string[];
+}
+
+interface CheckSkillEntriesParams {
+  file: string;
+  entries: readonly ManifestEntry[];
+  folders: SkillFolders;
+  scope: Scope;
+}
+
+export function checkSkillEntries({
+  file,
+  entries,
+  folders,
+  scope,
+}: CheckSkillEntriesParams): void {
+  for (const entry of entries) {
+    if (entry.kind === 'skill') {
+      const expected = join(folders.copies, entry.name);
+      if (entry.path !== expected) {
+        throw new ManifestError(
+          `${file}: the ${entry.name} skill must be recorded at ${expected}, not ${entry.path}`,
+        );
+      }
+    }
+    if (entry.kind === 'symlink') {
+      const inSkillsFolder = folders.links.includes(dirname(entry.path));
+      if (!inSkillsFolder && scope === 'global') continue;
+      if (!inSkillsFolder || !isSkillName(basename(entry.path))) {
+        throw new ManifestError(
+          `${file}: ${entry.path} is not a skill link in a tool skills folder`,
+        );
+      }
+    }
+  }
+}
+
 export function serializeManifest(
   manifest: Manifest,
   projectDir?: string,
@@ -177,6 +234,27 @@ export async function readManifest(file: string): Promise<Manifest | null> {
     throw new ManifestError(`${file}: ${z.prettifyError(result.error)}`);
   }
   return result.data;
+}
+
+// System-wide entries are used as they are, so a relative path would resolve
+// against whatever directory the CLI runs from.
+export async function readGlobalManifest(
+  file: string,
+): Promise<Manifest | null> {
+  const manifest = await readManifest(file);
+  for (const entry of manifest?.entries ?? []) {
+    if (!isAbsolute(entry.path)) {
+      throw new ManifestError(
+        `${file}: entry paths must be absolute, got ${entry.path}`,
+      );
+    }
+    if (entry.kind === 'symlink' && !isAbsolute(entry.target)) {
+      throw new ManifestError(
+        `${file}: symlink targets must be absolute, got ${entry.target}`,
+      );
+    }
+  }
+  return manifest;
 }
 
 export async function readProjectManifest(

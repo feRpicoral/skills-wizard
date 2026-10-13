@@ -3,6 +3,7 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { FrontmatterError } from '../errors.ts';
 import { parseFrontmatter } from '../frontmatter.ts';
 import { fsErrorReason, readTextIfExists } from '../install/fs.ts';
+import { escapingLinks } from './tree.ts';
 
 export const SKILL_FILE = 'SKILL.md';
 
@@ -201,6 +202,19 @@ async function readSkillFile(
   }
 }
 
+async function linkProblems(dir: string): Promise<string[]> {
+  try {
+    return (await escapingLinks(dir)).map(
+      ({ path, target }) =>
+        `${path} does not resolve inside the skill folder (${target}); links must be relative and stay inside it`,
+    );
+  } catch (error) {
+    const reason = fsErrorReason(error);
+    if (reason === undefined) throw error;
+    return [`the skill folder cannot be read: ${reason}`];
+  }
+}
+
 interface IdentityProblemsParams extends ValidateOptions {
   name: string;
   dir: string;
@@ -230,6 +244,7 @@ export async function validateSkill(
   const report: SkillReport = { dir, errors: [], warnings: [] };
   const source = await readSkillFile(dir, report);
   if (source === null) return report;
+  report.errors.push(...(await linkProblems(dir)));
 
   let document;
   try {

@@ -84,7 +84,7 @@ interface SymlinkMatchParams {
   destination: string;
 }
 
-export async function linksTo({
+async function linksTo({
   link,
   destination,
 }: SymlinkMatchParams): Promise<boolean> {
@@ -95,6 +95,28 @@ export async function linksTo({
     realLocation(destination),
   ]);
   return linked !== null && linked === expected;
+}
+
+interface SameFileParams {
+  path: string;
+  other: string;
+}
+
+export async function sameFile({
+  path,
+  other,
+}: SameFileParams): Promise<boolean> {
+  if (
+    (await linksTo({ link: path, destination: other })) ||
+    (await linksTo({ link: other, destination: path }))
+  ) {
+    return true;
+  }
+  const [real, otherReal] = await Promise.all([
+    realLocation(path),
+    realLocation(other),
+  ]);
+  return real !== null && real === otherReal;
 }
 
 interface ConflictParams {

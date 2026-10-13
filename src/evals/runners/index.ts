@@ -10,7 +10,11 @@ import { createClaudeRunner } from './claude.ts';
 import { createCodexRunner } from './codex.ts';
 import { createFakeRunner, type FakeRunnerOptions } from './fake.ts';
 import { createGeminiRunner } from './gemini.ts';
-import type { EvalRunner, EvalRunnerName } from './types.ts';
+import {
+  type EvalRunner,
+  type EvalRunnerName,
+  resolveRunnerBinary,
+} from './types.ts';
 
 export const EVAL_RUNNER_NAMES: readonly EvalRunnerName[] = [
   'agy',
@@ -68,18 +72,30 @@ export async function detectDefaultRunner({
 export interface CreateEvalRunnerParams {
   runner: EvalRunnerName;
   binary?: string;
+  /**
+   * Directory a relative `binary` path (one containing a slash, such as
+   * `./bin/claude`) is resolved against, normally the CLI's cwd. Runners
+   * spawn in per-run workdirs, so relative paths must be resolved up front.
+   */
+  cwd?: string;
   agyConfig?: AgyConfig;
-  env?: Environment;
+  /** The complete environment for runner processes (never `process.env`). */
+  env: Environment;
   fakeOptions?: FakeRunnerOptions;
 }
 
 export function createEvalRunner({
   runner,
-  binary,
+  binary: rawBinary,
+  cwd,
   agyConfig,
   env,
   fakeOptions,
 }: CreateEvalRunnerParams): EvalRunner {
+  const binary =
+    rawBinary === undefined
+      ? undefined
+      : resolveRunnerBinary({ binary: rawBinary, cwd });
   switch (runner) {
     case 'agy':
       return createAgyRunner({ binary, agyConfig, env });
@@ -112,7 +128,11 @@ export {
   parseCodexGraderJson,
   parseCodexStreamJson,
 } from './codex.ts';
-export { createFakeRunner, type FakeRunnerOptions } from './fake.ts';
+export {
+  createFakeRunner,
+  type FakeRunnerOptions,
+  fakeTriggerDecision,
+} from './fake.ts';
 export {
   buildGeminiGraderArgs,
   buildGeminiTaskArgs,
@@ -123,9 +143,16 @@ export type {
   EvalRunner,
   EvalRunnerName,
   ParsedGraderOutput,
+  ParsedTaskStream,
   RunnerGraderRequest,
   RunnerGraderResult,
   RunnerTaskRequest,
   RunnerTaskResult,
   RunnerUsage,
+} from './types.ts';
+export {
+  checkRunnerBinary,
+  mentionsSkillFile,
+  normalizeUsage,
+  resolveRunnerBinary,
 } from './types.ts';
