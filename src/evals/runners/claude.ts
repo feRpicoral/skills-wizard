@@ -4,7 +4,6 @@ import {
   buildTaskResult,
   checkRunnerBinary,
   type EvalRunner,
-  extractJsonFromText,
   isRecordObject,
   isUsageReported,
   mentionsSkillFile,
@@ -57,6 +56,12 @@ export interface BuildClaudeGraderArgsParams {
  * The grader gets no built-in tools (`--tools ""`), no MCP tools
  * (`--disallowedTools=mcp__*`) and `dontAsk`, which denies any tool call that
  * would need approval. Everything it needs is in the prompt.
+ *
+ * `--json-schema` still works: `--tools` only restricts built-in tools, and
+ * the structured-output tool it synthesizes is not one of them (the
+ * documented `--tools ""` + `--json-schema` combination is the known-good
+ * headless setup). `--disallowedTools "*"` is avoided because it removes
+ * every tool, including that one.
  */
 export function buildClaudeGraderArgs({
   prompt,
@@ -213,24 +218,18 @@ export function parseClaudeGraderJson({
   if (error !== undefined) {
     throw new RunnerError(`claude grader failed: ${error}`);
   }
-  if (doc.structured_output !== undefined) {
-    return {
-      output: doc.structured_output,
-      durationMs,
-      usage,
-    };
+  // With `--json-schema`, a `success` result without `structured_output` is
+  // a failure (Agent SDK structured outputs docs), not text to parse.
+  if (doc.structured_output === undefined || doc.structured_output === null) {
+    throw new RunnerError(
+      'claude grader result contained no structured_output',
+    );
   }
-  if (typeof doc.result === 'string') {
-    return {
-      output: extractJsonFromText(doc.result),
-      durationMs,
-      usage,
-    };
-  }
-
-  throw new RunnerError(
-    'claude grader output contained neither structured_output nor result',
-  );
+  return {
+    output: doc.structured_output,
+    durationMs,
+    usage,
+  };
 }
 
 export interface CreateClaudeRunnerParams {
