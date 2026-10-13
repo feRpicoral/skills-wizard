@@ -131,20 +131,29 @@ export interface TriggerQueryRunResult {
   should_trigger: boolean;
   triggered: boolean;
   duration_ms: number;
+  /** Why the run failed; failed runs are left out of the trigger rate. */
+  error?: string;
 }
 
 export interface TriggerQueryAggregate {
   query: string;
   should_trigger: boolean;
   trigger_count: number;
+  /** Runs recorded for the query, failed runs included. */
   runs: number;
-  trigger_rate: number;
+  errored_runs: number;
+  /** Share of successful runs that triggered; `null` when every run failed. */
+  trigger_rate: number | null;
   passed: boolean;
 }
 
-/** Ratios are `null` when their denominator is zero. */
+/**
+ * Ratios are `null` when their denominator is zero. Queries whose runs all
+ * failed are counted in `errored_queries` and left out of every other count.
+ */
 export interface TriggerMetrics {
   total_queries: number;
+  errored_queries: number;
   positive_queries: number;
   negative_queries: number;
   true_positives: number;
@@ -521,23 +530,29 @@ export function aggregateTriggerRuns({
 }: AggregateTriggerRunsParams): TriggerBenchmarkSummary {
   const queryAggregates: TriggerQueryAggregate[] = queries.map((item) => {
     const qRuns = results.filter((res) => res.query === item.query);
-    const triggerCount = qRuns.filter((res) => res.triggered).length;
-    const triggerRate = qRuns.length === 0 ? 0 : triggerCount / qRuns.length;
-    const passed = item.should_trigger
-      ? triggerRate >= threshold
-      : triggerRate < threshold;
+    const okRuns = qRuns.filter((res) => !res.error);
+    const triggerCount = okRuns.filter((res) => res.triggered).length;
+    const triggerRate =
+      okRuns.length === 0 ? null : triggerCount / okRuns.length;
+    const passed =
+      triggerRate !== null &&
+      (item.should_trigger
+        ? triggerRate >= threshold
+        : triggerRate < threshold);
     return {
       query: item.query,
       should_trigger: item.should_trigger,
       trigger_count: triggerCount,
       runs: qRuns.length,
+      errored_runs: qRuns.length - okRuns.length,
       trigger_rate: triggerRate,
       passed,
     };
   });
 
-  const positives = queryAggregates.filter((q) => q.should_trigger);
-  const negatives = queryAggregates.filter((q) => !q.should_trigger);
+  const evaluated = queryAggregates.filter((q) => q.trigger_rate !== null);
+  const positives = evaluated.filter((q) => q.should_trigger);
+  const negatives = evaluated.filter((q) => !q.should_trigger);
 
   const tp = positives.filter((q) => q.passed).length;
   const fn = positives.length - tp;
@@ -557,6 +572,7 @@ export function aggregateTriggerRuns({
     },
     metrics: {
       total_queries: queryAggregates.length,
+      errored_queries: queryAggregates.length - evaluated.length,
       positive_queries: positives.length,
       negative_queries: negatives.length,
       true_positives: tp,
@@ -572,7 +588,7 @@ export function aggregateTriggerRuns({
       }),
       accuracy: ratio({
         numerator: tp + tn,
-        denominator: queryAggregates.length,
+        denominator: evaluated.length,
       }),
     },
     queries: queryAggregates,
@@ -711,6 +727,7 @@ const triggerBenchmarkSummarySchema = z.looseObject({
   }),
   metrics: z.looseObject({
     total_queries: z.number().int(),
+    errored_queries: z.number().int(),
     positive_queries: z.number().int(),
     negative_queries: z.number().int(),
     true_positives: z.number().int(),
@@ -729,7 +746,8 @@ const triggerBenchmarkSummarySchema = z.looseObject({
       should_trigger: z.boolean(),
       trigger_count: z.number().int(),
       runs: z.number().int(),
-      trigger_rate: z.number(),
+      errored_runs: z.number().int(),
+      trigger_rate: z.number().nullable(),
       passed: z.boolean(),
     }),
   ),
