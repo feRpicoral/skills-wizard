@@ -261,3 +261,154 @@ test('skill validate checks paths and --catalog', async (t) => {
     UsageError,
   );
 });
+
+test('adopt asks for a system-wide init first and writes nothing without one', async (t) => {
+  const { ctx } = await testContext(t);
+  await writeFiles(ctx.paths.home, {
+    '.agents/skills/pretty-mermaid/SKILL.md': skillSource('pretty-mermaid'),
+  });
+
+  await assert.rejects(
+    runAdopt(ctx, { names: ['pretty-mermaid'], yes: true, dryRun: false }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /run agents-config init --global first/.test(error.message),
+  );
+
+  assert.match(
+    await readFile(
+      join(ctx.paths.skillsDir, 'pretty-mermaid', 'SKILL.md'),
+      'utf8',
+    ),
+    /pretty-mermaid/,
+  );
+  await assert.rejects(lstat(ctx.paths.stateDir), { code: 'ENOENT' });
+  await assert.rejects(lstat(join(ctx.paths.claudeHome, 'CLAUDE.md')), {
+    code: 'ENOENT',
+  });
+});
+
+async function initGlobal(ctx: Context): Promise<void> {
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['claude-code'],
+    blocks: ['core/identity'],
+    skills: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+}
+
+test('adopt rejects an invalid locked upstream before moving anything', async (t) => {
+  const { ctx, repoRoot } = await testContext(t);
+  await initGlobal(ctx);
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+  await writeFiles(ctx.paths.home, {
+    '.agents/skills/Deploy_Tool/SKILL.md': skillSource('Deploy_Tool'),
+    '.agents/.skill-lock.json': JSON.stringify({
+      version: 3,
+      skills: {
+        Deploy_Tool: {
+          source: 'owner/tools',
+          sourceType: 'github',
+          skillPath: 'skills/deploy/SKILL.md',
+        },
+      },
+    }),
+  });
+
+  await assert.rejects(
+    runAdopt(ctx, { names: ['Deploy_Tool'], yes: true, dryRun: false }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /Cannot adopt Deploy_Tool from .*skill naming rules/s.test(error.message),
+  );
+
+  assert.ok(
+    (
+      await lstat(join(ctx.paths.skillsDir, 'Deploy_Tool', 'SKILL.md'))
+    ).isFile(),
+  );
+  await assert.rejects(lstat(join(ctx.paths.stateDir, 'backups')), {
+    code: 'ENOENT',
+  });
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    catalogBefore,
+  );
+});
+
+test('adopt normalizes locked skill paths and only appends to catalog.yaml', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await initGlobal(ctx);
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+  await writeFiles(ctx.paths.home, {
+    '.agents/skills/deploy/SKILL.md': skillSource('deploy'),
+    '.agents/.skill-lock.json': JSON.stringify({
+      version: 3,
+      skills: {
+        deploy: {
+          source: 'owner/tools',
+          sourceType: 'github',
+          skillPath: './skills/deploy/SKILL.md',
+        },
+      },
+    }),
+  });
+
+  const code = await runAdopt(ctx, {
+    names: ['deploy'],
+    yes: true,
+    dryRun: false,
+  });
+
+  assert.equal(code, 0);
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    [
+      catalogBefore,
+      '  - name: deploy',
+      '    repo: owner/tools',
+      '    path: skills/deploy',
+      '    category: workflow',
+      '    scopes: [global, project]',
+      '',
+    ].join('\n'),
+  );
+  assert.ok(
+    (
+      await lstat(join(ctx.paths.claudeHome, 'skills', 'deploy'))
+    ).isSymbolicLink(),
+  );
+});
+
+test('adopt refuses a skill whose folder name differs from its declared name', async (t) => {
+  const { ctx } = await testContext(t);
+  await initGlobal(ctx);
+  await writeFiles(ctx.paths.home, {
+    '.agents/skills/pretty-mermaid/SKILL.md': skillSource('pretty-mermaid'),
+    '.claude/skills/my-mermaid/SKILL.md': skillSource('pretty-mermaid'),
+  });
+
+  await assert.rejects(
+    runAdopt(ctx, { names: ['pretty-mermaid'], yes: true, dryRun: false }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /my-mermaid declares the name pretty-mermaid/.test(error.message),
+  );
+
+  assert.ok(
+    (
+      await lstat(
+        join(ctx.paths.claudeHome, 'skills', 'my-mermaid', 'SKILL.md'),
+      )
+    ).isFile(),
+  );
+  await assert.rejects(lstat(join(ctx.paths.stateDir, 'backups')), {
+    code: 'ENOENT',
+  });
+});
