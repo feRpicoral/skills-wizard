@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { styleText } from 'node:util';
 
 import {
@@ -19,7 +18,7 @@ import {
 } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
 import type { Manifest } from '../state/manifest.ts';
-import { orderedTools, TOOLS } from '../tools/registry.ts';
+import { orderedTools } from '../tools/registry.ts';
 import {
   loadLibrary,
   type Location,
@@ -110,23 +109,16 @@ async function globalFindings(
     }
   }
 
-  const shared = join(ctx.paths.geminiHome, 'AGENTS.md');
-  const usesShared = manifest.tools.some(
-    (id) => TOOLS[id].global.instructions(ctx.paths) === shared,
-  );
-  if (usesShared) {
-    const extras = [
-      join(ctx.paths.geminiHome, 'GEMINI.md'),
-      join(ctx.paths.geminiHome, 'config', 'AGENTS.md'),
-      join(ctx.paths.geminiHome, 'config', 'GEMINI.md'),
-    ];
-    for (const extra of extras) {
-      if (await lstatIfExists(extra)) {
-        findings.push({
-          level: 'warn',
-          message: `${show(extra)} is loaded in addition to ${show(shared)}`,
-        });
-      }
+  const reported = new Set<string>();
+  for (const tool of orderedTools(manifest.tools)) {
+    const instructions = tool.global.instructions(ctx.paths);
+    for (const extra of tool.global.alsoLoads?.(ctx.paths) ?? []) {
+      if (reported.has(extra) || !(await lstatIfExists(extra))) continue;
+      reported.add(extra);
+      findings.push({
+        level: 'warn',
+        message: `${show(extra)} is loaded in addition to ${show(instructions)}`,
+      });
     }
   }
   return findings;
