@@ -79,21 +79,28 @@ interface AgySkillTriggerStepParams {
   skillName: string;
 }
 
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function isAgySkillTriggerStep({
   event,
   skillName,
 }: AgySkillTriggerStepParams): boolean {
-  if (event.type !== 'step_update') return false;
-  const toolName = event.tool_name;
-  const toolInfo =
-    typeof event.tool_info === 'object' && event.tool_info !== null
-      ? (event.tool_info as Record<string, unknown>)
-      : undefined;
+  const stepUpdate =
+    event.event === 'step_update' && isRecordObject(event.step_update)
+      ? event.step_update
+      : event.type === 'step_update'
+        ? event
+        : undefined;
+  if (!stepUpdate) return false;
+  const toolName = stepUpdate.tool_name;
+  const toolInfo = isRecordObject(stepUpdate.tool_info)
+    ? stepUpdate.tool_info
+    : undefined;
   const params =
-    toolInfo &&
-    typeof toolInfo.parameters === 'object' &&
-    toolInfo.parameters !== null
-      ? (toolInfo.parameters as Record<string, unknown>)
+    toolInfo && isRecordObject(toolInfo.parameters)
+      ? toolInfo.parameters
       : undefined;
   if (!params) return false;
 
@@ -127,17 +134,23 @@ export function parseAgyStreamJson({
     if (isAgySkillTriggerStep({ event, skillName })) {
       triggered = true;
     }
-    if (event.type === 'result') {
+    const resultPayload =
+      event.event === 'result' && isRecordObject(event.result)
+        ? event.result
+        : event.type === 'result'
+          ? event
+          : undefined;
+    if (resultPayload) {
       sawResult = true;
-      if (typeof event.response === 'string') {
-        response = event.response;
+      if (typeof resultPayload.response === 'string') {
+        response = resultPayload.response;
       }
-      if (typeof event.duration_ms === 'number') {
-        durationMs = event.duration_ms;
-      } else if (typeof event.duration_seconds === 'number') {
-        durationMs = Math.round(event.duration_seconds * 1000);
+      if (typeof resultPayload.duration_ms === 'number') {
+        durationMs = resultPayload.duration_ms;
+      } else if (typeof resultPayload.duration_seconds === 'number') {
+        durationMs = Math.round(resultPayload.duration_seconds * 1000);
       }
-      usage = normalizeUsage(event.usage);
+      usage = normalizeUsage(resultPayload.usage);
     }
   }
 
