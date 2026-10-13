@@ -1,0 +1,6 @@
+id: python-service
+name: Python Service
+description: Python service or application managed with uv, Ruff, strict typing, and Pydantic v2
+blocks:
+  - stack/python-uv
+skills: []
