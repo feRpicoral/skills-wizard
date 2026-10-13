@@ -53,8 +53,23 @@ export function resolvePaths(env: Environment = process.env): Paths {
   };
 }
 
+// AGY_BIN must be absolute so the eval runner never depends on the PATH or
+// the working directory of each isolated eval workspace.
+export function resolveAgyBin(
+  env: Environment = process.env,
+): string | undefined {
+  const value = env.AGY_BIN?.trim();
+  if (!value) return undefined;
+  if (!isAbsolute(value)) {
+    throw new EnvironmentError(
+      `AGY_BIN must be an absolute path, got "${value}"`,
+    );
+  }
+  return value;
+}
+
 export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
-  const bin = env.AGY_BIN?.trim() || undefined;
+  const bin = resolveAgyBin(env);
   const rawExtra = env.AGY_EXTRA_ARGS?.trim();
   if (!rawExtra) {
     return { ...(bin ? { bin } : {}), extraArgs: [] };
