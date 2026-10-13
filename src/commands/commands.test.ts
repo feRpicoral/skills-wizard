@@ -25,6 +25,7 @@ import {
 } from '../test-support/fixtures.ts';
 import { createUpstream, isolatedGitEnv } from '../test-support/git.ts';
 import { runAdopt } from './adopt.ts';
+import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
 import { runSkill } from './skill.ts';
 import { runUpdate } from './update.ts';
@@ -943,4 +944,36 @@ test('adopt asks for a variable a block gained before changing anything', async 
     await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
     catalogBefore,
   );
+});
+
+test('doctor still reports outdated skills when a block gained a variable with no value', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeFiles(repoRoot, { 'skills/notes/SKILL.md': skillSource('notes') });
+  await writeExtraBlock({ repoRoot, scopes: ['global'] });
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['codex'],
+    blocks: ['core/identity', 'core/extra'],
+    skills: ['notes'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  await writeFiles(repoRoot, {
+    'skills/notes/SKILL.md': `${skillSource('notes')}\nMore steps.\n`,
+  });
+  await writeExtraBlock({
+    repoRoot,
+    scopes: ['global'],
+    variables: ['teamName'],
+    body: 'Team: {{teamName}}',
+  });
+
+  const code = await runDoctor(ctx, { scope: 'global' });
+
+  assert.equal(code, 1);
+  const printed = output.join('\n');
+  assert.match(printed, /no recorded value: teamName/);
+  assert.match(printed, /skills\/notes is out of date/);
+  assert.doesNotMatch(printed, /AGENTS\.md is out of date/);
 });
