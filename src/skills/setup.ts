@@ -50,9 +50,7 @@ function execute({
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       if (timedOut) {
-        reject(
-          setupFailure(`timed out after ${timeoutMs / 1000} seconds`, stderr),
-        );
+        reject(setupFailure(`timed out after ${timeoutMs / 1000} seconds`, ''));
       } else if (code === 0) {
         resolve();
       } else {
@@ -65,12 +63,6 @@ function execute({
   });
 }
 
-function describeFailure(error: unknown): string {
-  const reason = error instanceof Error ? error.message : String(error);
-  const detail = failureDetail(error);
-  return detail === reason ? reason : `${reason}: ${detail}`;
-}
-
 export async function runSetup({
   dir,
   command,
@@ -79,7 +71,7 @@ export async function runSetup({
   try {
     await execute({ dir, command, timeoutMs });
   } catch (error) {
-    throw new SetupError(`"${command}" failed: ${describeFailure(error)}`, {
+    throw new SetupError(`"${command}" failed: ${failureDetail(error)}`, {
       cause: error,
     });
   }
