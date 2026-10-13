@@ -10,10 +10,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { promisify } from 'node:util';
 
-import { tempDir } from './test-support/fixtures.ts';
+import { skillSource, tempDir, writeFiles } from './test-support/fixtures.ts';
+import { isolatedGitEnv } from './test-support/git.ts';
 
 const run = promisify(execFile);
 const CLI = join(import.meta.dirname, 'cli.ts');
@@ -28,10 +29,12 @@ async function cli(
   home: string,
   args: string[],
   extraEnv: Record<string, string> = {},
+  cwd?: string,
 ): Promise<Result> {
   try {
     const { stdout, stderr } = await run(process.execPath, [CLI, ...args], {
       env: { HOME: home, PATH: process.env.PATH ?? '', ...extraEnv },
+      ...(cwd !== undefined ? { cwd } : {}),
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -460,27 +463,61 @@ test('numeric skill flags accept only plain decimal numbers', async (t) => {
   }
 });
 
+// A throwaway git repository with one committed skill, so `--baseline <ref>`
+// never depends on the state of this checkout.
+async function skillRepo(t: TestContext): Promise<string> {
+  const repo = await tempDir(t);
+  await writeFiles(repo, {
+    'skills/demo-skill/SKILL.md': skillSource('demo-skill'),
+    'skills/demo-skill/evals/evals.json': JSON.stringify({
+      skill_name: 'demo-skill',
+      evals: [
+        {
+          id: 'starter',
+          prompt: 'Write output.md',
+          expected_output: 'output.md exists',
+          assertions: [{ type: 'file_exists', path: 'output.md' }],
+        },
+      ],
+    }),
+  });
+  const env = isolatedGitEnv(repo);
+  const git = (args: string[]) => run('git', args, { cwd: repo, env });
+  await git(['init', '-q', '-b', 'main']);
+  await git(['add', '-A']);
+  await git([
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '-q',
+    '-m',
+    'add demo-skill',
+  ]);
+  return repo;
+}
+
 test('--baseline <ref> is accepted before or after the skill name', async (t) => {
-  const [homeBefore, homeAfter] = await Promise.all([tempDir(t), tempDir(t)]);
-  const common = ['--runner', 'fake', '--cases', 'casual-changelog-skill'];
+  const [repo, homeBefore, homeAfter] = await Promise.all([
+    skillRepo(t),
+    tempDir(t),
+    tempDir(t),
+  ]);
 
   const [before, after] = await Promise.all([
-    cli(homeBefore, [
-      'skill',
-      'eval',
-      '--baseline',
-      'HEAD',
-      'skill-author',
-      ...common,
-    ]),
-    cli(homeAfter, [
-      'skill',
-      'eval',
-      'skill-author',
-      ...common,
-      '--baseline',
-      'HEAD',
-    ]),
+    cli(
+      homeBefore,
+      ['skill', 'eval', '--baseline', 'main', 'demo-skill', '--runner', 'fake'],
+      {},
+      repo,
+    ),
+    cli(
+      homeAfter,
+      ['skill', 'eval', 'demo-skill', '--runner', 'fake', '--baseline', 'main'],
+      {},
+      repo,
+    ),
   ]);
 
   for (const result of [before, after]) {
@@ -491,20 +528,21 @@ test('--baseline <ref> is accepted before or after the skill name', async (t) =>
 });
 
 test('--baseline before the skill name without a ref keeps the name', async (t) => {
-  const home = await tempDir(t);
+  const [repo, home] = await Promise.all([skillRepo(t), tempDir(t)]);
 
   const [bare, missing] = await Promise.all([
-    cli(home, [
-      'skill',
-      'eval',
-      '--baseline',
-      'skill-author',
-      '--runner',
-      'fake',
-      '--cases',
-      'casual-changelog-skill',
-    ]),
-    cli(home, ['skill', 'eval', '--baseline', 'main', 'no-such-skill']),
+    cli(
+      home,
+      ['skill', 'eval', '--baseline', 'demo-skill', '--runner', 'fake'],
+      {},
+      repo,
+    ),
+    cli(
+      home,
+      ['skill', 'eval', '--baseline', 'main', 'no-such-skill'],
+      {},
+      repo,
+    ),
   ]);
 
   assert.equal(bare.code, 0, bare.stderr);
