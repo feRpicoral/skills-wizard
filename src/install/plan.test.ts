@@ -594,6 +594,25 @@ test('keep-local patterns are relative to the repository root, one region per pr
   );
 });
 
+test('keep-local patterns match paths with gitignore metacharacters literally', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const app = await gitProject({ root, subdir: 'packages/[app]*?' });
+
+  await installProject({
+    paths,
+    project: app,
+    tools: ['codex'],
+    overrides: { keepLocal: true },
+  });
+
+  await assert.doesNotReject(
+    run('git', ['check-ignore', '-q', 'packages/[app]*?/AGENTS.md'], {
+      cwd: root,
+    }),
+  );
+});
+
 test('project installs never write through links that leave the project', async (t) => {
   const paths = await tempPaths(t);
   const outside = await realpath(await tempDir(t));

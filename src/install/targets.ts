@@ -193,6 +193,13 @@ function projectToolTargets({
   return targets;
 }
 
+function gitignorePattern(path: string): string {
+  const escaped = path
+    .replace(/[[\]*?\\]/g, '\\$&')
+    .replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length));
+  return `/${escaped}`;
+}
+
 interface GitExcludeTargetParams {
   root: string;
   excludePath: string;
@@ -209,7 +216,7 @@ function gitExcludeTarget({
   manifestPath,
 }: GitExcludeTargetParams): ExcludeRegionTarget {
   const patterns = [...targets.map((target) => target.path), manifestPath]
-    .map((path) => `/${relative(root, path)}`)
+    .map((path) => gitignorePattern(relative(root, path)))
     .join('\n');
   return {
     kind: 'exclude-region',
