@@ -15,6 +15,9 @@ interface StagedText {
   onDisk: string | null;
 }
 
+// Looks the path up by its real location, resolving links that are still on
+// disk. Callers pass the resolved write path, so a link deleted earlier in the
+// plan is never read through; deletions are staged under the deleted path.
 export async function readStaged({
   staged,
   path,
