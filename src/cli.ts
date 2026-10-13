@@ -84,8 +84,8 @@ Options:
   --baseline [none|ref] skill eval: run the without_skill baseline (default). --no-baseline or
                         --baseline none skips it; --baseline <ref> compares against the skill at a
                         git ref instead (cannot be combined with --compare)
-  --compare <ref>       skill eval: also run an old_skill snapshot of the skill folder at <ref>, read
-                        from the git repository that contains the skill
+  --compare <ref|list>  skill eval: run an old_skill snapshot at git <ref>, or compare against
+                        competing skills (<skill-a>,<skill-b>) side by side
   --case <id>           skill eval: filter to a single eval case ID
   --cases <ids>         skill eval: comma-separated eval case IDs
   --parallel <n>        skill eval/triggers: concurrent runs (default: 2)
@@ -744,6 +744,7 @@ async function main(argv: string[]): Promise<number> {
         ...(runs !== undefined ? { runs } : {}),
         ...(baseline !== undefined ? { baseline } : {}),
         ...(compare !== undefined ? { compare } : {}),
+        ...(baselineRef !== undefined ? { forceCompareRef: true } : {}),
         ...(values.case !== undefined ? { caseId: values.case } : {}),
         ...(cases !== undefined ? { cases } : {}),
         ...(parallel !== undefined ? { parallel } : {}),

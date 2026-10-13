@@ -10,7 +10,12 @@ import {
   type GradingReport,
   type TimingReport,
 } from './grade.ts';
-import type { EvalRunnerName, EvalVariant } from './workspace.ts';
+import {
+  compareSkillVariant,
+  type EvalRunnerName,
+  type EvalVariant,
+  parseCompareSkillVariant,
+} from './workspace.ts';
 
 /** Version of the `benchmark.json` and `triggers.json` formats. */
 export const EVAL_SCHEMA_VERSION = 1;
@@ -58,6 +63,7 @@ export interface AssertionAggregate {
   with_skill_pass_rate: number;
   baseline_pass_rate?: number;
   old_skill_pass_rate?: number;
+  compare_pass_rates?: Record<string, number>;
   /**
    * Compared with `without_skill`, or with `old_skill` when the eval ran no
    * baseline; `no-baseline` when there is neither.
@@ -105,6 +111,7 @@ export interface BenchmarkMetadata {
   timestamp: string;
   runs_per_configuration: number;
   compare_ref?: string;
+  compare_skills?: string[];
   /** Status of the `without_skill` runs only. */
   baseline_status: BaselineStatus;
   /**
@@ -119,8 +126,10 @@ export interface BenchmarkRunSummary {
   with_skill: VariantAggregate;
   without_skill?: VariantAggregate;
   old_skill?: VariantAggregate;
+  compare_skills?: Record<string, VariantAggregate>;
   delta?: DeltaSummary;
   old_skill_delta?: DeltaSummary;
+  compare_deltas?: Record<string, DeltaSummary>;
 }
 
 export interface BenchmarkSummary {
@@ -312,11 +321,13 @@ export function classifyAssertion({
 interface AggregateCaseAssertionsParams {
   evalCase: EvalCase;
   caseRuns: readonly EvalRunRecord[];
+  compareSkillNames: readonly string[];
 }
 
 function aggregateCaseAssertions({
   evalCase,
   caseRuns,
+  compareSkillNames,
 }: AggregateCaseAssertionsParams): AssertionAggregate[] {
   const withRuns = caseRuns.filter((run) => run.variant === 'with_skill');
   const withoutRuns = caseRuns.filter((run) => run.variant === 'without_skill');
@@ -337,6 +348,17 @@ function aggregateCaseAssertions({
     const withRate = rateFor(withRuns) ?? 0;
     const withoutRate = rateFor(withoutRuns);
     const oldRate = rateFor(oldRuns);
+    const comparePassRates: Record<string, number> = {};
+    let firstCompareRate: number | undefined;
+    for (const name of compareSkillNames) {
+      const rate = rateFor(
+        caseRuns.filter((run) => run.variant === compareSkillVariant(name)),
+      );
+      if (rate !== undefined) {
+        comparePassRates[name] = rate;
+        firstCompareRate ??= rate;
+      }
+    }
 
     return {
       text: label,
@@ -344,9 +366,12 @@ function aggregateCaseAssertions({
       with_skill_pass_rate: withRate,
       ...(withoutRate !== undefined ? { baseline_pass_rate: withoutRate } : {}),
       ...(oldRate !== undefined ? { old_skill_pass_rate: oldRate } : {}),
+      ...(Object.keys(comparePassRates).length > 0
+        ? { compare_pass_rates: comparePassRates }
+        : {}),
       classification: classifyAssertion({
         withSkillRate: withRate,
-        referenceRate: withoutRate ?? oldRate,
+        referenceRate: withoutRate ?? oldRate ?? firstCompareRate,
       }),
       ...(oldRate !== undefined
         ? {
@@ -373,6 +398,7 @@ export interface AggregateBenchmarkParams {
   /** From `with_skill`/`old_skill` workspaces (`PreparedWorkspace.skillShadowed`). */
   withSkillContaminated?: boolean;
   compareRef?: string;
+  compareSkills?: readonly string[];
   warnings?: readonly string[];
   timestamp?: string;
 }
@@ -388,9 +414,23 @@ export function aggregateBenchmark({
   possiblyContaminated = false,
   withSkillContaminated = false,
   compareRef,
+  compareSkills,
   warnings = [],
   timestamp = new Date().toISOString(),
 }: AggregateBenchmarkParams): BenchmarkSummary {
+  const discoveredCompareNames = [
+    ...new Set(
+      runs.flatMap((run) => {
+        const name = parseCompareSkillVariant(run.variant);
+        return name ? [name] : [];
+      }),
+    ),
+  ];
+  const compareSkillNames =
+    compareSkills && compareSkills.length > 0
+      ? compareSkills
+      : discoveredCompareNames;
+
   const withRuns = runs.filter((run) => run.variant === 'with_skill');
   const withoutRuns = runs.filter((run) => run.variant === 'without_skill');
   const oldRuns = runs.filter((run) => run.variant === 'old_skill');
@@ -401,14 +441,33 @@ export function aggregateBenchmark({
   const oldAggregate =
     oldRuns.length > 0 ? aggregateVariantRuns(oldRuns) : undefined;
 
+  const compareAggregates: Record<string, VariantAggregate> = {};
+  const compareDeltas: Record<string, DeltaSummary> = {};
+  for (const name of compareSkillNames) {
+    const cRuns = runs.filter(
+      (run) => run.variant === compareSkillVariant(name),
+    );
+    if (cRuns.length > 0) {
+      const agg = aggregateVariantRuns(cRuns);
+      compareAggregates[name] = agg;
+      compareDeltas[name] = computeVariantDelta({
+        primary: withAggregate,
+        reference: agg,
+      });
+    }
+  }
+
+  const allVariants: EvalVariant[] = [
+    'with_skill',
+    'without_skill',
+    'old_skill',
+    ...compareSkillNames.map((name) => compareSkillVariant(name)),
+  ];
+
   const caseSummaries: CaseBenchmarkSummary[] = cases.map((evalCase) => {
     const caseRuns = runs.filter((run) => run.case_id === evalCase.id);
     const variants: Partial<Record<EvalVariant, VariantAggregate>> = {};
-    for (const variant of [
-      'with_skill',
-      'without_skill',
-      'old_skill',
-    ] as const) {
+    for (const variant of allVariants) {
       const vRuns = caseRuns.filter((run) => run.variant === variant);
       if (vRuns.length > 0) {
         variants[variant] = aggregateVariantRuns(vRuns);
@@ -419,7 +478,11 @@ export function aggregateBenchmark({
       prompt: evalCase.prompt,
       expected_output: evalCase.expected_output,
       variants,
-      assertions: aggregateCaseAssertions({ evalCase, caseRuns }),
+      assertions: aggregateCaseAssertions({
+        evalCase,
+        caseRuns,
+        compareSkillNames,
+      }),
       runs: caseRuns,
     };
   });
@@ -472,6 +535,9 @@ export function aggregateBenchmark({
       timestamp,
       runs_per_configuration: runsPerConfig,
       ...(compareRef ? { compare_ref: compareRef } : {}),
+      ...(compareSkillNames.length > 0
+        ? { compare_skills: [...compareSkillNames] }
+        : {}),
       baseline_status: baselineStatus,
       with_skill_contaminated: withSkillContaminated,
       warnings: [...warnings],
@@ -480,6 +546,9 @@ export function aggregateBenchmark({
       with_skill: withAggregate,
       ...(withoutAggregate ? { without_skill: withoutAggregate } : {}),
       ...(oldAggregate ? { old_skill: oldAggregate } : {}),
+      ...(Object.keys(compareAggregates).length > 0
+        ? { compare_skills: compareAggregates }
+        : {}),
       ...(withoutAggregate
         ? {
             delta: computeVariantDelta({
@@ -495,6 +564,9 @@ export function aggregateBenchmark({
               reference: oldAggregate,
             }),
           }
+        : {}),
+      ...(Object.keys(compareDeltas).length > 0
+        ? { compare_deltas: compareDeltas }
         : {}),
     },
     cases: caseSummaries,
@@ -652,10 +724,18 @@ const deltaSummarySchema = z.looseObject({
   tokens: z.string(),
 });
 
+const variantSchema = z.custom<EvalVariant>(
+  (val) =>
+    typeof val === 'string' &&
+    ((VARIANTS as readonly string[]).includes(val) ||
+      (val.startsWith('compare:') && val.length > 'compare:'.length)),
+  { error: 'Invalid eval variant' },
+);
+
 const runRecordSchema = z.looseObject({
   case_id: z.string(),
   prompt: z.string(),
-  variant: z.enum(VARIANTS),
+  variant: variantSchema,
   run_index: z.number().int(),
   grading: z.looseObject({
     expectations: z.array(
@@ -688,6 +768,7 @@ const assertionAggregateSchema = z.looseObject({
   with_skill_pass_rate: z.number(),
   baseline_pass_rate: z.number().optional(),
   old_skill_pass_rate: z.number().optional(),
+  compare_pass_rates: z.record(z.string(), z.number()).optional(),
   classification: z.enum(CLASSIFICATIONS),
   old_skill_classification: z.enum(CLASSIFICATIONS).optional(),
 });
@@ -701,6 +782,7 @@ const benchmarkSummarySchema = z.looseObject({
     timestamp: z.string(),
     runs_per_configuration: z.number().int(),
     compare_ref: z.string().optional(),
+    compare_skills: z.array(z.string()).optional(),
     baseline_status: z.enum(['clean', 'possibly contaminated', 'skipped']),
     with_skill_contaminated: z.boolean().default(false),
     warnings: z.array(z.string()),
@@ -709,15 +791,17 @@ const benchmarkSummarySchema = z.looseObject({
     with_skill: variantAggregateSchema,
     without_skill: variantAggregateSchema.optional(),
     old_skill: variantAggregateSchema.optional(),
+    compare_skills: z.record(z.string(), variantAggregateSchema).optional(),
     delta: deltaSummarySchema.optional(),
     old_skill_delta: deltaSummarySchema.optional(),
+    compare_deltas: z.record(z.string(), deltaSummarySchema).optional(),
   }),
   cases: z.array(
     z.looseObject({
       case_id: z.string(),
       prompt: z.string(),
       expected_output: z.string(),
-      variants: z.partialRecord(z.enum(VARIANTS), variantAggregateSchema),
+      variants: z.record(z.string(), variantAggregateSchema),
       assertions: z.array(assertionAggregateSchema),
       runs: z.array(runRecordSchema),
     }),

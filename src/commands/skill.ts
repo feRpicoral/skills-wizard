@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, realpath, writeFile } from 'node:fs/promises';
 import {
   basename,
   dirname,
@@ -29,8 +29,9 @@ import {
   type EvalRunnerName,
   parseEvalRunnerName,
 } from '../evals/runners/index.ts';
+import type { ComparedSkillSpec } from '../evals/workspace.ts';
 import { displayPath } from '../install/describe.ts';
-import { isDirectory, lstatIfExists } from '../install/fs.ts';
+import { isDirectory, lstatIfExists, statIfExists } from '../install/fs.ts';
 import {
   type CatalogEntry,
   repositoryPaths,
@@ -58,6 +59,7 @@ export interface SkillCommandOptions {
   runs?: number;
   baseline?: boolean;
   compare?: string;
+  forceCompareRef?: boolean;
   caseId?: string;
   cases?: readonly string[];
   parallel?: number;
@@ -110,6 +112,10 @@ function printBenchmarkSummary(
           `${formatPassRateDelta(summary.with_skill, summary.old_skill)} vs old_skill`,
         ]
       : []),
+    ...Object.entries(summary.compare_skills ?? {}).map(
+      ([name, variant]) =>
+        `${formatPassRateDelta(summary.with_skill, variant)} vs ${name}`,
+    ),
   ];
   const deltaStr = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
   ctx.print(
@@ -221,6 +227,157 @@ async function resolveTargetSkill({
     return { skillName, skillDir: resolved };
   }
   throw new UsageError(`Skill "${nameOrPath}" was not found in skills/`);
+}
+
+interface ResolveComparedSkillParams {
+  ctx: Context;
+  nameOrPath: string;
+}
+
+async function tryResolveLocalComparedSkill({
+  ctx,
+  nameOrPath,
+}: ResolveComparedSkillParams): Promise<ComparedSkillSpec | null> {
+  const candidates = isSkillName(nameOrPath)
+    ? [
+        join(ctx.cwd, 'skills', nameOrPath),
+        join(ctx.repoRoot, 'skills', nameOrPath),
+        join(ctx.paths.skillsDir, nameOrPath),
+      ]
+    : [];
+  for (const dir of candidates) {
+    if ((await statIfExists(join(dir, 'SKILL.md')))?.isFile()) {
+      const report = await validateSkill(dir, { strict: false });
+      const skillName =
+        report.name && isSkillName(report.name) ? report.name : nameOrPath;
+      return { skillName, skillDir: dir };
+    }
+  }
+  const resolved = resolve(ctx.cwd, nameOrPath);
+  if ((await statIfExists(join(resolved, 'SKILL.md')))?.isFile()) {
+    const report = await validateSkill(resolved, { strict: false });
+    const fallbackName = basename(resolved);
+    const skillName =
+      report.name && isSkillName(report.name)
+        ? report.name
+        : isSkillName(fallbackName)
+          ? fallbackName
+          : undefined;
+    if (!skillName) {
+      throw new UsageError(
+        `Compared skill directory "${nameOrPath}" does not have a valid skill name`,
+      );
+    }
+    return { skillName, skillDir: resolved };
+  }
+  return null;
+}
+
+async function resolveComparedSkill({
+  ctx,
+  nameOrPath,
+}: ResolveComparedSkillParams): Promise<ComparedSkillSpec> {
+  const local = await tryResolveLocalComparedSkill({ ctx, nameOrPath });
+  if (local !== null) return local;
+
+  if (isSkillName(nameOrPath)) {
+    const library = await loadSkillLibrary(ctx.repoRoot);
+    const entry = library.catalog.skills.find(
+      (item) => item.name === nameOrPath,
+    );
+    if (entry !== undefined) {
+      const root = await ensureSource(sourceCache(ctx), {
+        repo: entry.repo,
+        ...(entry.ref ? { ref: entry.ref } : {}),
+        paths: repositoryPaths(library.catalog, entry.repo),
+      });
+      const skillDir =
+        entry.path === WHOLE_REPOSITORY ? root : join(root, entry.path);
+      if ((await statIfExists(join(skillDir, 'SKILL.md')))?.isFile()) {
+        return { skillName: entry.name, skillDir };
+      }
+    }
+  }
+
+  throw new UsageError(
+    `Compared skill "${nameOrPath}" was not found in skills/, catalog.yaml, or on disk`,
+  );
+}
+
+interface ResolveCompareSpecParams {
+  ctx: Context;
+  primarySkillName: string;
+  primarySkillDir: string;
+  compare: string | undefined;
+  forceCompareRef: boolean;
+}
+
+interface ResolvedCompareSpec {
+  compareRef?: string;
+  compareSkills?: ComparedSkillSpec[];
+}
+
+async function resolveCompareSpec({
+  ctx,
+  primarySkillName,
+  primarySkillDir,
+  compare,
+  forceCompareRef,
+}: ResolveCompareSpecParams): Promise<ResolvedCompareSpec> {
+  if (compare === undefined) return {};
+  if (forceCompareRef) return { compareRef: compare };
+  const primaryRealDir = await realpath(primarySkillDir);
+
+  if (compare.includes(',')) {
+    const rawItems = compare.split(',').map((item) => item.trim());
+    if (rawItems.some((item) => item === '')) {
+      throw new UsageError(
+        '--compare skill list must not contain empty entries',
+      );
+    }
+    const compareSkills: ComparedSkillSpec[] = [];
+    const seenRealDirs = new Set<string>([primaryRealDir]);
+    const seenNames = new Set<string>();
+    for (const item of rawItems) {
+      const resolved = await resolveComparedSkill({ ctx, nameOrPath: item });
+      const realDir = await realpath(resolved.skillDir);
+      if (realDir === primaryRealDir) continue;
+      if (resolved.skillName === primarySkillName) {
+        throw new UsageError(
+          `Compared skill "${item}" has the same name "${primarySkillName}" as the skill under evaluation; use --compare <ref> to compare two revisions of the same skill`,
+        );
+      }
+      if (seenRealDirs.has(realDir)) continue;
+      if (seenNames.has(resolved.skillName)) {
+        throw new UsageError(
+          `Cannot compare two skills with the same name "${resolved.skillName}"`,
+        );
+      }
+      seenRealDirs.add(realDir);
+      seenNames.add(resolved.skillName);
+      compareSkills.push(resolved);
+    }
+    if (compareSkills.length === 0) {
+      throw new UsageError(
+        '--compare must include at least one competing skill distinct from the skill under evaluation',
+      );
+    }
+    return { compareSkills };
+  }
+
+  const singleLocal = await tryResolveLocalComparedSkill({
+    ctx,
+    nameOrPath: compare,
+  });
+  if (
+    singleLocal !== null &&
+    singleLocal.skillName !== primarySkillName &&
+    (await realpath(singleLocal.skillDir)) !== primaryRealDir
+  ) {
+    return { compareSkills: [singleLocal] };
+  }
+
+  return { compareRef: compare };
 }
 
 function parseTemplate(value: string | undefined): SkillTemplate {
@@ -532,6 +689,7 @@ export async function runSkill(
     runs,
     baseline,
     compare,
+    forceCompareRef = false,
     caseId,
     cases,
     parallel,
@@ -580,12 +738,19 @@ export async function runSkill(
   if (subcommand === 'eval') {
     if (paths.length !== 1 || !paths[0]) {
       throw new UsageError(
-        'Usage: agents-config skill eval <name> [--runner <name>] [--runs <n>] [--baseline|--no-baseline|--baseline none|<ref>] [--compare <ref>] [--case <id>] [--cases <ids>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
+        'Usage: agents-config skill eval <name> [--runner <name>] [--runs <n>] [--baseline|--no-baseline|--baseline none|<ref>] [--compare <ref>|<skill-a>,<skill-b>] [--case <id>] [--cases <ids>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
       );
     }
     const { skillName, skillDir } = await resolveTargetSkill({
       ctx,
       nameOrPath: paths[0],
+    });
+    const { compareRef, compareSkills } = await resolveCompareSpec({
+      ctx,
+      primarySkillName: skillName,
+      primarySkillDir: skillDir,
+      compare,
+      forceCompareRef,
     });
     const runner = await resolveEvalRunner({ ctx, rawRunner, binary, sandbox });
     const result = await runSkillEval({
@@ -595,7 +760,8 @@ export async function runSkill(
       runner,
       runs: runs ?? 1,
       baseline: baseline ?? true,
-      compareRef: compare,
+      compareRef,
+      compareSkills,
       caseId,
       caseIds: cases,
       parallel: parallel ?? 2,

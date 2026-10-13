@@ -1478,3 +1478,50 @@ test('runAdd searches skills.sh and awesome index and installs the skill when --
   assert.ok(catalog.skills.some((entry) => entry.name === 'tanstack-query'));
   assert.ok(catalog.skills.some((entry) => entry.name === 'awesome-linter'));
 });
+
+test('skill eval --compare <skill-a>,<skill-b> evaluates competing skills side by side and prints deltas', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeFiles(join(repoRoot, 'skills', 'primary-skill'), {
+    'SKILL.md': skillSource('primary-skill'),
+    'evals/evals.json': JSON.stringify({
+      skill_name: 'primary-skill',
+      evals: [
+        {
+          id: 'case-1',
+          prompt: 'Configure the project',
+          expected_output: 'Configured project',
+          assertions: ['The output confirms skill execution'],
+        },
+      ],
+    }),
+  });
+  await writeFiles(join(repoRoot, 'skills', 'rival-skill'), {
+    'SKILL.md': skillSource('rival-skill'),
+  });
+
+  const code = await runSkill(ctx, {
+    subcommand: 'eval',
+    paths: ['primary-skill'],
+    runner: 'fake',
+    compare: 'primary-skill,rival-skill',
+  });
+
+  assert.equal(code, 0);
+  assert.ok(
+    output.some(
+      (line) =>
+        line.includes('Evaluated primary-skill with fake') &&
+        line.includes('vs baseline') &&
+        line.includes('vs rival-skill'),
+    ),
+  );
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'eval',
+      paths: ['primary-skill'],
+      runner: 'fake',
+      compare: 'primary-skill,',
+    }),
+    UsageError,
+  );
+});

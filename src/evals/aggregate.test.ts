@@ -765,3 +765,50 @@ test('with_skill shadowing is reported apart from the baseline status', () => {
     /- \*\*`with_skill` status:\*\* possibly contaminated/,
   );
 });
+
+test('aggregateBenchmark and renderBenchmarkReport include compared skills and deltas in benchmark.json and report.md', async (t) => {
+  const dir = await tempDir(t);
+  const benchmark = aggregateBenchmark({
+    ...baseParams,
+    baselineEnabled: true,
+    compareSkills: ['skill-b', 'skill-c'],
+    runs: [
+      makeRun({ variant: 'with_skill', passed: [true, true] }),
+      makeRun({ variant: 'without_skill', passed: [false, false] }),
+      makeRun({ variant: 'compare:skill-b', passed: [true, false] }),
+      makeRun({ variant: 'compare:skill-c', passed: [false, true] }),
+    ],
+  });
+
+  await writeFile(join(dir, 'benchmark.json'), JSON.stringify(benchmark));
+  const reloaded = await loadBenchmarkFromIteration(dir);
+  const markdown = renderBenchmarkReport(benchmark);
+
+  assert.deepEqual(reloaded, benchmark);
+  assert.deepEqual(benchmark.metadata.compare_skills, ['skill-b', 'skill-c']);
+  assert.equal(
+    benchmark.run_summary.compare_skills?.['skill-b']?.pass_rate.mean,
+    0.5,
+  );
+  assert.equal(
+    benchmark.run_summary.compare_deltas?.['skill-b']?.pass_rate,
+    '+0.50',
+  );
+  assert.deepEqual(benchmark.cases[0]?.assertions[0]?.compare_pass_rates, {
+    'skill-b': 1,
+    'skill-c': 0,
+  });
+  assert.match(
+    markdown,
+    /- \*\*Compared against skills:\*\* `skill-b`, `skill-c`/,
+  );
+  assert.match(markdown, /\| `compare:skill-b` \| 50\.0% ± 0\.0% \|/);
+  assert.match(
+    markdown,
+    /\| \*\*Delta \(vs skill-b\)\*\* \| \*\*\+50\.0 pp\*\* \|/,
+  );
+  assert.match(
+    markdown,
+    /\| Assertion \| Kind \| `with_skill` \| `without_skill` \| `compare:skill-b` \| `compare:skill-c` \| Classification \(vs baseline\) \|/,
+  );
+});

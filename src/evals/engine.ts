@@ -26,12 +26,16 @@ import { renderBenchmarkReport, renderTriggerReport } from './report.ts';
 import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 import {
   assertSafeGitRef,
+  type ComparedSkillSpec,
+  compareSkillVariant,
   type EvalVariant,
+  parseCompareSkillVariant,
   personalSkillShadowWarning,
   prepareEvalWorkspace,
   prepareTriggerWorkspace,
   resolveSkillRepository,
   validateEvalSuiteFileDestinations,
+  variantDirName,
   verifySkillAtRef,
 } from './workspace.ts';
 
@@ -215,6 +219,7 @@ export interface RunSkillEvalParams {
   runs?: number;
   baseline?: boolean;
   compareRef?: string;
+  compareSkills?: readonly ComparedSkillSpec[];
   caseId?: string;
   caseIds?: readonly string[];
   parallel?: number;
@@ -246,6 +251,7 @@ export async function runSkillEval({
   runs = 1,
   baseline = true,
   compareRef,
+  compareSkills,
   caseId,
   caseIds,
   parallel = 2,
@@ -256,6 +262,15 @@ export async function runSkillEval({
   env,
   onLog,
 }: RunSkillEvalParams): Promise<RunSkillEvalResult> {
+  if (
+    compareRef !== undefined &&
+    compareSkills !== undefined &&
+    compareSkills.length > 0
+  ) {
+    throw new EvalError(
+      'Cannot combine compareRef and compareSkills in the same evaluation',
+    );
+  }
   const suite = await loadEvalSuite(skillDir);
   const requestedIds = [...(caseId ? [caseId] : []), ...(caseIds ?? [])];
   for (const id of requestedIds) {
@@ -271,11 +286,39 @@ export async function runSkillEval({
   if (selectedCases.length === 0) {
     throw new EvalError(`No eval cases found in ${skillName}`);
   }
-  validateEvalSuiteFileDestinations({ cases: selectedCases, skillName });
+  const compareSkillsByName = new Map<string, ComparedSkillSpec>();
+  for (const item of compareSkills ?? []) {
+    if (item.skillName === skillName) {
+      throw new EvalError(
+        `Compared skill "${item.skillName}" must have a different name from the target skill "${skillName}"`,
+      );
+    }
+    if (compareSkillsByName.has(item.skillName)) {
+      throw new EvalError(
+        `Duplicate compared skill name "${item.skillName}" in compareSkills`,
+      );
+    }
+    const skillMd = await statIfExists(join(item.skillDir, 'SKILL.md'));
+    if (!skillMd?.isFile()) {
+      throw new EvalError(
+        `Compared skill "${item.skillName}" is missing SKILL.md in ${item.skillDir}`,
+      );
+    }
+    compareSkillsByName.set(item.skillName, item);
+  }
+  const compareSkillNames = [...compareSkillsByName.keys()];
+  validateEvalSuiteFileDestinations({
+    cases: selectedCases,
+    skillName,
+    compareSkillNames,
+  });
 
   const variants: EvalVariant[] = ['with_skill'];
   if (baseline) variants.push('without_skill');
   if (compareRef) variants.push('old_skill');
+  for (const name of compareSkillNames) {
+    variants.push(compareSkillVariant(name));
+  }
 
   // Everything that can fail for every job is checked before the iteration
   // directory exists, so a bad ref or a missing CLI leaves nothing behind.
@@ -313,10 +356,16 @@ export async function runSkillEval({
       const runDir = join(
         iterationDir,
         `eval-${job.evalCase.id}`,
-        job.variant,
+        variantDirName(job.variant),
         `run-${job.runIndex}`,
       );
       await mkdir(runDir, { recursive: true });
+      const comparedName = parseCompareSkillVariant(job.variant);
+      const compareSkill =
+        comparedName !== undefined
+          ? compareSkillsByName.get(comparedName)
+          : undefined;
+      const activeSkillName = compareSkill?.skillName ?? skillName;
       // A workspace that cannot be prepared is a harness problem shared by
       // every job, so it is fatal rather than a failed run.
       const prepared = await prepareEvalWorkspace({
@@ -329,6 +378,7 @@ export async function runSkillEval({
         paths,
         repoRoot,
         compareRef,
+        compareSkill,
         env,
       });
 
@@ -352,7 +402,7 @@ export async function runSkillEval({
             prompt: job.evalCase.prompt,
             workdir: prepared.workdir,
             runDir,
-            skillName,
+            skillName: activeSkillName,
             timeoutSeconds,
             sandbox,
             excludeSkill: job.variant === 'without_skill',
@@ -413,6 +463,7 @@ export async function runSkillEval({
     possiblyContaminated,
     withSkillContaminated,
     compareRef,
+    compareSkills: compareSkillNames,
     warnings: [...warnings],
   });
   const reportMarkdown = renderBenchmarkReport(benchmark);
