@@ -1,7 +1,6 @@
 ---
 name: skill-author
 description: Designs, scaffolds, writes, and refactors Agent Skills (SKILL.md, references/, scripts/, assets/, and starter evals/) in skills/<name>. Use when the user asks to create a new skill, turn a workflow into a reusable skill, scaffold skills/<name>, write or tighten SKILL.md instructions and frontmatter descriptions, or split an oversized skill into progressive-disclosure reference files. Don't use for running benchmarks, grading eval runs, or computing trigger precision/recall (use skill-evaluator) or for editing global AGENTS.md blocks.
-license: MIT
 compatibility: Requires git and agents-config on PATH
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: skill-evaluator
 description: Evaluates, benchmarks, grades, and optimizes Agent Skills using evals/evals.json, evals/trigger_queries.json, and the agents-config skill eval, triggers, and report commands. Use when the user asks to benchmark a skill with vs without baseline, compare a skill against an older git ref, write or tighten scripted and blind-grader assertions in evals.json, measure trigger precision and recall on train/validation splits, or audit benchmark.json and report.md for non-discriminating assertions or baseline contamination. Don't use for scaffolding a brand-new skill from scratch (use skill-author).
-license: MIT
 compatibility: Requires git and agents-config on PATH
 ---
 
