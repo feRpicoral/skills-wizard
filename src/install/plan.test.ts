@@ -20,6 +20,7 @@ import { ApplyError, ManifestError } from '../errors.ts';
 import {
   globalManifestPath,
   type Manifest,
+  type ManifestEntry,
   projectManifestPath,
   readManifest,
   readProjectManifest,
@@ -140,6 +141,11 @@ async function installProject({
 
 async function manifestOf(paths: Paths): Promise<Manifest | null> {
   return readManifest(globalManifestPath(paths));
+}
+
+async function projectEntries(dir: string): Promise<ManifestEntry[] | null> {
+  const stored = await readProjectManifest(projectManifestPath(dir), { dir });
+  return stored?.manifest.entries ?? null;
 }
 
 interface GitProjectParams {
@@ -525,9 +531,17 @@ test('an AGENTS.md that links to CLAUDE.md gets the region and no self-import', 
     tools: ['claude-code'],
   });
 
-  assert.equal(
-    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
-    `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  assert.deepEqual(
+    {
+      content: await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+      entries: await projectEntries(dir),
+    },
+    {
+      content: `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+      entries: [
+        { kind: 'region', path: join(dir, 'AGENTS.md'), createdFile: false },
+      ],
+    },
   );
 });
 
@@ -569,7 +583,13 @@ test('removing an install from an AGENTS.md that links to CLAUDE.md leaves no re
     tools: [],
   });
 
-  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '# Team\n');
+  assert.deepEqual(
+    {
+      content: await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+      entries: await projectEntries(dir),
+    },
+    { content: '# Team\n', entries: null },
+  );
 });
 
 test('a self-import added before AGENTS.md became a link is removed with the region kept', async (t) => {
@@ -590,9 +610,17 @@ test('a self-import added before AGENTS.md became a link is removed with the reg
     tools: ['claude-code'],
   });
 
-  assert.equal(
-    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
-    `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  assert.deepEqual(
+    {
+      content: await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+      entries: await projectEntries(dir),
+    },
+    {
+      content: `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+      entries: [
+        { kind: 'region', path: join(dir, 'AGENTS.md'), createdFile: false },
+      ],
+    },
   );
 });
 
@@ -610,11 +638,30 @@ test('two linked instructions files that share one real file get one region', as
   const paths = await tempPaths(t);
   const real = await linkedDotfile(paths);
 
-  await installGlobal(paths, ['claude-code', 'codex']);
+  const plan = await installGlobal(paths, ['claude-code', 'codex']);
 
-  assert.equal(
-    await readFile(real, 'utf8'),
-    `# Mine\n\n${BEGIN}\n# Rules\n\nGitHub username: octocat\n\n## Style\n\nBe direct.\n${END}\n`,
+  assert.deepEqual(
+    {
+      content: await readFile(real, 'utf8'),
+      changes: plan.actions.map((action) => action.change.type),
+      entries: (await manifestOf(paths))?.entries,
+    },
+    {
+      content: `# Mine\n\n${BEGIN}\n# Rules\n\nGitHub username: octocat\n\n## Style\n\nBe direct.\n${END}\n`,
+      changes: ['write', 'none'],
+      entries: [
+        {
+          kind: 'region',
+          path: join(paths.claudeHome, 'CLAUDE.md'),
+          createdFile: false,
+        },
+        {
+          kind: 'region',
+          path: join(paths.codexHome, 'AGENTS.md'),
+          createdFile: false,
+        },
+      ],
+    },
   );
 });
 
@@ -625,7 +672,22 @@ test('a real file shared through links keeps its region while a tool still uses 
 
   await installGlobal(paths, ['codex']);
 
-  assert.match(await readFile(real, 'utf8'), new RegExp(BEGIN));
+  assert.deepEqual(
+    {
+      hasRegion: (await readFile(real, 'utf8')).includes(BEGIN),
+      entries: (await manifestOf(paths))?.entries,
+    },
+    {
+      hasRegion: true,
+      entries: [
+        {
+          kind: 'region',
+          path: join(paths.codexHome, 'AGENTS.md'),
+          createdFile: false,
+        },
+      ],
+    },
+  );
 });
 
 test('a real file shared through links loses its region once no tool uses it', async (t) => {
@@ -634,9 +696,16 @@ test('a real file shared through links loses its region once no tool uses it', a
   await installGlobal(paths, ['claude-code', 'codex']);
   await installGlobal(paths, ['codex']);
 
-  await installGlobal(paths, []);
+  const plan = await installGlobal(paths, []);
 
-  assert.equal(await readFile(real, 'utf8'), '# Mine\n');
+  assert.deepEqual(
+    {
+      content: await readFile(real, 'utf8'),
+      statuses: plan.actions.map((action) => action.status),
+      manifest: await manifestOf(paths),
+    },
+    { content: '# Mine\n', statuses: ['remove'], manifest: null },
+  );
 });
 
 test('removing a project install deletes the files it created', async (t) => {
