@@ -156,13 +156,18 @@ export function normalizeUsage(raw: unknown): RunnerUsage {
   };
 }
 
-/** Whether a raw usage object carries at least one numeric token counter. */
+/**
+ * Whether a raw usage object reports real usage: at least one `*tokens`
+ * counter above zero. All-zero counters (e.g. on failed runs) count as not
+ * reported, so they are excluded from token statistics.
+ */
 export function isUsageReported(raw: unknown): boolean {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return false;
   }
   return Object.entries(raw).some(
-    ([key, value]) => key.endsWith('tokens') && typeof value === 'number',
+    ([key, value]) =>
+      key.endsWith('tokens') && typeof value === 'number' && value > 0,
   );
 }
 
