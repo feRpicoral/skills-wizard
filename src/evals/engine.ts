@@ -463,6 +463,7 @@ export async function runSkillTriggers({
         runDir,
         skillDir,
         skillName,
+        runner: runner.name,
         env,
       });
       try {

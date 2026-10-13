@@ -14,19 +14,93 @@ import { promisify } from 'node:util';
 
 import { type Environment, gitEnvironment, type Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
-import { lstatIfExists } from '../install/fs.ts';
+import { lstatIfExists, readDirIfExists } from '../install/fs.ts';
 import { scanInstalledSkills } from '../skills/collisions.ts';
 import { failureDetail } from '../skills/process.ts';
 import { copySkillTree, escapingLinks } from '../skills/tree.ts';
+import { type ToolId, TOOLS } from '../tools/registry.ts';
 import type { EvalCase } from './cases.ts';
 
 const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 30_000;
 
+/**
+ * Config passed to every git command run in an eval workspace, so that hooks
+ * and fsmonitor commands from the user's global git config never run.
+ */
+const WORKSPACE_GIT_CONFIG = [
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'core.fsmonitor=false',
+] as const;
+
+/** Directories the harness or the agent CLIs own inside an eval workspace. */
+const HARNESS_OWNED_DIRS = ['.agents', '.claude', '.gemini', '.codex'] as const;
+
+const DEFAULT_PROJECT_SKILLS_DIR = posix.join('.agents', 'skills');
+
 export type EvalVariant = 'with_skill' | 'without_skill' | 'old_skill';
 
 export type EvalRunnerName = 'agy' | 'claude' | 'codex' | 'gemini' | 'fake';
+
+const RUNNER_TOOLS: Readonly<Record<EvalRunnerName, ToolId | null>> = {
+  agy: 'antigravity-cli',
+  claude: 'claude-code',
+  codex: 'codex',
+  gemini: 'gemini-cli',
+  fake: null,
+};
+
+/**
+ * The project skills folder the runner's CLI reads, relative to the workspace
+ * (`.claude/skills` for Claude Code, `.agents/skills` for every other runner).
+ */
+export function projectSkillsDir(runner: EvalRunnerName): string {
+  const tool = RUNNER_TOOLS[runner];
+  const folder = tool ? TOOLS[tool].project.skills : undefined;
+  return folder ? folder.replaceAll('\\', '/') : DEFAULT_PROJECT_SKILLS_DIR;
+}
+
+export interface StagedSkillDirParams {
+  workdir: string;
+  runner: EvalRunnerName;
+  skillName: string;
+}
+
+/** Where the skill under evaluation is staged in a workspace for a runner. */
+export function stagedSkillDir({
+  workdir,
+  runner,
+  skillName,
+}: StagedSkillDirParams): string {
+  return join(workdir, projectSkillsDir(runner), skillName);
+}
+
+export interface PersonalSkillShadowParams {
+  runner: EvalRunnerName;
+  skillName: string;
+  paths?: Paths;
+}
+
+/**
+ * Returns a warning when a personal skill with the same name would be loaded
+ * instead of the staged project skill. Claude Code runs a personal skill in
+ * `~/.claude/skills/<name>` over a project skill with the same name.
+ */
+export async function personalSkillShadowWarning({
+  runner,
+  skillName,
+  paths,
+}: PersonalSkillShadowParams): Promise<string | undefined> {
+  if (!paths || runner !== 'claude') return undefined;
+  const personalRoot = TOOLS['claude-code'].global.skills?.(paths);
+  if (!personalRoot) return undefined;
+  const personalDir = join(personalRoot, skillName);
+  if ((await lstatIfExists(personalDir)) === null) return undefined;
+  return `Claude Code loads the personal skill "${personalDir}" instead of the staged project skill "${skillName}"; results are possibly contaminated.`;
+}
 
 export interface PreparedWorkspace {
   workdir: string;
@@ -61,6 +135,111 @@ export function mapCaseFileRelativePath({
   return afterPrefix;
 }
 
+export interface CaseFileDestinationsParams {
+  evalCase: Pick<EvalCase, 'id' | 'files'>;
+  skillName: string;
+}
+
+function isUnderDir(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(`${dir}/`);
+}
+
+/**
+ * Checks where a case's fixture files land in the workspace before anything
+ * is copied: destinations must stay inside the workspace, must not be inside
+ * `.git/`, the staged skill folder or a directory the harness and agent CLIs
+ * own (`.agents/`, `.claude/`, `.gemini/`, `.codex/`), and must not collide
+ * with each other. Comparisons ignore case, as on case-insensitive file
+ * systems. Throws an `EvalError` describing every problem.
+ */
+export function validateCaseFileDestinations({
+  evalCase,
+  skillName,
+}: CaseFileDestinationsParams): void {
+  const problems: string[] = [];
+  const seen = new Map<string, string>();
+  const stagedDirs = new Set(
+    (Object.keys(RUNNER_TOOLS) as EvalRunnerName[]).map((runner) =>
+      posix.join(projectSkillsDir(runner), skillName).toLowerCase(),
+    ),
+  );
+
+  for (const fileEntry of evalCase.files) {
+    const dest = mapCaseFileRelativePath({ fileEntry, caseId: evalCase.id });
+    const folded = dest.toLowerCase();
+    if (
+      dest === '' ||
+      dest === '.' ||
+      posix.isAbsolute(dest) ||
+      dest === '..' ||
+      dest.startsWith('../')
+    ) {
+      problems.push(`"${fileEntry}" maps outside the workspace ("${dest}")`);
+      continue;
+    }
+    if (isUnderDir(folded, '.git')) {
+      problems.push(`"${fileEntry}" maps into ".git/" ("${dest}")`);
+      continue;
+    }
+    const stagedDir = [...stagedDirs].find((dir) => isUnderDir(folded, dir));
+    if (stagedDir) {
+      problems.push(
+        `"${fileEntry}" maps into the staged skill folder "${stagedDir}/" ("${dest}")`,
+      );
+      continue;
+    }
+    const ownedDir = HARNESS_OWNED_DIRS.find((dir) => isUnderDir(folded, dir));
+    if (ownedDir) {
+      problems.push(
+        `"${fileEntry}" maps into "${ownedDir}/", which the eval harness and agent CLIs own ("${dest}")`,
+      );
+      continue;
+    }
+    const previous = seen.get(folded);
+    if (previous !== undefined) {
+      problems.push(
+        `"${fileEntry}" and "${previous}" map to the same destination "${dest}"`,
+      );
+      continue;
+    }
+    seen.set(folded, fileEntry);
+  }
+
+  for (const [folded, fileEntry] of seen) {
+    for (const [other, otherEntry] of seen) {
+      if (other !== folded && other.startsWith(`${folded}/`)) {
+        problems.push(
+          `"${fileEntry}" maps to a file that "${otherEntry}" needs as a directory`,
+        );
+      }
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new EvalError(
+      `Eval case "${evalCase.id}" has invalid fixture files: ${problems.join('; ')}`,
+    );
+  }
+}
+
+export interface EvalSuiteFileDestinationsParams {
+  cases: readonly Pick<EvalCase, 'id' | 'files'>[];
+  skillName: string;
+}
+
+/**
+ * Runs `validateCaseFileDestinations` for every case, so an eval can fail
+ * before any job starts.
+ */
+export function validateEvalSuiteFileDestinations({
+  cases,
+  skillName,
+}: EvalSuiteFileDestinationsParams): void {
+  for (const evalCase of cases) {
+    validateCaseFileDestinations({ evalCase, skillName });
+  }
+}
+
 interface GitCommandParams {
   cwd: string;
   args: string[];
@@ -90,15 +269,18 @@ async function runGit({
 
 interface CopyCaseFilesParams {
   skillDir: string;
+  skillName: string;
   workdir: string;
   evalCase: EvalCase;
 }
 
 async function copyCaseFiles({
   skillDir,
+  skillName,
   workdir,
   evalCase,
 }: CopyCaseFilesParams): Promise<void> {
+  validateCaseFileDestinations({ evalCase, skillName });
   for (const fileEntry of evalCase.files) {
     const srcPath = join(skillDir, fileEntry);
     const relDest = mapCaseFileRelativePath({
@@ -124,7 +306,7 @@ async function initWorkspaceGit({
 }: InitWorkspaceGitParams): Promise<void> {
   await runGit({
     cwd: workdir,
-    args: ['init'],
+    args: [...WORKSPACE_GIT_CONFIG, 'init'],
     env,
     failure: 'Failed to initialize eval workspace git repository',
   });
@@ -132,17 +314,18 @@ async function initWorkspaceGit({
   await mkdir(dirname(excludePath), { recursive: true });
   await writeFile(
     excludePath,
-    ['.agents/', '.claude/', '.gemini/', '.codex/', ''].join('\n'),
+    [...HARNESS_OWNED_DIRS.map((dir) => `${dir}/`), ''].join('\n'),
   );
   await runGit({
     cwd: workdir,
-    args: ['add', '-A'],
+    args: [...WORKSPACE_GIT_CONFIG, 'add', '-A'],
     env,
     failure: 'Failed to stage eval workspace fixture files',
   });
   await runGit({
     cwd: workdir,
     args: [
+      ...WORKSPACE_GIT_CONFIG,
       '-c',
       'user.name=agents-config',
       '-c',
@@ -150,6 +333,7 @@ async function initWorkspaceGit({
       '-c',
       'commit.gpgsign=false',
       'commit',
+      '--no-verify',
       '--allow-empty',
       '-m',
       'chore: eval workspace fixture',
@@ -267,6 +451,13 @@ async function isSkillInstalledGlobally({
       return true;
     }
   }
+  const agyPluginsDir = join(paths.geminiHome, 'antigravity-cli', 'plugins');
+  for (const plugin of (await readDirIfExists(agyPluginsDir)) ?? []) {
+    const dir = join(agyPluginsDir, plugin.name, 'skills', skillName);
+    if ((await lstatIfExists(dir)) !== null) {
+      return true;
+    }
+  }
   const scan = await scanInstalledSkills(paths, null);
   return scan.skills.some((skill) => skill.name === skillName);
 }
@@ -280,17 +471,14 @@ export async function applyBaselineExclusion({
   possiblyContaminated: boolean;
   warning?: string;
 }> {
-  if (runner === 'agy' || runner === 'fake') {
-    const file = join(workdir, '.agents', 'skills.json');
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(
-      file,
-      `${JSON.stringify({ exclude: [skillName] }, null, 2)}\n`,
-    );
+  if (runner === 'fake') {
     return { possiblyContaminated: false };
   }
 
   if (runner === 'claude') {
+    // Documented in the Claude Code skills and permissions docs: a
+    // `skillOverrides` entry of "off" hides a personal or project skill, and
+    // deny rules block in every permission mode, including bypassPermissions.
     const file = join(workdir, '.claude', 'settings.local.json');
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
@@ -310,6 +498,9 @@ export async function applyBaselineExclusion({
   }
 
   if (runner === 'gemini') {
+    // Documented in the Gemini CLI configuration reference (`skills.disabled`).
+    // Workspace settings load only in a trusted folder; a headless run in an
+    // untrusted folder exits with FatalUntrustedWorkspaceError instead.
     const file = join(workdir, '.gemini', 'settings.json');
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
@@ -319,6 +510,7 @@ export async function applyBaselineExclusion({
     return { possiblyContaminated: false };
   }
 
+  // agy and codex document no workspace-level way to turn off one skill.
   const installedGlobally = await isSkillInstalledGlobally({
     skillName,
     paths,
@@ -326,7 +518,7 @@ export async function applyBaselineExclusion({
   if (installedGlobally) {
     return {
       possiblyContaminated: true,
-      warning: `Runner "${runner}" has no documented workspace-level skill exclusion flag and "${skillName}" is installed globally; baseline is possibly contaminated.`,
+      warning: `Runner "${runner}" has no documented workspace-level skill exclusion and "${skillName}" is installed globally; baseline is possibly contaminated.`,
     };
   }
   return { possiblyContaminated: false };
@@ -361,48 +553,46 @@ export async function prepareEvalWorkspace({
   await rm(workdir, { recursive: true, force: true });
   await mkdir(workdir, { recursive: true });
 
-  await copyCaseFiles({ skillDir, workdir, evalCase });
+  await copyCaseFiles({ skillDir, skillName, workdir, evalCase });
   await initWorkspaceGit({ workdir, env });
 
-  if (variant === 'with_skill') {
-    const destSkillDir = join(workdir, '.agents', 'skills', skillName);
-    await copySkillTree({ source: skillDir, destination: destSkillDir });
-    return {
-      workdir,
-      variant,
-      runner,
-      skillName,
-      possiblyContaminated: false,
-    };
-  }
-
-  if (variant === 'old_skill') {
-    if (!repoRoot || !compareRef) {
-      throw new EvalError(
-        'old_skill workspace requires both repoRoot and compareRef',
-      );
-    }
-    const snapshotDir = join(runDir, '.old-skill-snapshot');
-    await rm(snapshotDir, { recursive: true, force: true });
-    try {
-      await extractSkillAtRef({
-        repoRoot,
-        skillDir,
-        ref: compareRef,
-        destDir: snapshotDir,
-        env,
-      });
-      const destSkillDir = join(workdir, '.agents', 'skills', skillName);
-      await copySkillTree({ source: snapshotDir, destination: destSkillDir });
-    } finally {
+  if (variant === 'with_skill' || variant === 'old_skill') {
+    const destSkillDir = stagedSkillDir({ workdir, runner, skillName });
+    if (variant === 'with_skill') {
+      await copySkillTree({ source: skillDir, destination: destSkillDir });
+    } else {
+      if (!repoRoot || !compareRef) {
+        throw new EvalError(
+          'old_skill workspace requires both repoRoot and compareRef',
+        );
+      }
+      const snapshotDir = join(runDir, '.old-skill-snapshot');
       await rm(snapshotDir, { recursive: true, force: true });
+      try {
+        await extractSkillAtRef({
+          repoRoot,
+          skillDir,
+          ref: compareRef,
+          destDir: snapshotDir,
+          env,
+        });
+        await copySkillTree({ source: snapshotDir, destination: destSkillDir });
+      } finally {
+        await rm(snapshotDir, { recursive: true, force: true });
+      }
     }
+    const warning = await personalSkillShadowWarning({
+      runner,
+      skillName,
+      paths,
+    });
     return {
       workdir,
       variant,
       runner,
       skillName,
-      possiblyContaminated: false,
+      possiblyContaminated: warning !== undefined,
+      ...(warning ? { warning } : {}),
     };
   }
 
@@ -426,20 +616,27 @@ export interface PrepareTriggerWorkspaceParams {
   runDir: string;
   skillDir: string;
   skillName: string;
+  runner: EvalRunnerName;
   env?: Environment;
 }
 
+/**
+ * Prepares a trigger-eval workspace with the skill staged where the runner
+ * reads project skills. Call `personalSkillShadowWarning` once per trigger
+ * eval to report a personal skill that would be loaded instead.
+ */
 export async function prepareTriggerWorkspace({
   runDir,
   skillDir,
   skillName,
+  runner,
   env,
 }: PrepareTriggerWorkspaceParams): Promise<string> {
   const workdir = join(runDir, 'workdir');
   await rm(workdir, { recursive: true, force: true });
   await mkdir(workdir, { recursive: true });
   await initWorkspaceGit({ workdir, env });
-  const destSkillDir = join(workdir, '.agents', 'skills', skillName);
+  const destSkillDir = stagedSkillDir({ workdir, runner, skillName });
   await copySkillTree({ source: skillDir, destination: destSkillDir });
   return workdir;
 }
