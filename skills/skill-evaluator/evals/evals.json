@@ -3,74 +3,81 @@
   "evals": [
     {
       "id": "casual-add-eval-suite",
-      "prompt": "We wrote this SKILL.md for markdown-link-checker, and now we need an eval suite for it. Create evals/evals.json with 3 test cases (casual, precise, edge case) that mix scripted assertions and blind-grader string assertions, plus evals/trigger_queries.json with 10 should_trigger and 10 should_not_trigger queries.",
-      "expected_output": "Valid evals/evals.json with 3 cases for markdown-link-checker and evals/trigger_queries.json with 20 balanced trigger queries.",
+      "prompt": "we wrote this markdown-link-checker skill (SKILL.md is right here) but it doesn't have any evals yet. can you set some up?",
+      "expected_output": "evals/evals.json for markdown-link-checker with at least 3 cases (casual, precise, edge case) that mix scripted assertions with blind-grader strings, and evals/trigger_queries.json with at least 10 should_trigger and 10 near-miss should_not_trigger queries.",
       "files": ["evals/files/casual-add-eval-suite/SKILL.md"],
       "assertions": [
-        "evals/evals.json contains 3 distinct eval cases covering casual, precise, and edge-case scenarios for markdown-link-checker",
-        "evals/trigger_queries.json contains 10 positive queries with should_trigger: true and 10 near-miss negative queries with should_trigger: false",
+        "evals/evals.json covers a casually phrased request, a precise specification and an edge case for markdown-link-checker",
+        "The should_trigger: false queries in evals/trigger_queries.json are near misses such as external URL uptime checks or HTML scraping rather than unrelated tasks",
         { "type": "json_valid", "path": "evals/evals.json" },
         { "type": "json_valid", "path": "evals/trigger_queries.json" },
         {
           "type": "regex",
           "path": "evals/evals.json",
           "pattern": "\"skill_name\":\\s*\"markdown-link-checker\""
+        },
+        {
+          "type": "command",
+          "run": "node -e \"const fs=require('fs');const s=JSON.parse(fs.readFileSync('evals/evals.json','utf8'));const types=new Set(['file_exists','file_absent','regex','json_valid','command']);const cases=Array.isArray(s.evals)?s.evals:[];const all=cases.flatMap(c=>Array.isArray(c.assertions)?c.assertions:[]);process.exit(cases.length>=3&&cases.every(c=>Array.isArray(c.assertions)&&c.assertions.length>0&&(c.files||[]).every(f=>f.startsWith('evals/files/')&&fs.existsSync(f)))&&all.every(a=>typeof a==='string'||types.has(a.type))&&all.some(a=>typeof a==='object')&&all.some(a=>typeof a==='string')?0:1)\"",
+          "expect": 0
+        },
+        {
+          "type": "command",
+          "run": "node -e \"const q=JSON.parse(require('fs').readFileSync('evals/trigger_queries.json','utf8'));const ok=Array.isArray(q)&&q.every(i=>typeof i.query==='string'&&typeof i.should_trigger==='boolean'&&!/^\\s*\\[/.test(i.query));const pos=ok?q.filter(i=>i.should_trigger).length:0;const neg=ok?q.length-pos:0;process.exit(ok&&pos>=10&&neg>=10&&new Set(q.map(i=>i.query)).size===q.length?0:1)\"",
+          "expect": 0
         }
       ]
     },
     {
       "id": "precise-scripted-assertions",
-      "prompt": "The assertions in evals/evals.json for tsconfig-strict-auditor are all vague natural-language strings that can be checked deterministically. Rewrite evals/evals.json so it uses scripted assertions (file_exists for tsconfig.json, file_absent for tsconfig.build.json, json_valid for tsconfig.json, and regex for erasableSyntaxOnly) plus one natural-language assertion checking that the agent explains why erasableSyntaxOnly is needed for Node 24.",
-      "expected_output": "Updated evals/evals.json using file_exists, file_absent, json_valid, and regex scripted assertion objects alongside one explanation string assertion.",
+      "prompt": "The assertions in evals/evals.json for tsconfig-strict-auditor are vague natural-language strings even though most can be checked deterministically. Rewrite them as scripted assertions (tsconfig.json exists, tsconfig.build.json is gone, tsconfig.json is valid JSON, tsconfig.json enables erasableSyntaxOnly) and keep one natural-language assertion that checks the agent explains why erasableSyntaxOnly is needed for Node 24.",
+      "expected_output": "evals/evals.json where the deterministic checks use file_exists, file_absent, json_valid and regex assertion objects and one string assertion about explaining erasableSyntaxOnly remains.",
       "files": ["evals/files/precise-scripted-assertions/evals/evals.json"],
       "assertions": [
-        "evals/evals.json preserves the natural-language assertion about explaining why erasableSyntaxOnly is required",
+        "evals/evals.json keeps a natural-language assertion about explaining why erasableSyntaxOnly is required for Node 24",
         { "type": "json_valid", "path": "evals/evals.json" },
         {
-          "type": "regex",
-          "path": "evals/evals.json",
-          "pattern": "\"type\":\\s*\"file_exists\""
+          "type": "command",
+          "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('evals/evals.json','utf8'));const a=s.evals[0].assertions;const by=t=>a.filter(x=>x&&x.type===t);const types=new Set(['file_exists','file_absent','regex','json_valid','command']);process.exit(by('file_exists').some(x=>x.path==='tsconfig.json')&&by('file_absent').some(x=>x.path==='tsconfig.build.json')&&by('json_valid').some(x=>x.path==='tsconfig.json')&&by('regex').some(x=>x.path==='tsconfig.json'&&/erasableSyntaxOnly/.test(x.pattern))&&a.every(x=>typeof x==='string'||types.has(x.type))?0:1)\"",
+          "expect": 0
         },
         {
-          "type": "regex",
-          "path": "evals/evals.json",
-          "pattern": "\"type\":\\s*\"file_absent\""
-        },
-        {
-          "type": "regex",
-          "path": "evals/evals.json",
-          "pattern": "\"type\":\\s*\"json_valid\""
-        },
-        {
-          "type": "regex",
-          "path": "evals/evals.json",
-          "pattern": "\"type\":\\s*\"regex\""
+          "type": "command",
+          "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('evals/evals.json','utf8'));const strings=s.evals[0].assertions.filter(x=>typeof x==='string');process.exit(strings.length===1&&/erasableSyntaxOnly/.test(strings[0])?0:1)\"",
+          "expect": 0
         }
       ]
     },
     {
       "id": "edge-audit-benchmark-report",
-      "prompt": "Inspect benchmark.json and triggers.json from our latest dockerfile-hardener evaluation and write a diagnosis to diagnosis.md explaining: (1) why the baseline comparison is unreliable, (2) which assertions are non-discriminating and how to replace them, (3) what the token/time delta and failing USER assertion indicate, and (4) what the gap between train and validation trigger metrics shows.",
-      "expected_output": "A diagnosis.md file identifying the possibly contaminated codex baseline, the 3 non-discriminating assertions, the +2300 token overhead with 0% pass-rate gain, and description overfitting between the train and validation trigger splits.",
+      "prompt": "here's benchmark.json and the two trigger runs (triggers-1 and triggers-2) from our latest dockerfile-hardener eval. the skill doesn't seem to be doing much, what's going on? write it up in diagnosis.md",
+      "expected_output": "A diagnosis.md that flags the possibly contaminated codex baseline, names the 3 non-discriminating assertions and suggests skill-specific replacements, points out the +2300 token and +9.3 s cost for a 0 pp pass-rate gain and the failing USER assertion, and reads the drop from 100% train recall to 50% validation recall as an overfitted description.",
       "files": [
         "evals/files/edge-audit-benchmark-report/benchmark.json",
-        "evals/files/edge-audit-benchmark-report/triggers.json"
+        "evals/files/edge-audit-benchmark-report/triggers-1/triggers.json",
+        "evals/files/edge-audit-benchmark-report/triggers-2/triggers.json"
       ],
       "assertions": [
-        "diagnosis.md explains that the without_skill baseline is marked possibly contaminated because dockerfile-hardener is installed globally and the codex runner lacks workspace-level skill exclusion",
-        "diagnosis.md identifies the 3 non-discriminating assertions and recommends replacing them with stricter checks that differentiate with_skill from baseline",
-        "diagnosis.md diagnoses the drop from 100% train recall/precision to 50% validation recall as description overfitting to the train split",
+        "diagnosis.md explains that the without_skill baseline is possibly contaminated because dockerfile-hardener is installed globally and the codex runner cannot exclude it, so the 0 pp delta is not trustworthy",
+        "diagnosis.md names the 3 non-discriminating assertions and recommends replacing them with checks for conventions the skill teaches, such as a non-root USER or a digest-pinned base image",
+        "diagnosis.md reads the drop from 100% train recall to 50% validation recall as a description overfitted to the train queries",
         { "type": "file_exists", "path": "diagnosis.md" },
         {
           "type": "regex",
           "path": "diagnosis.md",
-          "pattern": "possibly contaminated",
+          "pattern": "possibly contaminated|contaminat",
           "flags": "i"
         },
         {
           "type": "regex",
           "path": "diagnosis.md",
           "pattern": "non-discriminating",
+          "flags": "i"
+        },
+        {
+          "type": "regex",
+          "path": "diagnosis.md",
+          "pattern": "overfit",
           "flags": "i"
         }
       ]
