@@ -1,14 +1,37 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { cp, lstat, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  lstat,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { promisify } from 'node:util';
+
+import which from 'which';
 
 import { tempDir } from './test-support/fixtures.ts';
 
 const run = promisify(execFile);
 const CLI = join(import.meta.dirname, 'cli.ts');
+
+let searchPath = '';
+
+// The CLI only sees node and git, so variable lookups and tool detection
+// cannot reach other executables (such as gh) or the network.
+before(async () => {
+  searchPath = await mkdtemp(join(tmpdir(), 'agents-config-bin-'));
+  await symlink(process.execPath, join(searchPath, 'node'));
+  await symlink(await which('git'), join(searchPath, 'git'));
+});
+
+after(() => rm(searchPath, { recursive: true, force: true }));
 
 interface Result {
   code: number;
@@ -19,7 +42,7 @@ interface Result {
 async function cli(home: string, args: string[]): Promise<Result> {
   try {
     const { stdout, stderr } = await run(process.execPath, [CLI, ...args], {
-      env: { HOME: home, PATH: process.env.PATH ?? '' },
+      env: { HOME: home, PATH: searchPath, GIT_CONFIG_NOSYSTEM: '1' },
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
