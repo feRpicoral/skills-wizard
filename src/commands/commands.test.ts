@@ -773,3 +773,106 @@ test('adopt keeps the catalog entry when a failed apply already recorded the ski
     /- name: deploy\n\s+repo: owner\/tools/,
   );
 });
+
+interface ExtraBlockParams {
+  repoRoot: string;
+  scopes: string[];
+  variables?: string[];
+  body?: string;
+}
+
+async function writeExtraBlock({
+  repoRoot,
+  scopes,
+  variables = [],
+  body = 'Extra rules.',
+}: ExtraBlockParams): Promise<void> {
+  await writeFiles(repoRoot, {
+    'blocks/index.yaml': [
+      'headers:',
+      '  global: "# Instructions"',
+      'groups:',
+      '  core: Core',
+      'order:',
+      '  - core/identity',
+      '  - core/extra',
+      '',
+    ].join('\n'),
+    'blocks/core/extra.md': blockSource(body, {
+      title: 'Extra',
+      group: 'core',
+      scopes,
+      defaults: [],
+      variables,
+    }),
+  });
+}
+
+async function initGlobalWithExtra(ctx: Context): Promise<void> {
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['claude-code'],
+    blocks: ['core/identity', 'core/extra'],
+    skills: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+}
+
+async function recordedBlocks(ctx: Context): Promise<string[]> {
+  const manifest = JSON.parse(
+    await readFile(join(ctx.paths.stateDir, 'manifest.json'), 'utf8'),
+  ) as { blocks: string[] };
+  return manifest.blocks;
+}
+
+test('update drops recorded blocks that are no longer available for the scope', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeExtraBlock({ repoRoot, scopes: ['global', 'project'] });
+  await initGlobalWithExtra(ctx);
+  await writeExtraBlock({ repoRoot, scopes: ['project'] });
+
+  const code = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Blocks no longer available for global scope were dropped: core\/extra/,
+  );
+  assert.deepEqual(await recordedBlocks(ctx), ['core/identity']);
+  assert.doesNotMatch(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Extra rules\./,
+  );
+});
+
+test('adopt drops recorded blocks that are no longer available for the scope', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot, output } = await testContext(t, {
+    url: () => upstream.url,
+  });
+  await writeExtraBlock({ repoRoot, scopes: ['global', 'project'] });
+  await initGlobalWithExtra(ctx);
+  await lockedDeploy({ ctx });
+  await writeExtraBlock({ repoRoot, scopes: ['project'] });
+
+  const code = await runAdopt(ctx, {
+    names: ['deploy'],
+    yes: true,
+    dryRun: false,
+  });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Blocks no longer available for global scope were dropped: core\/extra/,
+  );
+  assert.deepEqual(await recordedBlocks(ctx), ['core/identity']);
+  assert.doesNotMatch(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Extra rules\./,
+  );
+});
