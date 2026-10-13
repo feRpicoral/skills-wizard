@@ -15,6 +15,13 @@ import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { isDirectory } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
+import {
+  defaultMcpServerNames,
+  detectedMcpServerNames,
+  type McpCatalog,
+  outOfScopeMcpServerNames,
+  unknownMcpServerNames,
+} from '../mcp/model.ts';
 import type { ProjectDetection } from '../project/detect.ts';
 import {
   findPreset,
@@ -30,6 +37,7 @@ import {
   promptBlocks,
   promptKeepLocal,
   promptLinkCommand,
+  promptMcpServers,
   promptPreset,
   promptProjectDir,
   promptProjectStyle,
@@ -57,10 +65,12 @@ import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
+  dropUnavailableMcpServers,
   dropUnknownPreset,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
+  loadMcpServers,
   notify,
   notifyLeftGit,
   readLocationManifest,
@@ -75,6 +85,7 @@ export interface InitOptions {
   tools?: ToolId[];
   blocks?: string[];
   skills?: string[];
+  mcp?: string[];
   skillMode?: SkillMode;
   preset?: PresetId;
   style?: ProjectStyle;
@@ -117,6 +128,23 @@ function checkExplicitSkills(
   if (outOfScope.length > 0) {
     throw new UsageError(
       `Skills not available for ${scope} scope: ${outOfScope.join(', ')}`,
+    );
+  }
+}
+
+function checkExplicitMcp(
+  catalog: McpCatalog,
+  names: readonly string[],
+  scope: Scope,
+): void {
+  const unknown = unknownMcpServerNames(catalog, names);
+  if (unknown.length > 0) {
+    throw new UsageError(`Unknown MCP servers: ${unknown.join(', ')}`);
+  }
+  const outOfScope = outOfScopeMcpServerNames({ catalog, names, scope });
+  if (outOfScope.length > 0) {
+    throw new UsageError(
+      `MCP servers not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
 }
@@ -267,6 +295,7 @@ export async function runInit(
     tools: requestedTools,
     blocks: requestedBlocks,
     skills: requestedSkills,
+    mcp: requestedMcp,
     skillMode: requestedSkillMode,
     preset: requestedPreset,
     style: requestedStyle,
@@ -298,6 +327,7 @@ export async function runInit(
   });
   const library = await loadLibrary(ctx);
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const mcpCatalog = await loadMcpServers(ctx);
   const previous = await readLocationManifest(ctx, prompting, location);
 
   const initialTools =
@@ -467,6 +497,41 @@ export async function runInit(
           : previousMode))
       : DEFAULT_SKILL_MODE;
 
+  if (requestedMcp) {
+    checkExplicitMcp(mcpCatalog, requestedMcp, scope);
+  }
+  const recordedMcp = previous
+    ? dropUnavailableMcpServers({
+        ctx,
+        prompting,
+        catalog: mcpCatalog,
+        names: previous.mcp,
+        scope,
+      })
+    : null;
+  const detectedMcp =
+    scope === 'project'
+      ? detectedMcpServerNames(
+          mcpCatalog,
+          location.detection?.detectedMcpServers ?? [],
+        )
+      : [];
+  const initialMcp =
+    requestedMcp ??
+    (recordedMcp !== null
+      ? recordedMcp
+      : scope === 'project'
+        ? [
+            ...new Set([
+              ...defaultMcpServerNames(mcpCatalog, 'project'),
+              ...detectedMcp,
+            ]),
+          ]
+        : defaultMcpServerNames(mcpCatalog, scope));
+  const mcp = prompting
+    ? await promptMcpServers(mcpCatalog, scope, initialMcp)
+    : initialMcp;
+
   const previousLink = previous?.options.linkCommand ?? false;
   const linkCommand =
     scope === 'global'
@@ -510,6 +575,7 @@ export async function runInit(
       tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand,
       keepLocal,
@@ -524,6 +590,7 @@ export async function runInit(
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
   if (keepLocal) {
     await warnTrackedFiles({

@@ -34,7 +34,14 @@ import {
 } from '../install/describe.ts';
 import { isDirectory, lstatIfExists } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
-import { skillFolders } from '../install/targets.ts';
+import { mcpConfigPaths, skillFolders } from '../install/targets.ts';
+import {
+  loadMcpCatalog,
+  type McpCatalog,
+  mcpCatalogPath,
+  outOfScopeMcpServerNames,
+  unknownMcpServerNames,
+} from '../mcp/model.ts';
 import { detectProject, type ProjectDetection } from '../project/detect.ts';
 import { isPresetId, type PresetId } from '../project/presets.ts';
 import { buildProjectSeed } from '../project/seed.ts';
@@ -44,6 +51,7 @@ import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import { readSkillLock, skillLockPath } from '../skills/lock.ts';
 import type { SourceCache } from '../skills/sources.ts';
 import {
+  checkMcpEntries,
   checkSkillEntries,
   globalManifestPath,
   type Manifest,
@@ -86,6 +94,12 @@ export function notify({
 
 export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
+}
+
+export async function loadMcpServers(ctx: Context): Promise<McpCatalog> {
+  const file = mcpCatalogPath(ctx.repoRoot);
+  if (!(await lstatIfExists(file))) return { servers: [] };
+  return loadMcpCatalog(file);
 }
 
 async function git(projectDir: string, args: string[]): Promise<string | null> {
@@ -156,12 +170,26 @@ export async function readLocationManifest(
         ...(location.project ? { project: location.project } : {}),
       })
     : null;
+  const mcpPaths = manifest
+    ? mcpConfigPaths({
+        scope: location.scope,
+        paths: ctx.paths,
+        ...(location.project ? { project: location.project } : {}),
+      })
+    : null;
   if (manifest && folders) {
     checkSkillEntries({
       file: location.manifestPath,
       entries: manifest.entries,
       folders,
       scope: location.scope,
+    });
+  }
+  if (manifest && mcpPaths) {
+    checkMcpEntries({
+      file: location.manifestPath,
+      entries: manifest.entries,
+      mcpPaths,
     });
   }
   return manifest;
@@ -377,6 +405,44 @@ export function dropUnknownSkills({
   return names.filter((name) => !unknown.includes(name));
 }
 
+interface DropUnavailableMcpServersParams {
+  ctx: Context;
+  prompting: boolean;
+  catalog: McpCatalog;
+  names: readonly string[];
+  scope: Scope;
+}
+
+export function dropUnavailableMcpServers({
+  ctx,
+  prompting,
+  catalog,
+  names,
+  scope,
+}: DropUnavailableMcpServersParams): string[] {
+  const unknown = unknownMcpServerNames(catalog, names);
+  const outOfScope = outOfScopeMcpServerNames({ catalog, names, scope });
+  if (unknown.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `MCP servers no longer in mcp/servers.yaml were dropped: ${unknown.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  if (outOfScope.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `MCP servers no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  return names.filter(
+    (name) => !unknown.includes(name) && !outOfScope.includes(name),
+  );
+}
+
 export function sourceCache(ctx: Context): SourceCache {
   return { root: ctx.paths.sourcesDir, ...ctx.sources };
 }
@@ -505,6 +571,9 @@ export async function confirmAndApply(
     clack.note(lines.join('\n') || 'Nothing to do', 'Plan');
   } else {
     lines.forEach((entry) => ctx.print(entry));
+  }
+  for (const warning of plan.warnings ?? []) {
+    notify({ ctx, prompting, message: warning, level: 'warn' });
   }
 
   if (dryRun) {

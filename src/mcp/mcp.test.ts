@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import type { BlockLibrary } from '../blocks/library.ts';
-import { JsonMergeError, ManagedRegionError } from '../errors.ts';
+import { JsonMergeError, ManagedRegionError, McpError } from '../errors.ts';
 import { applyPlan } from '../install/apply.ts';
 import { buildPlan } from '../install/plan.ts';
 import {
@@ -21,15 +21,18 @@ import {
   upsertMcpTomlServers,
 } from './install.ts';
 import {
+  allServerSecrets,
   loadMcpCatalog,
   mcpCatalogPath,
   type McpServerDefinition,
+  requiredServerSecrets,
 } from './model.ts';
 import {
   claudeDeniedToolPermissions,
   renderMcpJsonServers,
   renderMcpTomlServers,
 } from './render.ts';
+import { deriveShortServerName, searchMcpRegistry } from './search.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 
@@ -385,4 +388,173 @@ test('buildPlan and applyPlan share Antigravity mcp_config.json, share project .
   assert.equal(sharedProjectMcp.mcpServers.nx?.type, 'stdio');
   assert.deepEqual(sharedProjectMcp.mcpServers.nx?.tools, ['*']);
   assert.deepEqual(Object.keys(afterRemovalMcp.mcpServers), ['unmanaged']);
+});
+
+test('buildPlan marks a conflict when an unmanaged server has the same name and never overwrites it', async (t) => {
+  const paths = await tempPaths(t);
+  const projectDir = await realpath(await tempDir(t));
+  const mcpCatalog = await loadMcpCatalog(mcpCatalogPath(REPO_ROOT));
+  const initialJson = JSON.stringify(
+    {
+      mcpServers: {
+        nx: { command: 'custom-nx', args: [] },
+      },
+    },
+    null,
+    2,
+  );
+  const initialToml = '[mcp_servers.nx]\ncommand = "custom-nx"\n';
+  await writeFiles(projectDir, {
+    '.mcp.json': initialJson,
+    '.codex/config.toml': initialToml,
+  });
+
+  const plan = await buildPlan({
+    scope: 'project',
+    selection: {
+      tools: ['claude-code', 'codex'],
+      blocks: ['core/style'],
+      skills: [],
+      mcp: ['nx', 'supabase'],
+      variables: {},
+      linkCommand: false,
+      skillMode: 'copy',
+      keepLocal: false,
+    },
+    library: testLibrary,
+    paths,
+    repoRoot: REPO_ROOT,
+    previous: null,
+    manifestPath: projectManifestPath(projectDir),
+    project: { dir: projectDir, title: 'app' },
+    mcpCatalog,
+  });
+  const outcome = await applyPlan(plan);
+  const jsonAfter = await readFile(join(projectDir, '.mcp.json'), 'utf8');
+  const tomlAfter = await readFile(
+    join(projectDir, '.codex', 'config.toml'),
+    'utf8',
+  );
+
+  assert.equal(outcome.skipped.length, 2);
+  assert.equal(jsonAfter, initialJson);
+  assert.equal(tomlAfter, initialToml);
+});
+
+test('searchMcpRegistry converts npm, pypi, and remote servers and enforces response bounds', async () => {
+  const requestedUrls: string[] = [];
+  const payload = {
+    servers: [
+      {
+        server: {
+          name: 'io.github.upstash/context7-mcp',
+          description: 'Upstash Context7 server',
+          version: '1.2.0',
+          packages: [
+            {
+              registryType: 'npm',
+              identifier: '@upstash/context7-mcp',
+              packageArguments: [
+                { type: 'named', name: 'transport', default: 'stdio' },
+              ],
+              environmentVariables: [
+                { name: 'CONTEXT7_API_KEY', isSecret: true, isRequired: false },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        server: {
+          name: 'io.github.example/py-inspector',
+          description: 'Python MCP inspector',
+          version: '0.4.0',
+          packages: [
+            {
+              registryType: 'pypi',
+              identifier: 'mcp-py-inspector',
+              environmentVariables: [
+                { name: 'INSPECTOR_MODE', default: 'fast' },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        name: 'com.sentry/sentry-mcp',
+        description: 'Sentry remote MCP server',
+        remotes: [
+          {
+            type: 'streamable-http',
+            url: 'https://mcp.sentry.dev/mcp',
+            headers: [
+              { name: 'Authorization', isSecret: true, isRequired: true },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const candidates = await searchMcpRegistry({
+    query: 'mcp',
+    official: true,
+    limit: 5,
+    fetchFn: (input) => {
+      requestedUrls.push(
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url,
+      );
+      return Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  });
+  const npmServer = candidates[0]?.server;
+  const pypiServer = candidates[1]?.server;
+  const remoteServer = candidates[2]?.server;
+  const oversizedAttempt = searchMcpRegistry({
+    query: 'huge',
+    fetchFn: () =>
+      Promise.resolve(
+        new Response('{"servers":[]}', {
+          status: 200,
+          headers: { 'content-length': String(10 * 1024 * 1024) },
+        }),
+      ),
+  });
+
+  assert.equal(
+    requestedUrls[0],
+    'https://registry.modelcontextprotocol.io/v0.1/servers?search=mcp&version=latest&limit=5',
+  );
+  assert.equal(
+    deriveShortServerName('io.github.upstash/@context7_mcp'),
+    'context7-mcp',
+  );
+  assert.equal(candidates.length, 3);
+  assert.ok(npmServer);
+  assert.equal(npmServer.transport, 'stdio');
+  assert.deepEqual(npmServer.args, [
+    '-y',
+    '@upstash/context7-mcp@1.2.0',
+    '--transport',
+    'stdio',
+  ]);
+  assert.deepEqual(requiredServerSecrets(npmServer), []);
+  assert.deepEqual(allServerSecrets(npmServer), ['CONTEXT7_API_KEY']);
+  assert.equal(pypiServer?.transport, 'stdio');
+  assert.equal(pypiServer?.command, 'uvx');
+  assert.ok(remoteServer);
+  assert.equal(remoteServer.transport, 'http');
+  assert.deepEqual(requiredServerSecrets(remoteServer), [
+    'SENTRY_MCP_AUTH_TOKEN',
+  ]);
+  await assert.rejects(oversizedAttempt, McpError);
 });

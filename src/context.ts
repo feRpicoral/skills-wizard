@@ -1,8 +1,10 @@
 import {
   gitEnvironment,
+  hasEnvVar,
   type Paths,
   resolveAgyBin,
   resolveAgyExtraArgs,
+  resolveMcpRegistryUrl,
   resolvePaths,
   resolveSearchPath,
   resolveSkillsShUrl,
@@ -25,6 +27,7 @@ export interface Context {
   interactive: boolean;
   sources: SourceSettings;
   agy?: AgySettings;
+  hasEnvVar?: (name: string) => boolean;
   print: (line?: string) => void;
 }
 
@@ -50,11 +53,16 @@ export function createContext({
       env: gitEnvironment(),
       now: () => new Date(),
       skillsShUrl: () => resolveSkillsShUrl(),
+      mcpRegistryUrl: (official) =>
+        resolveMcpRegistryUrl({
+          ...(official !== undefined ? { official } : {}),
+        }),
     },
     agy: {
       bin: () => resolveAgyBin(),
       extraArgs: () => resolveAgyExtraArgs(),
     },
+    hasEnvVar: (name) => hasEnvVar(name),
     print: (line = '') => {
       process.stdout.write(`${line}\n`);
     },

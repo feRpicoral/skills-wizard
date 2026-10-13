@@ -22,6 +22,7 @@ import {
 } from '../install/describe.ts';
 import { isDirectory, lstatIfExists } from '../install/fs.ts';
 import { buildPlan, type Plan } from '../install/plan.ts';
+import type { McpCatalog } from '../mcp/model.ts';
 import { confirmApply } from '../prompts/selection.ts';
 import { type CatalogEntry, repositoryPaths } from '../skills/catalog.ts';
 import { diffSkillTrees, hasDiff, type SkillDiff } from '../skills/diff.ts';
@@ -48,9 +49,11 @@ import { type Manifest, projectManifestPath } from '../state/manifest.ts';
 import { forgetProject, readProjects } from '../state/projects.ts';
 import {
   dropUnavailableBlocks,
+  dropUnavailableMcpServers,
   dropUnknownPreset,
   dropUnknownSkills,
   loadLibrary,
+  loadMcpServers,
   notify,
   notifyLeftGit,
   readLocationManifest,
@@ -284,6 +287,7 @@ interface PlanUpdateTargetParams {
   library: BlockLibrary;
   skillLibrary: SkillLibrary;
   skillSources: ReadonlyMap<string, SkillSource>;
+  mcpCatalog: McpCatalog;
   location: UpdateLocation;
   previous: Manifest;
 }
@@ -294,6 +298,7 @@ async function planUpdateTarget({
   library,
   skillLibrary,
   skillSources,
+  mcpCatalog,
   location,
   previous,
 }: PlanUpdateTargetParams): Promise<Plan> {
@@ -326,6 +331,13 @@ async function planUpdateTarget({
     library: skillLibrary,
     names: previous.skills,
   });
+  const mcp = dropUnavailableMcpServers({
+    ctx,
+    prompting,
+    catalog: mcpCatalog,
+    names: previous.mcp,
+    scope: location.scope,
+  });
   const recordedLocal = previous.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   if (location.project && recordedLocal && !keepLocal) {
@@ -342,6 +354,7 @@ async function planUpdateTarget({
       tools: previous.tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
@@ -358,6 +371,7 @@ async function planUpdateTarget({
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
 }
 
@@ -402,6 +416,7 @@ export async function runUpdate(
 
   const library = await loadLibrary(ctx);
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const mcpCatalog = await loadMcpServers(ctx);
   const allSkills = [
     ...new Set(
       targets.flatMap(({ manifest }) =>
@@ -462,6 +477,7 @@ export async function runUpdate(
             library,
             skillLibrary,
             skillSources: sources,
+            mcpCatalog,
             location: target.location,
             previous: target.manifest,
           }),
@@ -492,6 +508,11 @@ export async function runUpdate(
       clack.note(planLines.join('\n') || 'Nothing to do', 'Plan');
     } else {
       planLines.forEach((line) => ctx.print(line));
+    }
+    for (const plan of plans) {
+      for (const warning of plan.warnings ?? []) {
+        notify({ ctx, prompting, message: warning, level: 'warn' });
+      }
     }
 
     if (dryRun) {
