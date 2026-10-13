@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import {
   copySkillTree,
+  hashInstalledCopy,
   hashTree,
   replaceWithCopy,
   replaceWithLink,
@@ -65,6 +66,96 @@ test('copySkillTree keeps links as links', async (t) => {
   await copySkillTree({ source, destination: join(root, 'copy') });
 
   assert.equal(await readlink(join(root, 'copy', 'guide.md')), 'docs/guide.md');
+});
+
+test('copySkillTree leaves out generated Python output', async (t) => {
+  const root = await tempDir(t);
+  const source = join(root, 'source');
+  await writeFiles(source, {
+    'SKILL.md': 'skill\n',
+    'scripts/run.py': 'print()\n',
+    'scripts/run.pyc': 'compiled\n',
+    'scripts/__pycache__/run.cpython-312.pyc': 'compiled\n',
+    '.pytest_cache/README.md': 'cache\n',
+    '.venv/bin/python': 'python\n',
+  });
+
+  await copySkillTree({ source, destination: join(root, 'copy') });
+
+  assert.deepEqual(await listFiles(join(root, 'copy')), [
+    'SKILL.md',
+    'scripts/run.py',
+  ]);
+});
+
+test('hashInstalledCopy of a pristine copy equals the source hash', async (t) => {
+  const root = await tempDir(t);
+  const source = join(root, 'source');
+  await writeFiles(source, {
+    'SKILL.md': 'skill\n',
+    'AGENTS.md': 'repo rules\n',
+    'evals/evals.json': '{}\n',
+    'node_modules/dep/index.js': 'x\n',
+    'scripts/run.sh': 'echo\n',
+  });
+  await symlink('scripts/run.sh', join(source, 'run.sh'));
+  const copy = join(root, 'copy');
+  await copySkillTree({ source, destination: copy });
+
+  const [recorded, installed] = await Promise.all([
+    hashTree(source),
+    hashInstalledCopy({ dir: copy, setup: false }),
+  ]);
+
+  assert.equal(installed, recorded);
+});
+
+test('hashInstalledCopy sees files the copy leaves out', async (t) => {
+  const root = await tempDir(t);
+  const pristine = join(root, 'pristine');
+  await writeFiles(pristine, { 'SKILL.md': 'skill\n' });
+  const recorded = await hashTree(pristine);
+
+  for (const extra of [
+    'evals/mine.json',
+    'references/AGENTS.md',
+    '.git/HEAD',
+    'node_modules/dep/index.js',
+  ]) {
+    const dir = join(root, extra.replaceAll('/', '-'));
+    await writeFiles(dir, { 'SKILL.md': 'skill\n', [extra]: 'mine\n' });
+    assert.notEqual(
+      await hashInstalledCopy({ dir, setup: false }),
+      recorded,
+      extra,
+    );
+  }
+});
+
+test('hashInstalledCopy ignores generated output and setup output only with setup', async (t) => {
+  const root = await tempDir(t);
+  await writeFiles(root, { 'SKILL.md': 'skill\n', 'scripts/run.py': 'p\n' });
+  const recorded = await hashTree(root);
+  await writeFiles(root, {
+    '.DS_Store': 'x',
+    'scripts/__pycache__/run.cpython-312.pyc': 'compiled\n',
+    'scripts/run.pyc': 'compiled\n',
+    '.pytest_cache/README.md': 'cache\n',
+  });
+  const scriptsRun = await hashInstalledCopy({ dir: root, setup: false });
+  await writeFiles(root, {
+    'node_modules/dep/index.js': 'x\n',
+    '.venv/bin/python': 'python\n',
+  });
+
+  const [withSetup, withoutSetup] = await Promise.all([
+    hashInstalledCopy({ dir: root, setup: true }),
+    hashInstalledCopy({ dir: root, setup: false }),
+  ]);
+
+  assert.equal(scriptsRun, recorded);
+  assert.equal(withSetup, recorded);
+  assert.notEqual(withoutSetup, recorded);
 });
 
 test('hashTree matches between a source and its copy', async (t) => {

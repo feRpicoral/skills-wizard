@@ -724,3 +724,139 @@ test('a project skills folder that links to .agents/skills gets no per-skill lin
     /"kind": "symlink"/,
   );
 });
+
+for (const added of ['evals/mine.json', 'references/AGENTS.md', '.git/HEAD']) {
+  test(`a copy with an added ${added} is neither replaced nor deleted`, async (t) => {
+    const paths = await tempPaths(t);
+    const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
+    await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+    await writeFiles(join(paths.skillsDir, 'notes'), { [added]: 'mine\n' });
+    await writeFiles(skill.dir, { 'references/new.md': 'new\n' });
+    const canonical = join(paths.skillsDir, 'notes');
+
+    const { plan: update } = await installGlobal(paths, {
+      tools: ['codex'],
+      skills: [skill],
+    });
+    const { plan: removal } = await installGlobal(paths, {
+      tools: ['codex'],
+      skills: [skill],
+      selected: [],
+    });
+
+    assert.equal(
+      update.actions.find((action) => action.path === canonical)?.reason,
+      'changed outside agents-config, left in place',
+    );
+    assert.equal(
+      removal.actions.find((action) => action.path === canonical)?.reason,
+      'changed outside agents-config, left in place',
+    );
+    assert.equal(await readFile(join(canonical, added), 'utf8'), 'mine\n');
+  });
+}
+
+test('running the scripts of a copy does not make it look edited', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill({
+    root: await tempDir(t),
+    name: 'notes',
+    files: { 'scripts/run.py': 'print()\n' },
+  });
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  const canonical = join(paths.skillsDir, 'notes');
+  await writeFiles(canonical, {
+    'scripts/__pycache__/run.cpython-312.pyc': 'compiled\n',
+    '.DS_Store': 'x',
+  });
+  await writeFiles(skill.dir, { 'references/new.md': 'new\n' });
+
+  const { plan: update } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+  });
+  const { plan: removal } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    selected: [],
+  });
+
+  assert.equal(statuses(update)[canonical], 'update');
+  assert.equal(statuses(removal)[canonical], 'remove');
+  await assert.rejects(lstat(canonical), { code: 'ENOENT' });
+});
+
+test('what a setup command creates does not make the copy look edited', async (t) => {
+  const paths = await tempPaths(t);
+  const skill: SkillSource = {
+    ...(await localSkill({ root: await tempDir(t), name: 'notes' })),
+    setup: 'mkdir -p node_modules/dep .venv && echo x > node_modules/dep/x.js',
+  };
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  const canonical = join(paths.skillsDir, 'notes');
+  const installed = (await manifestOf(paths))?.entries.find(
+    (entry) => entry.kind === 'skill',
+  );
+  assert.ok((await stat(join(canonical, 'node_modules/dep/x.js'))).isFile());
+
+  const { plan: again } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+  });
+  const { plan: removal } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    selected: [],
+  });
+
+  assert.ok(installed?.kind === 'skill' && installed.install.mode === 'copy');
+  assert.equal(installed.install.setup, true);
+  assert.equal(statuses(again)[canonical], 'unchanged');
+  assert.equal(statuses(removal)[canonical], 'remove');
+  await assert.rejects(lstat(canonical), { code: 'ENOENT' });
+});
+
+test('dependencies added to a copy without a setup command make it look edited', async (t) => {
+  const paths = await tempPaths(t);
+  const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
+  const canonical = join(paths.skillsDir, 'notes');
+  await writeFiles(canonical, { 'node_modules/dep/x.js': 'mine\n' });
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    selected: [],
+  });
+
+  assert.equal(
+    plan.actions.find((action) => action.path === canonical)?.reason,
+    'changed outside agents-config, left in place',
+  );
+});
+
+test('dropping a setup command replaces the copy and what setup created', async (t) => {
+  const paths = await tempPaths(t);
+  const plain = await localSkill({ root: await tempDir(t), name: 'notes' });
+  const withSetup: SkillSource = {
+    ...plain,
+    setup: 'mkdir -p node_modules/dep && echo x > node_modules/dep/x.js',
+  };
+  await installGlobal(paths, { tools: ['codex'], skills: [withSetup] });
+  const canonical = join(paths.skillsDir, 'notes');
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [plain],
+  });
+  const { plan: again } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [plain],
+  });
+
+  assert.equal(statuses(plan)[canonical], 'update');
+  await assert.rejects(lstat(join(canonical, 'node_modules')), {
+    code: 'ENOENT',
+  });
+  assert.equal(statuses(again)[canonical], 'unchanged');
+});

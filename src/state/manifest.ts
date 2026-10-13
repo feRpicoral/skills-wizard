@@ -43,7 +43,11 @@ const skillSourceSchema = z.discriminatedUnion('type', [
 export type SkillSourceRecord = z.infer<typeof skillSourceSchema>;
 
 const skillInstallSchema = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('copy'), hash: z.string().min(1) }),
+  z.object({
+    mode: z.literal('copy'),
+    hash: z.string().min(1),
+    setup: z.boolean().optional(),
+  }),
   z.object({ mode: z.literal('link'), target: pathField }),
 ]);
 
