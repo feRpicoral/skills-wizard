@@ -40,7 +40,7 @@ import {
 
 const run = promisify(execFile);
 
-interface Location {
+export interface Location {
   scope: Scope;
   manifestPath: string;
   project?: ProjectContext;
@@ -166,6 +166,24 @@ export async function readLocationManifest(
     });
   }
   return result?.manifest ?? null;
+}
+
+interface SetVariablesCommandParams {
+  ctx: Context;
+  location: Location;
+  names: readonly string[];
+}
+
+export function setVariablesCommand({
+  ctx,
+  location,
+  names,
+}: SetVariablesCommandParams): string {
+  const target = location.project
+    ? `--project ${displayPath({ path: location.project.dir, home: ctx.paths.home })}`
+    : '--global';
+  const variables = names.map((name) => `--var ${name}=<value>`).join(' ');
+  return `agents-config init ${target} ${variables}`;
 }
 
 export function notifyLeftGit(

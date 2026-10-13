@@ -1,19 +1,70 @@
-import { withRequirements } from '../blocks/compose.ts';
-import type { Scope } from '../blocks/library.ts';
+import {
+  requiredVariables,
+  selectBlocks,
+  withRequirements,
+} from '../blocks/compose.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
+import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
+import { promptVariables } from '../prompts/selection.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
   loadLibrary,
+  type Location,
   notify,
   notifyLeftGit,
   readLocationManifest,
   resolveLocation,
+  setVariablesCommand,
   warnTrackedFiles,
 } from './shared.ts';
+
+interface ResolveVariablesParams {
+  ctx: Context;
+  prompting: boolean;
+  library: BlockLibrary;
+  blocks: readonly string[];
+  location: Location;
+  recorded: Readonly<Record<string, string>>;
+}
+
+// A block edited to use a new variable has no recorded value yet. Look it up
+// (or ask for it) the way init does, and stop with the init command otherwise.
+async function resolveVariables({
+  ctx,
+  prompting,
+  library,
+  blocks,
+  location,
+  recorded,
+}: ResolveVariablesParams): Promise<Record<string, string>> {
+  const needed = requiredVariables(
+    selectBlocks(library, blocks, location.scope),
+  );
+  const missing = needed.filter((name) => !recorded[name]?.trim());
+  if (missing.length === 0) return { ...recorded };
+
+  const found = await lookupVariables(missing, recorded);
+  const variables = prompting
+    ? { ...recorded, ...(await promptVariables(missing, found)) }
+    : found;
+  const unresolved = missing.filter((name) => !variables[name]?.trim());
+  if (unresolved.length > 0) {
+    throw new UsageError(
+      `The blocks now use variables with no recorded value: ${unresolved.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolved })}`,
+    );
+  }
+  notify({
+    ctx,
+    prompting,
+    message: `Recorded values for new variables: ${missing.map((name) => `${name}=${variables[name] ?? ''}`).join(', ')}`,
+  });
+  return variables;
+}
 
 interface SyncOptions {
   scope: Scope;
@@ -55,6 +106,14 @@ export async function runSync(
       message: `Added required blocks: ${added.join(', ')}`,
     });
   }
+  const variables = await resolveVariables({
+    ctx,
+    prompting,
+    library,
+    blocks,
+    location,
+    recorded: previous.variables,
+  });
   const recordedLocal = previous.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   if (location.project && recordedLocal && !keepLocal) {
@@ -65,7 +124,7 @@ export async function runSync(
     selection: {
       tools: previous.tools,
       blocks,
-      variables: previous.variables,
+      variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
     },

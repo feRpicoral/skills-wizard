@@ -187,6 +187,59 @@ test('doctor warns that sync will drop blocks that left the library', async (t) 
   assert.match(await readFile(manifestPath(home), 'utf8'), /core\/removed/);
 });
 
+async function clearRecordedVariables(file: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(file, 'utf8')) as {
+    variables: Record<string, string>;
+  };
+  manifest.variables = {};
+  await writeFile(file, JSON.stringify(manifest));
+}
+
+test('sync stops with the init command when a block gains a variable it cannot look up', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+
+  const result = await cli(home, ['sync', '--yes']);
+
+  assert.equal(result.code, 2);
+  assert.match(
+    result.stderr,
+    /githubUsername.*agents-config init --global --var githubUsername=<value>/,
+  );
+});
+
+test('sync looks up a variable a block gained and records it', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+  await writeFile(join(home, '.gitconfig'), '[github]\n\tuser = hubot\n');
+
+  const result = await cli(home, ['sync', '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /githubUsername=hubot/);
+  assert.match(
+    await readFile(manifestPath(home), 'utf8'),
+    /"githubUsername": "hubot"/,
+  );
+});
+
+test('doctor reports a variable a block gained without crashing', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+
+  const result = await cli(home, ['doctor']);
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stdout,
+    /^error\s+.*githubUsername.*agents-config init --global --var githubUsername=<value>/m,
+  );
+  assert.equal(result.stderr, '');
+});
+
 const PROJECT_INSTALL = ['--yes', '--tools', 'codex'];
 
 test('sync drops recorded blocks that are no longer available for the scope', async (t) => {
