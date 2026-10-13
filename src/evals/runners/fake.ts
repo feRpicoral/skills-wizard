@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -43,6 +44,28 @@ async function isSkillActiveInWorkdir({
     'SKILL.md',
   );
   return (await lstatIfExists(skillFile)) !== null;
+}
+
+export interface FakeTriggerDecisionParams {
+  prompt: string;
+  skillName: string;
+}
+
+/**
+ * The fake runner's default trigger decision when the skill is staged: a
+ * stable hash of the skill name and prompt puts about half of all prompts in
+ * the "triggered" bucket. It reads no labels from the prompt, so trigger
+ * metrics from the fake runner are arbitrary; they only exercise the suite
+ * structure in dry runs. Tests that need specific outcomes use `onTask`.
+ */
+export function fakeTriggerDecision({
+  prompt,
+  skillName,
+}: FakeTriggerDecisionParams): boolean {
+  const digest = createHash('sha256')
+    .update(`${skillName}\0${prompt}`)
+    .digest('hex');
+  return Number.parseInt(digest.slice(0, 8), 16) % 100 < 50;
 }
 
 function extractAssertionsFromGraderPrompt(prompt: string): string[] {
@@ -104,7 +127,8 @@ export function createFakeRunner({
           })
         : {};
 
-      const shouldTriggerDefault = active && !prompt.includes('[negative]');
+      const shouldTriggerDefault =
+        active && fakeTriggerDecision({ prompt, skillName });
       const response =
         custom.response ??
         (active
