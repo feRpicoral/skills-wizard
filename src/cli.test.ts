@@ -330,11 +330,13 @@ test('sync without a recorded install is a usage error', async (t) => {
   assert.match(result.stderr, /run agents-config init first/);
 });
 
-test('a keep-local project copied out of its repository still syncs', async (t) => {
+test('a keep-local project copied into another repository still syncs', async (t) => {
   const home = await tempDir(t);
   const repo = await tempDir(t);
-  const copy = await tempDir(t);
+  const other = await tempDir(t);
+  const copy = join(other, 'app');
   await run('git', ['init', '-q'], { cwd: repo });
+  await run('git', ['init', '-q'], { cwd: other });
   await cli(home, [
     'init',
     '--project',
@@ -410,9 +412,33 @@ test('sync and init drop keep-local with a notice once the project leaves git', 
 
   assert.equal(sync.code, 0);
   assert.match(sync.stdout, /no longer in a git repository/);
+  assert.doesNotMatch(sync.stdout, /another repository/);
   assert.equal(init.code, 0);
   assert.match(
     await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
     /"keepLocal": false/,
   );
+});
+
+test('doctor warns that sync will stop keeping files local once the project leaves git', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await run('git', ['init', '-q'], { cwd: project });
+  await cli(home, [
+    'init',
+    '--project',
+    project,
+    ...PROJECT_INSTALL,
+    '--local',
+  ]);
+  await rm(join(project, '.git'), { recursive: true, force: true });
+
+  const result = await cli(home, ['doctor', '--project', project]);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /^warn\s+.*no longer in a git repository; agents-config sync will stop keeping its files local/m,
+  );
+  assert.doesNotMatch(result.stdout, /another repository/);
 });
