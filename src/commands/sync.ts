@@ -6,7 +6,7 @@ import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
 import {
   confirmAndApply,
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   loadLibrary,
   notify,
   notifyLeftGit,
@@ -40,11 +40,12 @@ export async function runSync(
   }
 
   const library = await loadLibrary(ctx);
-  const known = dropUnknownBlocks({
+  const known = dropUnavailableBlocks({
     ctx,
     prompting,
     library,
     ids: previous.blocks,
+    scope,
   });
   const { ids: blocks, added } = withRequirements(library, known);
   if (added.length > 0) {

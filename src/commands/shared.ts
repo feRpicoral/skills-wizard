@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 import * as clack from '@clack/prompts';
 
+import { outOfScopeBlockIds, unknownBlockIds } from '../blocks/compose.ts';
 import {
   type BlockLibrary,
   loadBlockLibrary,
@@ -180,30 +181,40 @@ export function notifyLeftGit(
   });
 }
 
-interface DropUnknownBlocksParams {
+interface DropUnavailableBlocksParams {
   ctx: Context;
   prompting: boolean;
   library: BlockLibrary;
   ids: readonly string[];
+  scope: Scope;
 }
 
-export function dropUnknownBlocks({
+export function dropUnavailableBlocks({
   ctx,
   prompting,
   library,
   ids,
-}: DropUnknownBlocksParams): string[] {
-  const known = new Set(library.blocks.map((block) => block.id));
-  const dropped = ids.filter((id) => !known.has(id));
-  if (dropped.length > 0) {
+  scope,
+}: DropUnavailableBlocksParams): string[] {
+  const unknown = unknownBlockIds(library, ids);
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
+  if (unknown.length > 0) {
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer in the library were dropped: ${dropped.join(', ')}`,
+      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}`,
       level: 'warn',
     });
   }
-  return ids.filter((id) => known.has(id));
+  if (outOfScope.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
 }
 
 interface WarnTrackedFilesParams {

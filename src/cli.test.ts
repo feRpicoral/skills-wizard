@@ -69,20 +69,24 @@ function manifestPath(home: string): string {
   return join(home, '.agents', 'agents-config', 'manifest.json');
 }
 
+function projectManifestPath(project: string): string {
+  return join(project, '.agents', 'agents-config.json');
+}
+
 interface RecordedBlockParams {
-  home: string;
+  file: string;
   id: string;
 }
 
 async function addRecordedBlock({
-  home,
+  file,
   id,
 }: RecordedBlockParams): Promise<void> {
-  const manifest = JSON.parse(await readFile(manifestPath(home), 'utf8')) as {
+  const manifest = JSON.parse(await readFile(file, 'utf8')) as {
     blocks: string[];
   };
   manifest.blocks.push(id);
-  await writeFile(manifestPath(home), JSON.stringify(manifest));
+  await writeFile(file, JSON.stringify(manifest));
 }
 
 test('init --dry-run prints the plan and writes nothing', async (t) => {
@@ -148,7 +152,7 @@ test('an empty tool list removes everything that was installed', async (t) => {
 test('init drops recorded blocks that left the library and still installs', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock({ home, id: 'core/removed' });
+  await addRecordedBlock({ file: manifestPath(home), id: 'core/removed' });
 
   const result = await cli(home, ['init', '--global', '--yes']);
 
@@ -159,7 +163,7 @@ test('init drops recorded blocks that left the library and still installs', asyn
 test('sync drops recorded blocks that left the library and still applies', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock({ home, id: 'core/removed' });
+  await addRecordedBlock({ file: manifestPath(home), id: 'core/removed' });
 
   const result = await cli(home, ['sync', '--yes']);
 
@@ -174,13 +178,70 @@ test('sync drops recorded blocks that left the library and still applies', async
 test('doctor warns that sync will drop blocks that left the library', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock({ home, id: 'core/removed' });
+  await addRecordedBlock({ file: manifestPath(home), id: 'core/removed' });
 
   const result = await cli(home, ['doctor']);
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /core\/removed; agents-config sync will drop/);
   assert.match(await readFile(manifestPath(home), 'utf8'), /core\/removed/);
+});
+
+const PROJECT_INSTALL = ['--yes', '--tools', 'codex'];
+
+test('sync drops recorded blocks that are no longer available for the scope', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, ...PROJECT_INSTALL]);
+  await addRecordedBlock({
+    file: projectManifestPath(project),
+    id: 'core/identity',
+  });
+
+  const result = await cli(home, ['sync', '--project', project, '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /no longer available for project scope.*core\/identity/,
+  );
+  assert.doesNotMatch(
+    await readFile(projectManifestPath(project), 'utf8'),
+    /core\/identity/,
+  );
+});
+
+test('init drops recorded blocks that are no longer available for the scope', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, ...PROJECT_INSTALL]);
+  await addRecordedBlock({
+    file: projectManifestPath(project),
+    id: 'core/identity',
+  });
+
+  const result = await cli(home, ['init', '--project', project, '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /no longer available for project scope.*core\/identity/,
+  );
+});
+
+test('doctor warns that sync will drop blocks no longer available for the scope', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, ...PROJECT_INSTALL]);
+  await addRecordedBlock({
+    file: projectManifestPath(project),
+    id: 'core/identity',
+  });
+
+  const result = await cli(home, ['doctor', '--project', project]);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /core\/identity; agents-config sync will drop/);
 });
 
 test('rejects unknown tools with a usage error', async (t) => {
