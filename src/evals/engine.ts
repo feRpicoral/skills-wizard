@@ -398,11 +398,15 @@ export async function runSkillEval({
         repoRoot,
         compareRef,
         compareSkill,
+        compareSkills: [...compareSkillsByName.values()],
         env,
       });
 
       if (prepared.possiblyContaminated) {
         possiblyContaminated = true;
+        if (job.variant !== 'without_skill') {
+          withSkillContaminated = true;
+        }
       }
       if (prepared.skillShadowed) {
         withSkillContaminated = true;

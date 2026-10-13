@@ -315,6 +315,142 @@ export async function cachedSource(
   return (await isDirectory(join(dir, '.git'))) ? dir : null;
 }
 
+export async function cachedSourceRef(
+  cache: SourceCache,
+  repo: string,
+): Promise<string | undefined> {
+  const dir = await cachedSource(cache, repo);
+  if (!dir) return undefined;
+  const state = await readState(dir);
+  return state.ref ?? undefined;
+}
+
+export interface SourceCheckoutSnapshot {
+  repo: string;
+  existed: boolean;
+  sparse?: boolean;
+  paths?: string[];
+  commit?: string;
+  state?: SourceState;
+}
+
+export async function snapshotSourceCheckout(
+  cache: SourceCache,
+  repo: string,
+): Promise<SourceCheckoutSnapshot> {
+  const dir = await cachedSource(cache, repo);
+  if (!dir) {
+    return { repo, existed: false };
+  }
+  const sparse = await isSparse(cache, dir);
+  const paths = sparse
+    ? (
+        await git({
+          cache,
+          args: ['sparse-checkout', 'list'],
+          failure: `Could not read sparse checkout paths of ${repo}`,
+          cwd: dir,
+        })
+      )
+        .split('\n')
+        .filter(Boolean)
+        .sort()
+    : [];
+  const commit = await sourceCommit(cache, repo);
+  const state = await readState(dir);
+  return { repo, existed: true, sparse, paths, commit, state };
+}
+
+export async function restoreSourceCheckout(
+  cache: SourceCache,
+  snapshot: SourceCheckoutSnapshot,
+): Promise<void> {
+  if (!snapshot.existed) return;
+  const dir = await cachedSource(cache, snapshot.repo);
+  if (!dir) return;
+  const failure = `Could not restore checkout of ${snapshot.repo}`;
+  if (snapshot.sparse === false) {
+    if (await isSparse(cache, dir)) {
+      await git({
+        cache,
+        args: ['sparse-checkout', 'disable'],
+        failure,
+        cwd: dir,
+      });
+    }
+  } else if (snapshot.sparse && snapshot.paths) {
+    await git({
+      cache,
+      args: ['sparse-checkout', 'set', '--cone', ...snapshot.paths],
+      failure,
+      cwd: dir,
+    });
+  }
+  if (snapshot.commit) {
+    const currentCommit = await sourceCommit(cache, snapshot.repo);
+    if (currentCommit !== snapshot.commit) {
+      await git({
+        cache,
+        args: ['checkout', '--quiet', '--detach', snapshot.commit],
+        failure,
+        cwd: dir,
+      });
+    }
+  }
+  if (snapshot.state) {
+    await writeState(dir, snapshot.state);
+  }
+}
+
+export interface RemoteRefsInfo {
+  headCommit?: string;
+  defaultBranch?: string;
+  refCommits: ReadonlyMap<string, string>;
+}
+
+export async function inspectRemoteRefs(
+  cache: SourceCache,
+  repo: string,
+): Promise<RemoteRefsInfo> {
+  const output = await git({
+    cache,
+    args: ['ls-remote', '--symref', END_OF_OPTIONS, cache.url(repo)],
+    failure: `Could not list remote refs of ${repo}`,
+  });
+  let headCommit: string | undefined;
+  let defaultBranch: string | undefined;
+  const refCommits = new Map<string, string>();
+  for (const line of output.split('\n')) {
+    if (!line) continue;
+    const [first = '', rawName = ''] = line.split('\t');
+    if (rawName === DEFAULT_REF && first.startsWith('ref: refs/heads/')) {
+      defaultBranch = first.slice('ref: refs/heads/'.length);
+      continue;
+    }
+    const commit = first;
+    if (!COMMIT.test(commit) || !rawName) continue;
+    if (rawName === DEFAULT_REF) {
+      headCommit = commit;
+      continue;
+    }
+    if (rawName.startsWith('refs/heads/')) {
+      refCommits.set(rawName.slice('refs/heads/'.length), commit);
+    } else if (rawName.startsWith('refs/tags/')) {
+      const tag = rawName.endsWith('^{}')
+        ? rawName.slice('refs/tags/'.length, -3)
+        : rawName.slice('refs/tags/'.length);
+      if (!refCommits.has(tag) || rawName.endsWith('^{}')) {
+        refCommits.set(tag, commit);
+      }
+    }
+  }
+  return {
+    ...(headCommit ? { headCommit } : {}),
+    ...(defaultBranch ? { defaultBranch } : {}),
+    refCommits,
+  };
+}
+
 export async function sourceCommit(
   cache: SourceCache,
   repo: string,

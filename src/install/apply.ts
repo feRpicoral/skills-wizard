@@ -81,7 +81,13 @@ async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
     return;
   }
 
-  const manifest = { ...plan.manifest, entries };
+  const recordedSkills = new Set(
+    entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
+  );
+  const skills = plan.manifest.skills.filter((name) =>
+    recordedSkills.has(name),
+  );
+  const manifest = { ...plan.manifest, skills, entries };
   const existing = await readTextIfExists(plan.manifestPath);
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
     await writeManifest({

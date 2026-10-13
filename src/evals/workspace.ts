@@ -470,9 +470,10 @@ export async function extractSkillAtRef({
   }
 }
 
-interface ApplyBaselineExclusionParams {
+export interface ApplyBaselineExclusionParams {
   workdir: string;
-  skillName: string;
+  skillName?: string;
+  skillNames?: readonly string[];
   runner: EvalRunnerName;
   paths?: Paths;
 }
@@ -562,13 +563,20 @@ export async function findClaudePluginSkill({
 export async function applyBaselineExclusion({
   workdir,
   skillName,
+  skillNames,
   runner,
   paths,
 }: ApplyBaselineExclusionParams): Promise<{
   possiblyContaminated: boolean;
   warning?: string;
 }> {
-  if (runner === 'fake') {
+  const names = [
+    ...new Set([
+      ...(skillName !== undefined ? [skillName] : []),
+      ...(skillNames ?? []),
+    ]),
+  ];
+  if (runner === 'fake' || names.length === 0) {
     return { possiblyContaminated: false };
   }
 
@@ -585,24 +593,37 @@ export async function applyBaselineExclusion({
       file,
       `${JSON.stringify(
         {
-          skillOverrides: { [skillName]: 'off' },
+          skillOverrides: Object.fromEntries(
+            names.map((name) => [name, 'off']),
+          ),
           permissions: {
-            deny: [
-              `Skill(${skillName})`,
-              `Skill(${skillName} *)`,
-              `Skill(skill:${skillName})`,
-            ],
+            deny: names.flatMap((name) => [
+              `Skill(${name})`,
+              `Skill(${name} *)`,
+              `Skill(skill:${name})`,
+            ]),
           },
         },
         null,
         2,
       )}\n`,
     );
-    const pluginSkill = await findClaudePluginSkill({ skillName, paths });
-    if (pluginSkill !== undefined) {
+    const warnings: string[] = [];
+    for (const name of names) {
+      const pluginSkill = await findClaudePluginSkill({
+        skillName: name,
+        paths,
+      });
+      if (pluginSkill !== undefined) {
+        warnings.push(
+          `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; baseline is possibly contaminated.`,
+        );
+      }
+    }
+    if (warnings.length > 0) {
       return {
         possiblyContaminated: true,
-        warning: `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; baseline is possibly contaminated.`,
+        warning: warnings.join(' '),
       };
     }
     return { possiblyContaminated: false };
@@ -616,20 +637,28 @@ export async function applyBaselineExclusion({
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
       file,
-      `${JSON.stringify({ skills: { disabled: [skillName] } }, null, 2)}\n`,
+      `${JSON.stringify({ skills: { disabled: names } }, null, 2)}\n`,
     );
     return { possiblyContaminated: false };
   }
 
   // agy and codex document no workspace-level way to turn off one skill.
-  const installedGlobally = await isSkillInstalledGlobally({
-    skillName,
-    paths,
-  });
-  if (installedGlobally) {
+  const warnings: string[] = [];
+  for (const name of names) {
+    const installedGlobally = await isSkillInstalledGlobally({
+      skillName: name,
+      paths,
+    });
+    if (installedGlobally) {
+      warnings.push(
+        `Runner "${runner}" has no documented workspace-level skill exclusion and "${name}" is installed globally; baseline is possibly contaminated.`,
+      );
+    }
+  }
+  if (warnings.length > 0) {
     return {
       possiblyContaminated: true,
-      warning: `Runner "${runner}" has no documented workspace-level skill exclusion and "${skillName}" is installed globally; baseline is possibly contaminated.`,
+      warning: warnings.join(' '),
     };
   }
   return { possiblyContaminated: false };
@@ -646,6 +675,7 @@ export interface PrepareEvalWorkspaceParams {
   repoRoot?: string;
   compareRef?: string;
   compareSkill?: ComparedSkillSpec;
+  compareSkills?: readonly ComparedSkillSpec[];
   env?: Environment;
 }
 
@@ -660,16 +690,26 @@ export async function prepareEvalWorkspace({
   repoRoot,
   compareRef,
   compareSkill,
+  compareSkills,
   env,
 }: PrepareEvalWorkspaceParams): Promise<PreparedWorkspace> {
   const workdir = join(runDir, 'workdir');
   await rm(workdir, { recursive: true, force: true });
   await mkdir(workdir, { recursive: true });
 
+  const allCompareNames = [
+    ...new Set([
+      ...(compareSkills?.map((item) => item.skillName) ?? []),
+      ...(compareSkill ? [compareSkill.skillName] : []),
+    ]),
+  ];
+
   await copyCaseFiles({
     skillDir,
     skillName,
-    ...(compareSkill ? { compareSkillNames: [compareSkill.skillName] } : {}),
+    ...(allCompareNames.length > 0
+      ? { compareSkillNames: allCompareNames }
+      : {}),
     workdir,
     evalCase,
   });
@@ -700,19 +740,28 @@ export async function prepareEvalWorkspace({
         await rm(snapshotDir, { recursive: true, force: true });
       }
     }
-    const warning = await personalSkillShadowWarning({
+    const exclusion = await applyBaselineExclusion({
+      workdir,
+      skillNames: allCompareNames,
+      runner,
+      paths,
+    });
+    const shadowWarning = await personalSkillShadowWarning({
       runner,
       skillName,
       paths,
     });
+    const combinedWarning = [exclusion.warning, shadowWarning]
+      .filter((item): item is string => item !== undefined)
+      .join(' ');
     return {
       workdir,
       variant,
       runner,
       skillName,
-      possiblyContaminated: false,
-      skillShadowed: warning !== undefined,
-      ...(warning ? { warning } : {}),
+      possiblyContaminated: exclusion.possiblyContaminated,
+      skillShadowed: shadowWarning !== undefined,
+      ...(combinedWarning ? { warning: combinedWarning } : {}),
     };
   }
 
@@ -729,9 +778,12 @@ export async function prepareEvalWorkspace({
       source: compareSkill.skillDir,
       destination: destSkillDir,
     });
+    const otherCompareNames = allCompareNames.filter(
+      (name) => name !== compareSkill.skillName,
+    );
     const exclusion = await applyBaselineExclusion({
       workdir,
-      skillName,
+      skillNames: [skillName, ...otherCompareNames],
       runner,
       paths,
     });
@@ -748,15 +800,15 @@ export async function prepareEvalWorkspace({
       variant,
       runner,
       skillName: compareSkill.skillName,
-      possiblyContaminated: false,
-      skillShadowed: false,
+      possiblyContaminated: exclusion.possiblyContaminated,
+      skillShadowed: shadowWarning !== undefined,
       ...(combinedWarning ? { warning: combinedWarning } : {}),
     };
   }
 
   const exclusion = await applyBaselineExclusion({
     workdir,
-    skillName,
+    skillNames: [skillName, ...allCompareNames],
     runner,
     paths,
   });
@@ -1010,7 +1062,7 @@ export async function verifySkillAtRef({
     cwd: repoRoot,
     args: ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
     env,
-    failure: `Git ref "${ref}" does not name a commit in ${repoRoot}`,
+    failure: `"${ref}" was not found as a skill in skills/, catalog.yaml, or on disk, and git ref "${ref}" does not name a commit in ${repoRoot}`,
   });
   const type = await gitOutput({
     cwd: repoRoot,

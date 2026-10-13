@@ -132,6 +132,7 @@ function formatAssertionRow({
   withOldSkill,
   compareSkillNames,
 }: AssertionRowParams): string {
+  const withCompareSkills = compareSkillNames.length > 0;
   const oldClassification =
     assertion.old_skill_classification ??
     (hasBaseline ? undefined : assertion.classification);
@@ -144,12 +145,22 @@ function formatAssertionRow({
     ...compareSkillNames.map((name) =>
       formatRate(assertion.compare_pass_rates?.[name]),
     ),
-    ...(hasBaseline || !withOldSkill
+    ...(hasBaseline || (!withOldSkill && !withCompareSkills)
       ? [cellCodeSpan(assertion.classification)]
       : []),
     ...(withOldSkill
       ? [oldClassification ? cellCodeSpan(oldClassification) : NOT_AVAILABLE]
       : []),
+    ...compareSkillNames.map((name, index) => {
+      const compareClassification =
+        assertion.compare_classifications?.[name] ??
+        (!hasBaseline && !withOldSkill && index === 0
+          ? assertion.classification
+          : undefined);
+      return compareClassification
+        ? cellCodeSpan(compareClassification)
+        : NOT_AVAILABLE;
+    }),
   ];
   return `| ${cells.join(' | ')} |`;
 }
@@ -274,14 +285,26 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   }
 
   const analysis = benchmark.assertion_analysis;
-  const analysisLines = [
+  const analysisLines: (readonly [string, readonly string[]])[] = [
     [`Pass only with skill${vsReference}`, analysis.pass_only_with_skill],
-    ['Regressing (vs baseline)', analysis.regressing],
+    ...(hasBaseline
+      ? ([['Regressing (vs baseline)', analysis.regressing]] as const)
+      : []),
     ['Regressing (vs `old_skill`)', analysis.regressing_vs_old],
+    ...compareSkillNames.map(
+      (name) =>
+        [
+          `Regressing (vs ${codeSpan(`compare:${name}`)})`,
+          analysis.regressing_vs_compare?.[name] ??
+            (!hasBaseline && !withOldSkill && name === firstCompareName
+              ? analysis.regressing
+              : []),
+        ] as const,
+    ),
     [`Pass in both${vsReference}`, analysis.pass_in_both],
     [`Fail in both${vsReference}`, analysis.fail_in_both],
     [`Flaky${vsReference}`, analysis.flaky],
-  ] as const;
+  ];
   if (analysisLines.some(([, items]) => items.length > 0)) {
     lines.push('## Assertion Analysis', '');
     for (const [label, items] of analysisLines) {
@@ -306,6 +329,7 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     );
 
     if (evalCase.assertions.length > 0) {
+      const withCompareSkills = compareSkillNames.length > 0;
       const header = [
         'Assertion',
         'Kind',
@@ -315,12 +339,13 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
         ...compareSkillNames.map((name) => cellCodeSpan(`compare:${name}`)),
         ...(hasBaseline
           ? ['Classification (vs baseline)']
-          : withOldSkill
-            ? []
-            : referenceLabel
-              ? [`Classification (vs ${referenceLabel})`]
-              : ['Classification']),
+          : !withOldSkill && !withCompareSkills
+            ? ['Classification']
+            : []),
         ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
+        ...compareSkillNames.map(
+          (name) => `Classification (vs ${cellCodeSpan(`compare:${name}`)})`,
+        ),
       ];
       lines.push(
         `| ${header.join(' | ')} |`,
