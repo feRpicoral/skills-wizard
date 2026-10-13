@@ -1,20 +1,13 @@
-import detectIndent from 'detect-indent';
 import { getProperty, hasProperty, parsePath } from 'dot-prop';
-import {
-  applyEdits,
-  type FormattingOptions,
-  type JSONPath,
-  modify,
-} from 'jsonc-parser';
+import type { JSONPath } from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
+import { removeJsonProperty, setJsonValue } from './json-text.ts';
 import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
 
 type JsonObject = Record<string, unknown>;
 
 const DEFAULT_INDENT = 2;
-
-export const LEGACY_CREATED_KEYS = 1;
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -69,15 +62,6 @@ function missingKeys(doc: JsonObject, keys: JSONPath): number {
   return keys.length - depth;
 }
 
-function formatting(text: string): FormattingOptions {
-  const { amount, type } = detectIndent(text);
-  return {
-    insertSpaces: type !== 'tab',
-    tabSize: amount || DEFAULT_INDENT,
-    eol: lineEnding(text || null),
-  };
-}
-
 interface SetValueParams {
   existing: string | null;
   keys: JSONPath;
@@ -85,16 +69,24 @@ interface SetValueParams {
 }
 
 function setValue({ existing, keys, value }: SetValueParams): string {
-  const edit = (text: string) =>
-    applyEdits(
-      text,
-      modify(text, keys, value, { formattingOptions: formatting(text) }),
-    );
   if (existing === null || isBlank(existing)) {
-    const eol = lineEnding(existing);
-    return keepBom(existing ?? '', () => `${edit('')}${eol}`);
+    const doc = keys.reduceRight<unknown>(
+      (inner, key) => ({ [String(key)]: inner }),
+      value,
+    );
+    const text = JSON.stringify(doc, null, DEFAULT_INDENT);
+    return keepBom(existing ?? '', () => `${text}${lineEnding(existing)}`);
   }
-  return keepBom(existing, edit);
+  return keepBom(existing, (text) => setJsonValue({ text, keys, value }));
+}
+
+interface RemoveKeyParams {
+  existing: string;
+  keys: JSONPath;
+}
+
+function removeKey({ existing, keys }: RemoveKeyParams): string {
+  return keepBom(existing, (text) => removeJsonProperty({ text, keys }));
 }
 
 interface EnsureArrayValuesParams {
@@ -160,19 +152,27 @@ export function removeArrayValues({
     return setValue({ existing, keys, value });
   }
 
-  let content = setValue({ existing, keys, value: undefined });
+  let content = removeKey({ existing, keys });
   const existingDepth = keys.length - createdKeys;
   for (let depth = keys.length - 1; depth > existingDepth; depth -= 1) {
     const ancestorPath = keys.slice(0, depth);
     const ancestor = getProperty(parseJsonObject(content), ancestorPath);
     if (!isObject(ancestor) || Object.keys(ancestor).length > 0) break;
-    content = setValue({
-      existing: content,
-      keys: ancestorPath,
-      value: undefined,
-    });
+    content = removeKey({ existing: content, keys: ancestorPath });
   }
   return content;
+}
+
+interface LegacyCreatedKeysParams {
+  keyPath: string;
+  createdFile: boolean;
+}
+
+export function legacyCreatedKeys({
+  keyPath,
+  createdFile,
+}: LegacyCreatedKeysParams): number {
+  return createdFile ? parsePath(keyPath).length : 1;
 }
 
 export function isEmptyJsonObject(content: string): boolean {

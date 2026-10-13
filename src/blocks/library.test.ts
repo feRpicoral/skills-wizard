@@ -41,6 +41,23 @@ test('repository blocks require every section they refer to', async () => {
   assert.deepEqual(gitBehavior?.requires, ['engineering/comments']);
 });
 
+test('repository blocks do not name tools that only some agents have', async () => {
+  const library = await loadBlockLibrary(repoBlocks);
+  const toolSpecific = [
+    /\bWebFetch\b/,
+    /\bWebSearch\b/,
+    /\bReddit MCP\b/i,
+    /\bfetcher MCP\b/i,
+    /\bPlaywright\b/i,
+  ];
+
+  for (const block of library.blocks) {
+    for (const pattern of toolSpecific) {
+      assert.doesNotMatch(block.body, pattern, `${block.id} matches ${pattern}`);
+    }
+  }
+});
+
 test('loads blocks with their frontmatter and trimmed body', async (t) => {
   const dir = await tempDir(t);
   await writeFiles(dir, {

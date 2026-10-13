@@ -1,10 +1,15 @@
-import { basename } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import { lstatIfExists, resolveIfSymlink, statIfExists } from './fs.ts';
+import {
+  lstatIfExists,
+  readSymlink,
+  resolveIfSymlink,
+  statIfExists,
+} from './fs.ts';
 import { ensureLine, hasLine, removeLine } from './import-line.ts';
-import { ensureArrayValues, LEGACY_CREATED_KEYS } from './json-merge.ts';
+import { ensureArrayValues } from './json-merge.ts';
 import { isBlank } from './lines.ts';
 import {
   excludeMarkers,
@@ -89,8 +94,11 @@ function regionPreamble({
   existing,
   previous,
 }: RegionPreambleParams): string | undefined {
-  if (isBlank(existing)) return target.preamble;
-  return previous?.kind === 'region' ? previous.preamble : undefined;
+  if (existing === null || isBlank(existing)) return target.preamble;
+  const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
+  return preamble && existing.trimStart().startsWith(preamble)
+    ? preamble
+    : undefined;
 }
 
 interface FileActionParams<T extends FileTarget> {
@@ -181,6 +189,19 @@ function planLine({
   });
 }
 
+type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
+
+function createdKeysField(
+  earlier: JsonArrayEntry | null,
+  created: number,
+): { createdKeys?: number } {
+  if (!earlier) return { createdKeys: created };
+  if (earlier.createdKeys === undefined) {
+    return created > 0 ? { createdKeys: created } : {};
+  }
+  return { createdKeys: Math.max(earlier.createdKeys, created) };
+}
+
 function planJsonArray({
   target,
   file,
@@ -211,10 +232,7 @@ function planJsonArray({
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
-        createdKeys: Math.max(
-          earlier ? (earlier.createdKeys ?? LEGACY_CREATED_KEYS) : 0,
-          result.createdKeys,
-        ),
+        ...createdKeysField(earlier, result.createdKeys),
         createdFile: file.createdFile,
       },
       previous,
@@ -272,7 +290,7 @@ async function resolveTargetFile({
   return {
     writePath,
     existing: current,
-    createdFile: wasCreated(onDisk, previous),
+    createdFile: writePath === target.path && wasCreated(onDisk, previous),
   };
 }
 
@@ -281,16 +299,35 @@ interface PlanSatisfiedLineParams extends PlanFileParams {
   satisfiedBy: string;
 }
 
+interface SameFileNoteParams {
+  path: string;
+  other: string;
+}
+
+async function pointsAt({ path, other }: SameFileNoteParams): Promise<boolean> {
+  const link = await readSymlink(path);
+  return link !== null && resolve(dirname(path), link) === other;
+}
+
+async function sameFileNote({
+  path,
+  other,
+}: SameFileNoteParams): Promise<string> {
+  const name = basename(other);
+  if (await pointsAt({ path, other })) return `links to ${name}`;
+  if (await pointsAt({ path: other, other: path })) return `${name} links here`;
+  return `same file as ${name}`;
+}
+
 async function planSatisfiedLine({
   target,
   previous,
   satisfiedBy,
   ...rest
 }: PlanSatisfiedLineParams): Promise<PlannedAction> {
-  const label = `${target.label} (links to ${basename(satisfiedBy)})`;
   const unchanged: PlannedAction = {
     path: target.path,
-    label,
+    label: `${target.label} (${await sameFileNote({ path: target.path, other: satisfiedBy })})`,
     status: 'unchanged',
     change: NONE,
     entry: null,

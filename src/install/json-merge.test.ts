@@ -182,7 +182,7 @@ test('removeArrayValues keeps a byte order mark', () => {
     createdKeys: 2,
   });
 
-  assert.equal(content, '\uFEFF{\n  "a": 1\n}');
+  assert.equal(content, '\uFEFF{"a":1}');
 });
 
 test('isEmptyJsonObject is true only for an object without keys', () => {
@@ -190,4 +190,67 @@ test('isEmptyJsonObject is true only for an object without keys', () => {
     ['{}\n', '{"a":1}'].map((content) => isEmptyJsonObject(content)),
     [true, false],
   );
+});
+
+interface RoundTripParams {
+  existing: string;
+  values?: readonly string[];
+}
+
+function roundTrip({ existing, values = VALUES }: RoundTripParams) {
+  const installed = ensureArrayValues({ existing, keyPath: KEY, values });
+  const removed = removeArrayValues({
+    existing: installed.content,
+    keyPath: KEY,
+    values: installed.added,
+    restoreString: installed.wasString,
+    createdKeys: installed.createdKeys,
+  });
+  return { installed: installed.content, removed };
+}
+
+test('ensureArrayValues leaves inline object and array siblings byte for byte', () => {
+  const existing =
+    '{\n  "mcpServers": { "gh": { "command": "gh", "args": ["mcp"] } },\n  "tags": [1, 2]\n}\n';
+
+  const { installed } = roundTrip({ existing });
+
+  assert.equal(
+    installed,
+    '{\n  "mcpServers": { "gh": { "command": "gh", "args": ["mcp"] } },\n  "tags": [1, 2],\n  "context": {\n    "fileName": [\n      "AGENTS.md",\n      "GEMINI.md"\n    ]\n  }\n}\n',
+  );
+});
+
+test('removing the values restores inline object and array siblings byte for byte', () => {
+  const existing =
+    '{\n  "mcpServers": { "gh": { "command": "gh", "args": ["mcp"] } },\n  "tags": [1, 2]\n}\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('removing the values restores an empty parent the user created', () => {
+  const existing = '{\n  "context": {},\n  "tags": ["a"]\n}\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('removing the values restores siblings inside the parent object', () => {
+  const existing =
+    '{\n  "context": {\n    "loader": { "depth": 2 },\n    "dirs": ["a", "b"]\n  }\n}\n';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
+});
+
+test('removing the values restores a single-line file', () => {
+  const existing = '{"theme":"dark","list":[1,2]}';
+
+  const { removed } = roundTrip({ existing });
+
+  assert.equal(removed, existing);
 });
