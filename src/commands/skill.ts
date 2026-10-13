@@ -470,7 +470,6 @@ export async function runSkill(
     const result = await runSkillEval({
       skillName,
       skillDir,
-      repoRoot: ctx.repoRoot,
       evalsRootDir: ctx.paths.evalsDir,
       runner,
       runs: runs ?? 1,
