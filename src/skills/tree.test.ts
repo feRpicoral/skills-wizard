@@ -138,7 +138,7 @@ test('copySkillTree refuses a link chain that leaves the skill', async (t) => {
 
   await assert.rejects(
     copySkillTree({ source, destination: join(root, 'copy') }),
-    /leak: it links outside the skill/,
+    /leak: it does not resolve inside the skill/,
   );
 });
 
@@ -150,7 +150,7 @@ test('copySkillTree refuses links that leave the skill', async (t) => {
 
   await assert.rejects(
     copySkillTree({ source, destination: join(root, 'copy') }),
-    /outside\.md: it links outside the skill/,
+    /outside\.md: it does not resolve inside the skill/,
   );
 });
 
@@ -162,7 +162,7 @@ test('copySkillTree refuses absolute links', async (t) => {
 
   await assert.rejects(
     copySkillTree({ source, destination: join(root, 'copy') }),
-    /hosts: it links outside the skill \(\/etc\/hosts\)/,
+    /hosts: it does not resolve inside the skill \(\/etc\/hosts\)/,
   );
 });
 
