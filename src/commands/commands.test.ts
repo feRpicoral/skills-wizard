@@ -740,3 +740,36 @@ test('adopt refuses a skill linked to a folder with a different name', async (t)
     ).isFile(),
   );
 });
+
+test('adopt keeps the catalog entry when a failed apply already recorded the skill', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('permissions do not apply to root');
+    return;
+  }
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await initGlobal(ctx);
+  await lockedDeploy({ ctx });
+  const linkDir = join(ctx.paths.claudeHome, 'skills');
+  await writeFiles(linkDir, { '.keep': '' });
+
+  await chmod(linkDir, 0o555);
+  try {
+    await assert.rejects(
+      runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
+    );
+  } finally {
+    await chmod(linkDir, 0o755);
+  }
+
+  const manifest = JSON.parse(
+    await readFile(join(ctx.paths.stateDir, 'manifest.json'), 'utf8'),
+  ) as { skills: string[] };
+  assert.ok(manifest.skills.includes('deploy'));
+  assert.match(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    /- name: deploy\n\s+repo: owner\/tools/,
+  );
+});

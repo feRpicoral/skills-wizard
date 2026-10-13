@@ -33,6 +33,7 @@ import {
   type SkillLibrary,
 } from '../skills/library.ts';
 import { type LockedSkill, readSkillLock } from '../skills/lock.ts';
+import { readManifest } from '../state/manifest.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
@@ -212,12 +213,33 @@ async function appendEntries(
   }
 }
 
-async function restoreCatalog(
-  file: string,
-  original: string | null,
-): Promise<void> {
+interface RestoreCatalogParams {
+  file: string;
+  original: string | null;
+  entries: readonly CatalogEntry[];
+  manifestPath: string;
+}
+
+// A failed apply may still have recorded some adopted skills in the manifest
+// (actions that ran are kept), so only the entries it does not reference are
+// taken back out of catalog.yaml.
+async function restoreCatalog({
+  file,
+  original,
+  entries,
+  manifestPath,
+}: RestoreCatalogParams): Promise<void> {
+  let recorded: ReadonlySet<string>;
+  try {
+    recorded = new Set((await readManifest(manifestPath))?.skills ?? []);
+  } catch {
+    return;
+  }
+  const kept = entries.filter((entry) => recorded.has(entry.name));
+  if (kept.length === entries.length) return;
   if (original === null) await removePath(file);
   else await writeTextAtomic({ path: file, content: original });
+  if (kept.length > 0) await appendCatalogEntries(file, kept);
 }
 
 export async function runAdopt(
@@ -390,7 +412,12 @@ export async function runAdopt(
     });
   } catch (error) {
     if (catalogBefore !== undefined) {
-      await restoreCatalog(file, catalogBefore);
+      await restoreCatalog({
+        file,
+        original: catalogBefore,
+        entries: newCatalogEntries,
+        manifestPath: location.manifestPath,
+      });
     }
     throw error;
   }
