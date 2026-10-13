@@ -3,10 +3,12 @@ import { styleText } from 'node:util';
 
 import {
   outOfScopeBlockIds,
+  requiredVariables,
+  selectBlocks,
   unknownBlockIds,
   withRequirements,
 } from '../blocks/compose.ts';
-import type { Scope } from '../blocks/library.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath, planPath } from '../install/describe.ts';
 import {
@@ -20,8 +22,10 @@ import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, TOOLS } from '../tools/registry.ts';
 import {
   loadLibrary,
+  type Location,
   readLocationManifest,
   resolveLocation,
+  setVariablesCommand,
 } from './shared.ts';
 
 interface DoctorOptions {
@@ -128,6 +132,60 @@ async function globalFindings(
   return findings;
 }
 
+interface PlanFindingsParams {
+  ctx: Context;
+  location: Location;
+  manifest: Manifest;
+  library: BlockLibrary;
+  blocks: string[];
+}
+
+async function planFindings({
+  ctx,
+  location,
+  manifest,
+  library,
+  blocks,
+}: PlanFindingsParams): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  const home = ctx.paths.home;
+  const plan = await buildPlan({
+    scope: location.scope,
+    selection: {
+      tools: manifest.tools,
+      blocks,
+      variables: manifest.variables,
+      linkCommand: manifest.options.linkCommand ?? false,
+      keepLocal: manifest.options.keepLocal ?? false,
+    },
+    library,
+    paths: ctx.paths,
+    repoRoot: ctx.repoRoot,
+    previous: manifest,
+    manifestPath: location.manifestPath,
+    ...(location.project ? { project: location.project } : {}),
+  });
+
+  for (const action of plan.actions) {
+    const where = planPath({ plan, path: action.path, home });
+    if (action.status === 'conflict') {
+      findings.push({
+        level:
+          action.previous && action.previous.kind !== 'symlink'
+            ? 'error'
+            : 'warn',
+        message: `${where}: ${action.reason ?? 'conflict'}`,
+      });
+    } else if (action.change.type !== 'none') {
+      findings.push({
+        level: 'warn',
+        message: `${where} is out of date; run agents-config sync`,
+      });
+    }
+  }
+  return findings;
+}
+
 export async function runDoctor(
   ctx: Context,
   { scope, projectDir }: DoctorOptions,
@@ -174,39 +232,17 @@ export async function runDoctor(
       message: `Required blocks missing from the install: ${added.join(', ')}; agents-config sync will add them`,
     });
   }
-  const plan = await buildPlan({
-    scope,
-    selection: {
-      tools: manifest.tools,
-      blocks,
-      variables: manifest.variables,
-      linkCommand: manifest.options.linkCommand ?? false,
-      keepLocal: manifest.options.keepLocal ?? false,
-    },
-    library,
-    paths: ctx.paths,
-    repoRoot: ctx.repoRoot,
-    previous: manifest,
-    manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
-  });
-
-  for (const action of plan.actions) {
-    const where = planPath({ plan, path: action.path, home });
-    if (action.status === 'conflict') {
-      findings.push({
-        level:
-          action.previous && action.previous.kind !== 'symlink'
-            ? 'error'
-            : 'warn',
-        message: `${where}: ${action.reason ?? 'conflict'}`,
-      });
-    } else if (action.change.type !== 'none') {
-      findings.push({
-        level: 'warn',
-        message: `${where} is out of date; run agents-config sync`,
-      });
-    }
+  const needed = requiredVariables(selectBlocks(library, blocks, scope));
+  const missing = needed.filter((name) => !manifest.variables[name]?.trim());
+  if (missing.length > 0) {
+    findings.push({
+      level: 'error',
+      message: `The blocks now use variables with no recorded value: ${missing.join(', ')}; set them with ${setVariablesCommand({ ctx, location, names: missing })}`,
+    });
+  } else {
+    findings.push(
+      ...(await planFindings({ ctx, location, manifest, library, blocks })),
+    );
   }
   findings.push(...(await symlinkFindings(ctx, manifest)));
   if (scope === 'global') {
