@@ -11,6 +11,7 @@ import {
   runSkillEval,
   runSkillTriggers,
 } from '../evals/engine.ts';
+import { formatPassRateDelta, formatRate } from '../evals/report.ts';
 import {
   createEvalRunner,
   detectDefaultRunner,
@@ -85,14 +86,22 @@ function printBenchmarkSummary(
   benchmark: BenchmarkSummary,
 ): void {
   const { metadata, run_summary: summary } = benchmark;
-  const withMean = (summary.with_skill.pass_rate.mean * 100).toFixed(1);
-  const deltaStr = summary.delta
-    ? ` (delta vs baseline: ${summary.delta.pass_rate})`
-    : summary.old_skill_delta
-      ? ` (delta vs old_skill: ${summary.old_skill_delta.pass_rate})`
-      : '';
+  const withMean = formatRate(summary.with_skill.pass_rate.mean);
+  const deltas = [
+    ...(summary.without_skill
+      ? [
+          `${formatPassRateDelta(summary.with_skill, summary.without_skill)} vs baseline`,
+        ]
+      : []),
+    ...(summary.old_skill
+      ? [
+          `${formatPassRateDelta(summary.with_skill, summary.old_skill)} vs old_skill`,
+        ]
+      : []),
+  ];
+  const deltaStr = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
   ctx.print(
-    `Evaluated ${metadata.skill_name} with ${metadata.runner}: with_skill pass rate ${withMean}%${deltaStr}.`,
+    `Evaluated ${metadata.skill_name} with ${metadata.runner}: with_skill pass rate ${withMean}${deltaStr}.`,
   );
 }
 
@@ -536,7 +545,7 @@ export async function runSkill(
     });
     const { metrics } = result.summary;
     ctx.print(
-      `Triggers for ${skillName} (${split}): recall ${(metrics.recall * 100).toFixed(1)}%, precision ${(metrics.precision * 100).toFixed(1)}%, false positive rate ${(metrics.false_positive_rate * 100).toFixed(1)}%, accuracy ${(metrics.accuracy * 100).toFixed(1)}%.`,
+      `Triggers for ${skillName} (${split}): recall ${formatRate(metrics.recall)}, precision ${formatRate(metrics.precision)}, false positive rate ${formatRate(metrics.false_positive_rate)}, accuracy ${formatRate(metrics.accuracy)}.`,
     );
     ctx.print(
       `Report: ${displayPath({ path: join(result.outputDir, 'triggers.md'), home: ctx.paths.home })}`,

@@ -1,44 +1,165 @@
 import type {
+  AssertionAggregate,
   BenchmarkSummary,
+  EvalRunRecord,
   StatSummary,
   TriggerBenchmarkSummary,
   VariantAggregate,
 } from './aggregate.ts';
 
-function formatStat(stat: StatSummary, decimals = 2): string {
+const NOT_AVAILABLE = 'n/a';
+
+/** Collapses every run of whitespace, newlines included, to one space. */
+export function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** Makes text safe inside one Markdown table cell. */
+export function escapeTableCell(text: string): string {
+  return collapseWhitespace(text).replaceAll('|', '\\|');
+}
+
+function longestBacktickRun(text: string): number {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) {
+    longest = Math.max(longest, match[0].length);
+  }
+  return longest;
+}
+
+/**
+ * Wraps text in an inline code span whose fence is longer than any backtick
+ * run inside it, so the text cannot close the span early.
+ */
+export function codeSpan(text: string): string {
+  const content = collapseWhitespace(text);
+  const fence = '`'.repeat(longestBacktickRun(content) + 1);
+  const padded =
+    content.startsWith('`') || content.endsWith('`') ? ` ${content} ` : content;
+  return `${fence}${padded}${fence}`;
+}
+
+/** A code span that is also safe inside a table cell. */
+function cellCodeSpan(text: string): string {
+  return codeSpan(text).replaceAll('|', '\\|');
+}
+
+/** Wraps multi-line text in a fenced code block it cannot close. */
+export function codeBlock(text: string): string[] {
+  const fence = '`'.repeat(Math.max(3, longestBacktickRun(text) + 1));
+  return [`${fence}text`, text.replace(/\r\n?/g, '\n'), fence];
+}
+
+/** Renders a 0..1 rate as a percentage, or "n/a" when it is undefined. */
+export function formatRate(value: number | null | undefined): string {
+  return value === null || value === undefined
+    ? NOT_AVAILABLE
+    : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatStat(stat: StatSummary, decimals: number): string {
   return `${stat.mean.toFixed(decimals)} ± ${stat.stddev.toFixed(decimals)}`;
 }
 
-function formatRate(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
+/**
+ * Renders the difference of mean pass rates in percentage points, e.g.
+ * "+33.3 pp".
+ */
+export function formatPassRateDelta(
+  primary: VariantAggregate,
+  reference: VariantAggregate,
+): string {
+  const points = (primary.pass_rate.mean - reference.pass_rate.mean) * 100;
+  const fixed = points.toFixed(1);
+  if (Number(fixed) === 0) return '+0.0 pp';
+  return points > 0 ? `+${fixed} pp` : `${fixed} pp`;
 }
 
 function formatVariantRow(label: string, variant: VariantAggregate): string {
   const passRate = `${(variant.pass_rate.mean * 100).toFixed(1)}% ± ${(variant.pass_rate.stddev * 100).toFixed(1)}%`;
   const duration = `${formatStat(variant.time_seconds, 2)}s`;
-  const tokens = formatStat(variant.tokens, 0);
-  return `| ${label} | ${passRate} | ${duration} | ${tokens} |`;
+  const tokens = variant.tokens ? formatStat(variant.tokens, 0) : NOT_AVAILABLE;
+  const failed = `${variant.failed_runs}/${variant.runs}`;
+  return `| ${label} | ${passRate} | ${duration} | ${tokens} | ${failed} |`;
+}
+
+interface DeltaRowParams {
+  label: string;
+  primary: VariantAggregate;
+  reference: VariantAggregate;
+  timeSeconds: string;
+  tokens: string;
+}
+
+function formatDeltaRow({
+  label,
+  primary,
+  reference,
+  timeSeconds,
+  tokens,
+}: DeltaRowParams): string {
+  const tokenCell = tokens === NOT_AVAILABLE ? tokens : `**${tokens}**`;
+  return `| **${label}** | **${formatPassRateDelta(primary, reference)}** | **${timeSeconds}s** | ${tokenCell} | |`;
+}
+
+function formatAnalysisLine(label: string, items: readonly string[]): string {
+  return `- **${label} (${items.length}):** ${items.map(codeSpan).join(', ')}`;
+}
+
+function formatRunHeading(run: EvalRunRecord): string {
+  const tokens =
+    run.timing.usage_reported === false
+      ? 'tokens n/a'
+      : `${run.timing.total_tokens} tokens`;
+  const failure = run.timing.timed_out
+    ? ', timed out'
+    : run.timing.error
+      ? ', failed'
+      : '';
+  return `#### ${codeSpan(run.variant)} - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds.toFixed(2)}s, ${tokens}${failure})`;
+}
+
+function formatAssertionRow(
+  assertion: AssertionAggregate,
+  withOldSkill: boolean,
+): string {
+  const cells = [
+    escapeTableCell(assertion.text),
+    cellCodeSpan(assertion.kind),
+    formatRate(assertion.with_skill_pass_rate),
+    formatRate(assertion.baseline_pass_rate),
+    ...(withOldSkill ? [formatRate(assertion.old_skill_pass_rate)] : []),
+    cellCodeSpan(assertion.classification),
+    ...(withOldSkill
+      ? [
+          assertion.old_skill_classification
+            ? cellCodeSpan(assertion.old_skill_classification)
+            : NOT_AVAILABLE,
+        ]
+      : []),
+  ];
+  return `| ${cells.join(' | ')} |`;
 }
 
 export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   const { metadata, run_summary: summary, cases } = benchmark;
   const lines: string[] = [
-    `# Skill Evaluation Report: \`${metadata.skill_name}\``,
+    `# Skill Evaluation Report: ${codeSpan(metadata.skill_name)}`,
     '',
-    `- **Runner:** \`${metadata.runner}\``,
-    `- **Timestamp:** \`${metadata.timestamp}\``,
+    `- **Runner:** ${codeSpan(metadata.runner)}`,
+    `- **Timestamp:** ${codeSpan(metadata.timestamp)}`,
     `- **Runs per configuration:** ${metadata.runs_per_configuration}`,
     `- **Baseline status:** ${metadata.baseline_status}`,
   ];
   if (metadata.compare_ref) {
-    lines.push(`- **Compared against ref:** \`${metadata.compare_ref}\``);
+    lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
   }
   lines.push('');
 
   if (metadata.warnings.length > 0) {
     lines.push('## Warnings', '');
     for (const warning of metadata.warnings) {
-      lines.push(`- ${warning}`);
+      lines.push(`- ${collapseWhitespace(warning)}`);
     }
     lines.push('');
   }
@@ -46,8 +167,10 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   lines.push(
     '## Overall Summary',
     '',
-    '| Variant | Pass Rate (mean ± sd) | Duration (mean ± sd) | Total Tokens (mean ± sd) |',
-    '| --- | --- | --- | --- |',
+    'Means and sample standard deviations (sd) are taken across case runs: every run of every case for that variant. Failed runs count as failures; token statistics include only runs that reported usage.',
+    '',
+    '| Variant | Pass Rate (mean ± sd) | Duration (mean ± sd) | Total Tokens (mean ± sd) | Failed Runs |',
+    '| --- | --- | --- | --- | --- |',
     formatVariantRow('`with_skill`', summary.with_skill),
   );
   if (summary.without_skill) {
@@ -56,14 +179,26 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   if (summary.old_skill) {
     lines.push(formatVariantRow('`old_skill`', summary.old_skill));
   }
-  if (summary.delta) {
+  if (summary.delta && summary.without_skill) {
     lines.push(
-      `| **Delta (vs baseline)** | **${summary.delta.pass_rate}** | **${summary.delta.time_seconds}s** | **${summary.delta.tokens}** |`,
+      formatDeltaRow({
+        label: 'Delta (vs baseline)',
+        primary: summary.with_skill,
+        reference: summary.without_skill,
+        timeSeconds: summary.delta.time_seconds,
+        tokens: summary.delta.tokens,
+      }),
     );
   }
-  if (summary.old_skill_delta) {
+  if (summary.old_skill_delta && summary.old_skill) {
     lines.push(
-      `| **Delta (vs old_skill)** | **${summary.old_skill_delta.pass_rate}** | **${summary.old_skill_delta.time_seconds}s** | **${summary.old_skill_delta.tokens}** |`,
+      formatDeltaRow({
+        label: 'Delta (vs old_skill)',
+        primary: summary.with_skill,
+        reference: summary.old_skill,
+        timeSeconds: summary.old_skill_delta.time_seconds,
+        tokens: summary.old_skill_delta.tokens,
+      }),
     );
   }
   lines.push('');
@@ -76,81 +211,74 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
       '',
     );
     for (const item of benchmark.non_discriminating_assertions) {
-      lines.push(`- \`${item}\``);
+      lines.push(`- ${codeSpan(item)}`);
     }
     lines.push('');
   }
 
   const analysis = benchmark.assertion_analysis;
-  if (
-    analysis &&
-    (analysis.pass_only_with_skill.length > 0 ||
-      analysis.pass_in_both.length > 0 ||
-      analysis.fail_in_both.length > 0 ||
-      analysis.flaky.length > 0)
-  ) {
+  const analysisLines = [
+    ['Pass only with skill', analysis.pass_only_with_skill],
+    ['Regressing (vs baseline)', analysis.regressing],
+    ['Regressing (vs old_skill)', analysis.regressing_vs_old],
+    ['Pass in both', analysis.pass_in_both],
+    ['Fail in both', analysis.fail_in_both],
+    ['Flaky', analysis.flaky],
+  ] as const;
+  if (analysisLines.some(([, items]) => items.length > 0)) {
     lines.push('## Assertion Analysis', '');
-    if (analysis.pass_only_with_skill.length > 0) {
-      lines.push(
-        `- **Pass only with skill (${analysis.pass_only_with_skill.length}):** ${analysis.pass_only_with_skill.map((item) => `\`${item}\``).join(', ')}`,
-      );
-    }
-    if (analysis.pass_in_both.length > 0) {
-      lines.push(
-        `- **Pass in both (${analysis.pass_in_both.length}):** ${analysis.pass_in_both.map((item) => `\`${item}\``).join(', ')}`,
-      );
-    }
-    if (analysis.fail_in_both.length > 0) {
-      lines.push(
-        `- **Fail in both (${analysis.fail_in_both.length}):** ${analysis.fail_in_both.map((item) => `\`${item}\``).join(', ')}`,
-      );
-    }
-    if (analysis.flaky.length > 0) {
-      lines.push(
-        `- **Flaky (${analysis.flaky.length}):** ${analysis.flaky.map((item) => `\`${item}\``).join(', ')}`,
-      );
+    for (const [label, items] of analysisLines) {
+      if (items.length > 0) lines.push(formatAnalysisLine(label, items));
     }
     lines.push('');
   }
 
+  const withOldSkill = summary.old_skill !== undefined;
   lines.push('## Eval Cases', '');
   for (const evalCase of cases) {
     lines.push(
-      `### Case: \`${evalCase.case_id}\``,
+      `### Case: ${codeSpan(evalCase.case_id)}`,
       '',
-      `**Prompt:** ${evalCase.prompt}`,
+      '**Prompt:**',
       '',
-      `**Expected Output:** ${evalCase.expected_output}`,
+      ...codeBlock(evalCase.prompt),
+      '',
+      '**Expected Output:**',
+      '',
+      ...codeBlock(evalCase.expected_output),
       '',
     );
 
     if (evalCase.assertions.length > 0) {
+      const header = [
+        'Assertion',
+        'Kind',
+        '`with_skill`',
+        '`without_skill`',
+        ...(withOldSkill ? ['`old_skill`'] : []),
+        'Classification',
+        ...(withOldSkill ? ['vs `old_skill`'] : []),
+      ];
       lines.push(
-        '| Assertion | Kind | `with_skill` | Baseline | Classification |',
-        '| --- | --- | --- | --- | --- |',
+        `| ${header.join(' | ')} |`,
+        `| ${header.map(() => '---').join(' | ')} |`,
       );
       for (const assertion of evalCase.assertions) {
-        const baseCell =
-          assertion.baseline_pass_rate !== undefined
-            ? formatRate(assertion.baseline_pass_rate)
-            : assertion.old_skill_pass_rate !== undefined
-              ? formatRate(assertion.old_skill_pass_rate)
-              : 'n/a';
-        lines.push(
-          `| ${assertion.text.replaceAll('|', '\\|')} | \`${assertion.kind}\` | ${formatRate(assertion.with_skill_pass_rate)} | ${baseCell} | \`${assertion.classification}\` |`,
-        );
+        lines.push(formatAssertionRow(assertion, withOldSkill));
       }
       lines.push('');
     }
 
     for (const run of evalCase.runs) {
-      lines.push(
-        `#### \`${run.variant}\` - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds}s, ${run.timing.total_tokens} tokens)`,
-        '',
-      );
+      lines.push(formatRunHeading(run), '');
+      if (run.timing.error) {
+        lines.push(`- **Run error:** ${collapseWhitespace(run.timing.error)}`);
+      }
       for (const exp of run.grading.expectations) {
         const badge = exp.passed ? 'PASS' : 'FAIL';
-        lines.push(`- **[${badge}]** ${exp.text}: ${exp.evidence}`);
+        lines.push(
+          `- **[${badge}]** ${collapseWhitespace(exp.text)}: ${collapseWhitespace(exp.evidence)}`,
+        );
       }
       lines.push('');
     }
@@ -159,26 +287,40 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   return lines.join('\n');
 }
 
+interface CountParams {
+  value: number | null;
+  numerator: number;
+  denominator: number;
+}
+
+function formatRateWithCount({
+  value,
+  numerator,
+  denominator,
+}: CountParams): string {
+  return `${formatRate(value)} (${numerator}/${denominator})`;
+}
+
 export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
   const { metadata, metrics, queries } = summary;
   const lines: string[] = [
-    `# Trigger Evaluation Report: \`${metadata.skill_name}\``,
+    `# Trigger Evaluation Report: ${codeSpan(metadata.skill_name)}`,
     '',
-    `- **Runner:** \`${metadata.runner}\``,
-    `- **Split:** \`${metadata.split}\``,
+    `- **Runner:** ${codeSpan(metadata.runner)}`,
+    `- **Split:** ${codeSpan(metadata.split)}`,
     `- **Runs per query:** ${metadata.runs_per_query}`,
     `- **Threshold:** ${metadata.threshold}`,
-    `- **Timestamp:** \`${metadata.timestamp}\``,
+    `- **Timestamp:** ${codeSpan(metadata.timestamp)}`,
     '',
     '## Metrics',
     '',
     '| Metric | Value |',
     '| --- | --- |',
     `| Accuracy | ${formatRate(metrics.accuracy)} |`,
-    `| Recall (Sensitivity) | ${formatRate(metrics.recall)} (${metrics.true_positives}/${metrics.positive_queries}) |`,
-    `| Precision | ${formatRate(metrics.precision)} |`,
-    `| Specificity | ${formatRate(metrics.specificity)} (${metrics.true_negatives}/${metrics.negative_queries}) |`,
-    `| False Positive Rate | ${formatRate(metrics.false_positive_rate)} (${metrics.false_positives}/${metrics.negative_queries}) |`,
+    `| Recall (Sensitivity) | ${formatRateWithCount({ value: metrics.recall, numerator: metrics.true_positives, denominator: metrics.positive_queries })} |`,
+    `| Precision | ${formatRateWithCount({ value: metrics.precision, numerator: metrics.true_positives, denominator: metrics.true_positives + metrics.false_positives })} |`,
+    `| Specificity | ${formatRateWithCount({ value: metrics.specificity, numerator: metrics.true_negatives, denominator: metrics.negative_queries })} |`,
+    `| False Positive Rate | ${formatRateWithCount({ value: metrics.false_positive_rate, numerator: metrics.false_positives, denominator: metrics.negative_queries })} |`,
     '',
     '## Queries',
     '',
@@ -191,7 +333,7 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
     const expected = item.should_trigger ? 'trigger' : 'no-trigger';
     const rate = `${item.trigger_count}/${item.runs} (${formatRate(item.trigger_rate)})`;
     lines.push(
-      `| **${status}** | \`${expected}\` | ${rate} | ${item.query.replaceAll('|', '\\|')} |`,
+      `| **${status}** | \`${expected}\` | ${rate} | ${escapeTableCell(item.query)} |`,
     );
   }
   lines.push('');
