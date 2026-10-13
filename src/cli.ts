@@ -173,20 +173,22 @@ async function main(argv: string[]): Promise<number> {
   const terminal = process.stdin.isTTY && process.stdout.isTTY;
   const command = positionals[0];
   if (command === undefined || command === 'help') {
-    if (command === undefined && terminal) {
+    if (command === undefined) {
       const provided = Object.keys(values);
       if (provided.length > 0) {
         throw new UsageError(
           `${flags(provided)} must follow a command such as init`,
         );
       }
-      return runMenu(
-        createContext({
-          repoRoot: REPO_ROOT,
-          cwd: process.cwd(),
-          interactive: true,
-        }),
-      );
+      if (terminal) {
+        return runMenu(
+          createContext({
+            repoRoot: REPO_ROOT,
+            cwd: process.cwd(),
+            interactive: true,
+          }),
+        );
+      }
     }
     print(HELP);
     return 0;
