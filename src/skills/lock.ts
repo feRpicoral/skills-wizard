@@ -4,10 +4,9 @@ import { z } from 'zod';
 
 import type { Paths } from '../env.ts';
 import { readTextIfExists } from '../install/fs.ts';
-import { WHOLE_REPOSITORY } from './catalog.ts';
+import { isRepository, WHOLE_REPOSITORY } from './catalog.ts';
 
 const LOCK_FILE = '.skill-lock.json';
-const GITHUB_REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 
 const lockSchema = z.looseObject({
   skills: z.record(
@@ -33,7 +32,7 @@ function upstreamOf(entry: z.infer<typeof lockSchema>['skills'][string]) {
   if (
     entry.sourceType !== 'github' ||
     !entry.source ||
-    !GITHUB_REPOSITORY.test(entry.source)
+    !isRepository(entry.source)
   ) {
     return {};
   }

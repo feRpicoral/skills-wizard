@@ -9,26 +9,60 @@ import { readTextIfExists, writeTextAtomic } from '../install/fs.ts';
 import { isSkillName } from './validate.ts';
 
 const CATALOG_FILE = 'catalog.yaml';
-const REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/(?!\.\.?$)[A-Za-z0-9._-]+$/;
+const COMMIT = /^[0-9a-f]{40}$/;
+const REF_FORBIDDEN = new Set(['~', '^', ':', '?', '*', '[', '\\']);
 export const WHOLE_REPOSITORY = '.';
 
-function isRepositoryPath(path: string): boolean {
+export function isRepository(repo: string): boolean {
+  return REPOSITORY.test(repo);
+}
+
+export function isRepositoryPath(path: string): boolean {
   if (path === WHOLE_REPOSITORY) return true;
   return (
     posix.normalize(path) === path &&
     !path.startsWith('/') &&
     !path.endsWith('/') &&
-    !path.split('/').includes('..')
+    !path.includes('\\') &&
+    path.split('/').every((part) => part !== '..' && !part.startsWith('-'))
+  );
+}
+
+function isRefCharacter(character: string): boolean {
+  const code = character.charCodeAt(0);
+  return code > 0x20 && code !== 0x7f && !REF_FORBIDDEN.has(character);
+}
+
+export function isGitRef(ref: string): boolean {
+  if (COMMIT.test(ref)) return true;
+  return (
+    ref !== '@' &&
+    !ref.startsWith('-') &&
+    !ref.endsWith('.') &&
+    !ref.includes('..') &&
+    !ref.includes('@{') &&
+    [...ref].every(isRefCharacter) &&
+    ref
+      .split('/')
+      .every(
+        (part) =>
+          part !== '' && !part.startsWith('.') && !part.endsWith('.lock'),
+      )
   );
 }
 
 const entrySchema = z.strictObject({
   name: z.string().refine(isSkillName, 'must follow the skill naming rules'),
-  repo: z.string().regex(REPOSITORY, 'must be owner/repo'),
+  repo: z.string().refine(isRepository, 'must be owner/repo'),
   path: z
     .string()
     .refine(isRepositoryPath, 'must be "." or a path inside the repository'),
-  ref: z.string().min(1).optional(),
+  ref: z
+    .string()
+    .min(1)
+    .refine(isGitRef, 'must be a branch, tag or full commit SHA')
+    .optional(),
   category: z.string().min(1),
   scopes: z.array(z.enum(SCOPES)).min(1),
   defaults: z.array(z.enum(SCOPES)).default([]),

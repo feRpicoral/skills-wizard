@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import { SourceError } from '../errors.ts';
-import { tempDir } from '../test-support/fixtures.ts';
+import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import { createUpstream, isolatedGitEnv } from '../test-support/git.ts';
 import {
   checkSource,
@@ -179,4 +179,42 @@ test('a repository that cannot be cloned is a SourceError and leaves nothing beh
   );
 
   assert.deepEqual(await readdir(join(cache.root, 'owner')), []);
+});
+
+test('specs git could read as options are rejected before running git', async (t) => {
+  const upstream = await createUpstream(t, FILES);
+  const cache = await cacheFor(t, upstream.url);
+  const specs = [
+    { repo: REPO, ref: '--upload-pack=touch pwned', paths: ['skills/alpha'] },
+    { repo: REPO, paths: ['--stdin'] },
+    { repo: REPO, paths: ['skills/-alpha'] },
+  ];
+
+  for (const spec of specs) {
+    await assert.rejects(ensureSource(cache, spec), SourceError);
+    await assert.rejects(
+      checkSource(cache, spec, { force: true }),
+      SourceError,
+    );
+  }
+
+  await assert.rejects(readdir(cache.root), { code: 'ENOENT' });
+});
+
+test('dot-segment repository names never resolve to a parent cache directory', async (t) => {
+  const upstream = await createUpstream(t, FILES);
+  const cache = await cacheFor(t, upstream.url);
+  await writeFiles(cache.root, { 'owner/keep/file.txt': 'keep\n' });
+
+  for (const repo of ['owner/.', 'owner/..']) {
+    await assert.rejects(
+      ensureSource(cache, { repo, paths: ['.'] }),
+      SourceError,
+    );
+  }
+
+  assert.equal(
+    await readFile(join(cache.root, 'owner', 'keep', 'file.txt'), 'utf8'),
+    'keep\n',
+  );
 });
