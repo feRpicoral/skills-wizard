@@ -242,7 +242,26 @@ test('deselecting Gemini CLI restores a string context file name', async (t) => 
 
   assert.equal(
     await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
-    '{\n    "context": {\n        "fileName": "GEMINI.md"\n    }\n}\n',
+    '{\n    "context": { "fileName": "GEMINI.md" }\n}\n',
+  );
+});
+
+test('deselecting Gemini CLI keeps other settings and parents as written', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.gemini/settings.json': '{\n  "ratio": 1.0,\n  "context": {}\n}\n',
+  });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  const content = await readFile(
+    join(paths.geminiHome, 'settings.json'),
+    'utf8',
+  );
+  assert.deepEqual(
+    [content.includes('"ratio": 1.0'), JSON.parse(content)],
+    [true, { ratio: 1, context: {} }],
   );
 });
 

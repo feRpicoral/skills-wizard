@@ -9,11 +9,7 @@ import {
   statIfExists,
 } from './fs.ts';
 import { ensureLine, hasLine, removeLine } from './import-line.ts';
-import {
-  ensureArrayValues,
-  parseJsonObject,
-  serializeJson,
-} from './json-merge.ts';
+import { ensureArrayValues, LEGACY_CREATED_KEYS } from './json-merge.ts';
 import { isBlank } from './lines.ts';
 import {
   excludeMarkers,
@@ -239,7 +235,7 @@ function planJsonArray({
 }: FileActionParams<JsonArrayTarget>): PlannedAction {
   try {
     const result = ensureArrayValues({
-      doc: parseJsonObject(file.existing),
+      existing: file.existing,
       keyPath: target.key,
       values: target.values,
     });
@@ -252,20 +248,20 @@ function planJsonArray({
         ...result.added,
       ]),
     ];
-    const next =
-      file.existing === null || result.added.length > 0
-        ? serializeJson(result.doc, file.existing)
-        : file.existing;
     return writeAction({
       target,
       file,
-      next,
+      next: result.content,
       entry: {
         kind: 'json-array',
         path: target.path,
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
+        createdKeys: Math.max(
+          earlier ? (earlier.createdKeys ?? LEGACY_CREATED_KEYS) : 0,
+          result.createdKeys,
+        ),
         createdFile: file.createdFile,
       },
       previous,

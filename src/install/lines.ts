@@ -7,13 +7,17 @@ export interface Line {
 
 const BOM = '\uFEFF';
 
+export function withoutBom(content: string): string {
+  return content.startsWith(BOM) ? content.slice(BOM.length) : content;
+}
+
 export function keepBom(
   content: string,
   edit: (text: string) => string,
 ): string {
-  const bom = content.startsWith(BOM) ? BOM : '';
-  const next = edit(content.slice(bom.length));
-  return next === '' ? '' : `${bom}${next}`;
+  const text = withoutBom(content);
+  const next = edit(text);
+  return next === '' || text === content ? next : `${BOM}${next}`;
 }
 
 export function isBlank(content: string | null): boolean {
