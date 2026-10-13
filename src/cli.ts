@@ -469,6 +469,7 @@ async function main(argv: string[]): Promise<number> {
     }
     if (command === undefined) {
       const provided = Object.keys(values);
+      if (baselineRef !== undefined) provided.push('baseline');
       if (provided.length > 0) {
         throw new UsageError(
           `${flags(provided)} must follow a command such as init`,

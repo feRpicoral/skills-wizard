@@ -476,6 +476,16 @@ test('without a terminal, flags without a command are a usage error', async (t) 
   assert.equal(result.stdout, '');
 });
 
+test('a --baseline ref without a command is a usage error', async (t) => {
+  const { cli } = await sandbox(t);
+
+  const result = await cli(['--baseline=main']);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--baseline must follow a command/);
+  assert.equal(result.stdout, '');
+});
+
 test('names of built-in object properties are unknown commands', async (t) => {
   const { cli } = await sandbox(t);
 
