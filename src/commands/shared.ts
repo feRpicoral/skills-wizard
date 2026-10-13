@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
-import { basename, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import * as clack from '@clack/prompts';
@@ -20,15 +20,10 @@ import {
   hasChanges,
   planPath,
 } from '../install/describe.ts';
-import {
-  isDirectory,
-  isInside,
-  lstatIfExists,
-  readTextIfExists,
-  realLocation,
-  statIfExists,
-} from '../install/fs.ts';
+import { isDirectory, lstatIfExists } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
+import { detectProject, type ProjectDetection } from '../project/detect.ts';
+import { buildProjectSeed } from '../project/seed.ts';
 import { confirmApply } from '../prompts/selection.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
 import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
@@ -49,6 +44,7 @@ interface Location {
   scope: Scope;
   manifestPath: string;
   project?: ProjectContext;
+  detection?: ProjectDetection;
 }
 
 interface NotifyParams {
@@ -75,28 +71,6 @@ export function notify({
 
 export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
-}
-
-async function readPackageJson(projectDir: string): Promise<string | null> {
-  const location = await realLocation(join(projectDir, 'package.json'));
-  if (location === null || !isInside({ dir: projectDir, path: location })) {
-    return null;
-  }
-  if (!(await statIfExists(location))?.isFile()) return null;
-  return readTextIfExists(location);
-}
-
-async function projectTitle(projectDir: string): Promise<string> {
-  const packageJson = await readPackageJson(projectDir);
-  if (packageJson === null) return basename(projectDir);
-  try {
-    const { name } = JSON.parse(packageJson) as { name?: unknown };
-    return typeof name === 'string' && name.trim()
-      ? name.trim()
-      : basename(projectDir);
-  } catch {
-    return basename(projectDir);
-  }
 }
 
 async function git(projectDir: string, args: string[]): Promise<string | null> {
@@ -140,12 +114,15 @@ export async function resolveLocation({
   }
   const dir = await realpath(requested);
   const repository = await gitContext(dir);
+  const detection = await detectProject(dir);
   return {
     scope,
     manifestPath: projectManifestPath(dir),
+    detection,
     project: {
       dir,
-      title: await projectTitle(dir),
+      title: detection.name,
+      seed: buildProjectSeed(detection),
       ...(repository ? { git: repository } : {}),
     },
   };

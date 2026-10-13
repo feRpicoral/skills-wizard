@@ -20,6 +20,14 @@ import {
   isSystemError,
   UsageError,
 } from './errors.ts';
+import {
+  isPresetId,
+  isProjectStyle,
+  PRESET_IDS,
+  type PresetId,
+  PROJECT_STYLES,
+  type ProjectStyle,
+} from './project/presets.ts';
 import { SKILL_MODES, type SkillMode } from './skills/install.ts';
 import { isToolId, TOOL_IDS, type ToolId } from './tools/registry.ts';
 
@@ -51,6 +59,8 @@ Options:
   --skills <names>      Comma-separated skills from catalog.yaml or skills/
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
+  --preset <id>         Project preset: ${PRESET_IDS.join(', ')}
+  --style <mode>        Project instructions style: lean (default) or self-contained
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -82,6 +92,8 @@ const OPTIONS = {
   blocks: { type: 'string' },
   skills: { type: 'string' },
   'skill-mode': { type: 'string' },
+  preset: { type: 'string' },
+  style: { type: 'string' },
   catalog: { type: 'boolean' },
   template: { type: 'string' },
   'with-evals': { type: 'boolean' },
@@ -134,6 +146,8 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'blocks',
     'skills',
     'skill-mode',
+    'preset',
+    'style',
     'var',
     'link-command',
     'local',
@@ -259,6 +273,28 @@ function parseSkillMode(value: string | undefined): SkillMode | undefined {
     );
   }
   return mode;
+}
+
+function parsePreset(value: string | undefined): PresetId | undefined {
+  if (value === undefined) return undefined;
+  if (!isPresetId(value)) {
+    throw new UsageError(
+      `--preset must be one of ${PRESET_IDS.join(', ')}, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+function parseProjectStyle(
+  value: string | undefined,
+): ProjectStyle | undefined {
+  if (value === undefined) return undefined;
+  if (!isProjectStyle(value)) {
+    throw new UsageError(
+      `--style must be one of ${PROJECT_STYLES.join(', ')}, got "${value}"`,
+    );
+  }
+  return value;
 }
 
 function parseVariables(values: string[] | undefined): Record<string, string> {
@@ -408,6 +444,8 @@ async function main(argv: string[]): Promise<number> {
       const blocks = parseList(values.blocks);
       const skills = parseList(values.skills);
       const skillMode = parseSkillMode(values['skill-mode']);
+      const preset = parsePreset(values.preset);
+      const style = parseProjectStyle(values.style);
       return runInit(ctx, {
         variables: parseVariables(values.var),
         yes,
@@ -418,6 +456,8 @@ async function main(argv: string[]): Promise<number> {
         ...(blocks ? { blocks } : {}),
         ...(skills ? { skills } : {}),
         ...(skillMode ? { skillMode } : {}),
+        ...(preset ? { preset } : {}),
+        ...(style ? { style } : {}),
         ...(values['link-command'] !== undefined
           ? { linkCommand: values['link-command'] }
           : {}),

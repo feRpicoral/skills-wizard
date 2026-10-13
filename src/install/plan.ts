@@ -171,7 +171,15 @@ function composeManifestMetadata({
             linkCommand: selection.linkCommand,
             skillMode: selection.skillMode,
           }
-        : { keepLocal: selection.keepLocal },
+        : {
+            keepLocal: selection.keepLocal,
+            ...(selection.preset !== undefined
+              ? { preset: selection.preset }
+              : {}),
+            ...(selection.style !== undefined
+              ? { style: selection.style }
+              : {}),
+          },
   };
 }
 

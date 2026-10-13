@@ -400,3 +400,119 @@ test('cli rejects invalid numeric flags and accepts --baseline none and --cases 
   assert.equal(evalNoBaseline.code, 0);
   assert.match(evalNoBaseline.stdout, /Evaluated skill-author with fake/);
 });
+
+test('init with --preset and lean style writes project seed, stack blocks, skills, and passes doctor', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await writeFile(
+    join(project, 'package.json'),
+    JSON.stringify({
+      name: 'orders-api',
+      description: 'Orders backend service.',
+      scripts: {
+        build: 'nest build',
+        test: 'jest',
+      },
+    }),
+  );
+
+  const initResult = await cli(home, [
+    'init',
+    '--project',
+    project,
+    '--preset',
+    'nestjs-api',
+    '--tools',
+    'codex',
+    '--yes',
+  ]);
+  const doctorResult = await cli(home, ['doctor', '--project', project]);
+  const agentsMd = await readFile(join(project, 'AGENTS.md'), 'utf8');
+  const manifest = JSON.parse(
+    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+  ) as {
+    blocks: string[];
+    skills: string[];
+    options: { preset?: string; style?: string };
+  };
+
+  assert.equal(initResult.code, 0);
+  assert.equal(doctorResult.code, 0);
+  assert.match(doctorResult.stdout, /No problems found/);
+  assert.match(agentsMd, /^# orders-api\n\nOrders backend service\./);
+  assert.match(agentsMd, /## Commands\n\n- Install: `yarn install`/);
+  assert.match(agentsMd, /## NestJS/);
+  assert.doesNotMatch(agentsMd, /## Testing/);
+  assert.equal(manifest.options.preset, 'nestjs-api');
+  assert.equal(manifest.options.style, 'lean');
+  assert.deepEqual(manifest.skills, [
+    'nestjs-module',
+    'eslint-configuration',
+    'prettier-configuration',
+  ]);
+});
+
+test('init with --style self-contained includes engineering blocks and sync preserves edited seed preamble', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await writeFile(
+    join(project, 'package.json'),
+    JSON.stringify({ name: 'standalone-service' }),
+  );
+
+  const initResult = await cli(home, [
+    'init',
+    '--project',
+    project,
+    '--preset',
+    'node-tool',
+    '--style',
+    'self-contained',
+    '--skills',
+    '',
+    '--tools',
+    'codex',
+    '--yes',
+  ]);
+  const initialAgents = await readFile(join(project, 'AGENTS.md'), 'utf8');
+  const customPreamble = initialAgents.replace(
+    '# standalone-service',
+    '# standalone-service\n\nCustom architecture notes preserved outside managed region.',
+  );
+  await writeFile(join(project, 'AGENTS.md'), customPreamble);
+  const syncResult = await cli(home, ['sync', '--project', project, '--yes']);
+  const afterSync = await readFile(join(project, 'AGENTS.md'), 'utf8');
+
+  assert.equal(initResult.code, 0);
+  assert.equal(syncResult.code, 0);
+  assert.match(
+    afterSync,
+    /Custom architecture notes preserved outside managed region\./,
+  );
+  assert.match(afterSync, /## Testing/);
+  assert.match(afterSync, /## TypeScript/);
+});
+
+test('rejects invalid --preset or --style flags and rejects them on global installs', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+
+  const [badPreset, badStyle, globalPreset, globalStyle] = await Promise.all([
+    cli(home, ['init', '--project', project, '--preset', 'rails', '--yes']),
+    cli(home, ['init', '--project', project, '--style', 'full', '--yes']),
+    cli(home, [...INSTALL, '--preset', 'node-tool']),
+    cli(home, [...INSTALL, '--style', 'lean']),
+  ]);
+
+  assert.equal(badPreset.code, 2);
+  assert.match(badPreset.stderr, /--preset must be one of/);
+  assert.equal(badStyle.code, 2);
+  assert.match(badStyle.stderr, /--style must be one of lean, self-contained/);
+  assert.equal(globalPreset.code, 2);
+  assert.match(
+    globalPreset.stderr,
+    /--preset only applies to project installs/,
+  );
+  assert.equal(globalStyle.code, 2);
+  assert.match(globalStyle.stderr, /--style only applies to project installs/);
+});
