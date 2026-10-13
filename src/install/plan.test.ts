@@ -7,6 +7,7 @@ import {
   readFile,
   readlink,
   realpath,
+  rename,
   rm,
   symlink,
 } from 'node:fs/promises';
@@ -954,6 +955,57 @@ test('a blank AGENTS.md that existed is left empty once the install is removed',
   });
 
   assert.equal(await readFile(join(dir, 'AGENTS.md'), 'utf8'), '');
+});
+
+async function relinkCreatedInstructions(dir: string): Promise<string> {
+  const moved = join(dir, 'docs', 'AGENTS.md');
+  await mkdir(join(dir, 'docs'));
+  await rename(join(dir, 'AGENTS.md'), moved);
+  await symlink(join('docs', 'AGENTS.md'), join(dir, 'AGENTS.md'));
+  return moved;
+}
+
+test('a created AGENTS.md later reached through a link keeps its heading on removal', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
+  const moved = await relinkCreatedInstructions(dir);
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.equal(await readFile(moved, 'utf8'), '# app\n');
+});
+
+test('a created AGENTS.md synced through a link keeps its heading on removal', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
+  const moved = await relinkCreatedInstructions(dir);
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.equal(await readFile(moved, 'utf8'), '# app\n');
 });
 
 test('a CLAUDE.md link to an AGENTS.md that does not exist yet needs no import line', async (t) => {
