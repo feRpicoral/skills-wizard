@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { BlockLibrary } from '../blocks/library.ts';
 import { PresetError } from '../errors.ts';
 import type { SkillLibrary } from '../skills/library.ts';
+import type { DetectedPackageManager } from './detect.ts';
 
 export const PRESET_IDS = [
   'nextjs-app',
@@ -44,6 +45,7 @@ export interface ResolvePresetSelectionParams {
   style: ProjectStyle;
   blockLibrary: BlockLibrary;
   skillLibrary?: SkillLibrary;
+  packageManager?: DetectedPackageManager;
   detectedBlocks?: readonly string[];
   detectedSkills?: readonly string[];
 }
@@ -183,6 +185,7 @@ export function resolvePresetSelection({
   style,
   blockLibrary,
   skillLibrary,
+  packageManager,
   detectedBlocks = [],
   detectedSkills = [],
 }: ResolvePresetSelectionParams): ResolvedPresetSelection {
@@ -198,6 +201,13 @@ export function resolvePresetSelection({
     }
   }
   for (const blockId of preset?.blocks ?? []) {
+    if (
+      blockId === 'stack/node-yarn' &&
+      packageManager !== undefined &&
+      packageManager !== 'yarn'
+    ) {
+      continue;
+    }
     wantedBlocks.add(blockId);
   }
   for (const blockId of detectedBlocks) {
