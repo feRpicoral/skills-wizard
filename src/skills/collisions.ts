@@ -1,4 +1,4 @@
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import type { Paths } from '../env.ts';
 import { FrontmatterError } from '../errors.ts';
@@ -7,8 +7,8 @@ import {
   fsErrorReason,
   lstatIfExists,
   readDirIfExists,
-  readSymlink,
   readTextIfExists,
+  realLocation,
 } from '../install/fs.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { TOOL_IDS, TOOLS } from '../tools/registry.ts';
@@ -45,23 +45,36 @@ interface RawEntry {
   folder: string;
   path: string;
   rootKind: SkillRoot['kind'];
-  linkTarget: string | null;
+  real: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
-  const roots: SkillRoot[] = [{ dir: paths.skillsDir, kind: 'canonical' }];
-  const seen = new Set<string>([paths.skillsDir]);
+async function locate(path: string): Promise<string> {
+  try {
+    return (await realLocation(path)) ?? path;
+  } catch (error) {
+    if (fsErrorReason(error) === undefined) throw error;
+    return path;
+  }
+}
 
+async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
+  const roots: SkillRoot[] = [];
+  const seen = new Set<string>();
+  const add = async (root: SkillRoot) => {
+    const real = await locate(root.dir);
+    if (seen.has(real)) return;
+    seen.add(real);
+    roots.push(root);
+  };
+
+  await add({ dir: paths.skillsDir, kind: 'canonical' });
   for (const id of TOOL_IDS) {
     const dir = TOOLS[id].global.skills?.(paths);
-    if (dir && !seen.has(dir)) {
-      seen.add(dir);
-      roots.push({ dir, kind: 'tool' });
-    }
+    if (dir) await add({ dir, kind: 'tool' });
   }
 
   const pluginsDir = join(paths.geminiHome, 'config', 'plugins');
@@ -74,11 +87,7 @@ async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
   }
   for (const entry of plugins ?? []) {
     if (entry.name.startsWith('.')) continue;
-    const dir = join(pluginsDir, entry.name, 'skills');
-    if (!seen.has(dir)) {
-      seen.add(dir);
-      roots.push({ dir, kind: 'plugin' });
-    }
+    await add({ dir: join(pluginsDir, entry.name, 'skills'), kind: 'plugin' });
   }
   return roots;
 }
@@ -139,8 +148,6 @@ async function scanRoot(
     }
     if (!stats || (!stats.isDirectory() && !stats.isSymbolicLink())) continue;
 
-    const rawLink = stats.isSymbolicLink() ? await readSymlink(path) : null;
-    const linkTarget = rawLink ? resolve(dirname(path), rawLink) : null;
     const name = await readDeclaredName(path, skipped);
     if (!name) continue;
 
@@ -149,7 +156,7 @@ async function scanRoot(
       folder: child.name,
       path,
       rootKind: root.kind,
-      linkTarget,
+      real: await locate(path),
     });
   }
   return entries;
@@ -172,43 +179,25 @@ export async function scanInstalledSkills(
     rawEntries.push(...(await scanRoot(root, skipped)));
   }
 
-  const canonicalByPath = new Map<string, DiscoveredSkill>();
+  const byLocation = new Map<string, DiscoveredSkill>();
   const skills: DiscoveredSkill[] = [];
 
   for (const entry of rawEntries) {
-    if (entry.rootKind !== 'canonical') continue;
+    const known = byLocation.get(entry.real);
+    if (known) {
+      known.locations.push(entry.path);
+      continue;
+    }
     const skill: DiscoveredSkill = {
       name: entry.name,
       folder: entry.folder,
       path: entry.path,
       locations: [entry.path],
       managed: ownedPaths.has(entry.path) && ownedSkills.has(entry.name),
-      plugin: false,
-    };
-    canonicalByPath.set(entry.path, skill);
-    skills.push(skill);
-  }
-
-  for (const entry of rawEntries) {
-    if (entry.rootKind === 'canonical') continue;
-    const canonical =
-      entry.rootKind === 'tool' &&
-      entry.folder === entry.name &&
-      entry.linkTarget === join(paths.skillsDir, entry.name)
-        ? canonicalByPath.get(entry.linkTarget)
-        : undefined;
-    if (canonical) {
-      canonical.locations.push(entry.path);
-      continue;
-    }
-    skills.push({
-      name: entry.name,
-      folder: entry.folder,
-      path: entry.path,
-      locations: [entry.path],
-      managed: ownedPaths.has(entry.path) && ownedSkills.has(entry.name),
       plugin: entry.rootKind === 'plugin',
-    });
+    };
+    byLocation.set(entry.real, skill);
+    skills.push(skill);
   }
 
   const byName = new Map<string, string[]>();
