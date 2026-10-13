@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, mkdir, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import which from 'which';
 
@@ -388,6 +388,30 @@ export function parseGraderProcess({
   };
 }
 
+export interface ResolveRunnerBinaryParams {
+  binary: string;
+  cwd?: string;
+}
+
+function isPathLike(binary: string): boolean {
+  return binary.includes('/') || binary.includes('\\');
+}
+
+/**
+ * Resolves a relative binary path that contains a slash (`./bin/claude`)
+ * against `cwd`. Absolute paths and bare command names (looked up on PATH)
+ * are returned unchanged.
+ */
+export function resolveRunnerBinary({
+  binary,
+  cwd,
+}: ResolveRunnerBinaryParams): string {
+  if (cwd === undefined || !isPathLike(binary) || isAbsolute(binary)) {
+    return binary;
+  }
+  return resolve(cwd, binary);
+}
+
 export interface CheckRunnerBinaryParams {
   binary: string;
   env: Environment;
@@ -401,7 +425,7 @@ export async function checkRunnerBinary({
   binary,
   env,
 }: CheckRunnerBinaryParams): Promise<string> {
-  if (binary.includes('/') || binary.includes('\\')) {
+  if (isPathLike(binary)) {
     if (!isAbsolute(binary)) {
       throw new RunnerError(
         `Runner binary "${binary}" must be an absolute path or a command name on PATH`,

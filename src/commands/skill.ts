@@ -287,6 +287,7 @@ async function resolveEvalRunner({
   const runner = createEvalRunner({
     runner: runnerName,
     binary,
+    cwd: ctx.cwd,
     agyConfig,
     env: ctx.sources.env,
   });
