@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { withRequirements } from '../blocks/compose.ts';
 import type { Context } from '../context.ts';
@@ -8,6 +8,7 @@ import {
   fsErrorReason,
   lstatIfExists,
   readTextIfExists,
+  realLocation,
   removePath,
   writeTextAtomic,
 } from '../install/fs.ts';
@@ -167,19 +168,30 @@ interface CheckFolderNamesParams {
   home: string;
 }
 
-function checkFolderNames({
+async function mismatchedFolders(skill: DiscoveredSkill): Promise<string[]> {
+  const folders = new Set(skill.locations);
+  for (const location of skill.locations) {
+    const real = await realLocation(location);
+    if (real) folders.add(real);
+  }
+  return [...folders].filter((path) => basename(path) !== skill.name);
+}
+
+async function checkFolderNames({
   unmanaged,
   picked,
   home,
-}: CheckFolderNamesParams): void {
-  const mismatched = unmanaged.filter(
-    (skill) => picked.includes(skill.name) && skill.folder !== skill.name,
-  );
-  if (mismatched.length === 0) return;
-  const details = mismatched.map(
-    (skill) =>
-      `${displayPath({ path: skill.path, home })} declares the name ${skill.name}`,
-  );
+}: CheckFolderNamesParams): Promise<void> {
+  const details: string[] = [];
+  for (const skill of unmanaged) {
+    if (!picked.includes(skill.name)) continue;
+    for (const path of await mismatchedFolders(skill)) {
+      details.push(
+        `${displayPath({ path, home })} declares the name ${skill.name}`,
+      );
+    }
+  }
+  if (details.length === 0) return;
   throw new UsageError(
     `Cannot adopt skills whose folder name differs from their name: ${details.join('; ')}. Rename or remove these folders first.`,
   );
@@ -289,7 +301,7 @@ export async function runAdopt(
     }
   }
 
-  checkFolderNames({
+  await checkFolderNames({
     unmanaged: scan.unmanaged,
     picked,
     home: ctx.paths.home,

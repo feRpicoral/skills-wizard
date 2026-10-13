@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   realpath,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -709,4 +710,33 @@ test('adopt never writes catalog.yaml on a dry run', async (t) => {
     catalogBefore,
   );
   await adoptedNothing(ctx);
+});
+
+test('adopt refuses a skill linked to a folder with a different name', async (t) => {
+  const { ctx } = await testContext(t);
+  await initGlobal(ctx);
+  await writeFiles(ctx.paths.claudeHome, {
+    'skills/mermaid-x/SKILL.md': skillSource('pretty-mermaid'),
+  });
+  await mkdir(ctx.paths.skillsDir, { recursive: true });
+  await symlink(
+    join('..', '..', '.claude', 'skills', 'mermaid-x'),
+    join(ctx.paths.skillsDir, 'pretty-mermaid'),
+  );
+
+  await assert.rejects(
+    runAdopt(ctx, { names: ['pretty-mermaid'], yes: true, dryRun: false }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /mermaid-x declares the name pretty-mermaid/.test(error.message),
+  );
+
+  assert.ok(
+    (await lstat(join(ctx.paths.skillsDir, 'pretty-mermaid'))).isSymbolicLink(),
+  );
+  assert.ok(
+    (
+      await lstat(join(ctx.paths.claudeHome, 'skills', 'mermaid-x', 'SKILL.md'))
+    ).isFile(),
+  );
 });
