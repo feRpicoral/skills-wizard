@@ -10,12 +10,26 @@ import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
+import { isDirectory } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
+import type { ProjectDetection } from '../project/detect.ts';
+import {
+  findPreset,
+  loadPresets,
+  type PresetDefinition,
+  type PresetId,
+  type PresetLibraries,
+  presetsPath,
+  type ProjectStyle,
+  resolvePresetSelection,
+} from '../project/presets.ts';
 import {
   promptBlocks,
   promptKeepLocal,
   promptLinkCommand,
+  promptPreset,
   promptProjectDir,
+  promptProjectStyle,
   promptScope,
   promptSkillMode,
   promptSkills,
@@ -30,6 +44,7 @@ import {
   type SkillLibrary,
   unknownSkillNames,
 } from '../skills/library.ts';
+import type { Manifest } from '../state/manifest.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
@@ -46,13 +61,15 @@ import {
   warnTrackedFiles,
 } from './shared.ts';
 
-interface InitOptions {
+export interface InitOptions {
   scope?: Scope;
   projectDir?: string;
   tools?: ToolId[];
   blocks?: string[];
   skills?: string[];
   skillMode?: SkillMode;
+  preset?: PresetId;
+  style?: ProjectStyle;
   variables: Record<string, string>;
   linkCommand?: boolean;
   keepLocal?: boolean;
@@ -102,11 +119,13 @@ interface ScopeSpecificOptions {
   linkCommand?: boolean | undefined;
   skillMode?: SkillMode | undefined;
   keepLocal?: boolean | undefined;
+  preset?: PresetId | undefined;
+  style?: ProjectStyle | undefined;
 }
 
 function checkScopeOptions(
   scope: Scope,
-  { linkCommand, skillMode, keepLocal }: ScopeSpecificOptions,
+  { linkCommand, skillMode, keepLocal, preset, style }: ScopeSpecificOptions,
 ): void {
   if (scope === 'project' && linkCommand !== undefined) {
     throw new UsageError(
@@ -119,6 +138,75 @@ function checkScopeOptions(
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
   }
+  if (scope === 'global' && preset !== undefined) {
+    throw new UsageError('--preset only applies to project installs.');
+  }
+  if (scope === 'global' && style !== undefined) {
+    throw new UsageError('--style only applies to project installs.');
+  }
+}
+
+async function loadPresetsIfAvailable(
+  repoRoot: string,
+  libraries: PresetLibraries,
+): Promise<PresetDefinition[]> {
+  const dir = presetsPath(repoRoot);
+  if (!(await isDirectory(dir))) return [];
+  return loadPresets(dir, libraries);
+}
+
+interface ResolveProjectPresetParams {
+  scope: Scope;
+  prompting: boolean;
+  presets: readonly PresetDefinition[];
+  detection: ProjectDetection | undefined;
+  previous: Manifest | null;
+  requestedPreset: PresetId | undefined;
+  requestedStyle: ProjectStyle | undefined;
+}
+
+async function resolveProjectPresetAndStyle({
+  scope,
+  prompting,
+  presets,
+  detection,
+  previous,
+  requestedPreset,
+  requestedStyle,
+}: ResolveProjectPresetParams): Promise<{
+  preset: PresetId | undefined;
+  style: ProjectStyle | undefined;
+}> {
+  if (scope !== 'project') {
+    return { preset: undefined, style: undefined };
+  }
+
+  let preset: PresetId | undefined;
+  if (requestedPreset !== undefined) {
+    preset = requestedPreset;
+  } else if (previous !== null) {
+    preset = previous.options.preset;
+  } else if (prompting && presets.length > 0) {
+    preset = await promptPreset(presets, detection?.preset);
+  } else if (presets.length > 0) {
+    preset = detection?.preset;
+  }
+
+  const hasAdditive =
+    (detection?.detectedBlocks.length ?? 0) > 0 ||
+    (detection?.detectedSkills.length ?? 0) > 0;
+  let style: ProjectStyle | undefined;
+  if (requestedStyle !== undefined) {
+    style = requestedStyle;
+  } else if (previous !== null && previous.options.style !== undefined) {
+    style = previous.options.style;
+  } else if (prompting) {
+    style = await promptProjectStyle('lean');
+  } else if (preset !== undefined || hasAdditive) {
+    style = 'lean';
+  }
+
+  return { preset, style };
 }
 
 export async function runInit(
@@ -130,6 +218,8 @@ export async function runInit(
     blocks: requestedBlocks,
     skills: requestedSkills,
     skillMode: requestedSkillMode,
+    preset: requestedPreset,
+    style: requestedStyle,
     variables: givenVariables,
     linkCommand: requestedLinkCommand,
     keepLocal: requestedKeepLocal,
@@ -143,6 +233,8 @@ export async function runInit(
     linkCommand: requestedLinkCommand,
     skillMode: requestedSkillMode,
     keepLocal: requestedKeepLocal,
+    preset: requestedPreset,
+    style: requestedStyle,
   });
 
   const projectDir =
@@ -155,6 +247,7 @@ export async function runInit(
     ...(projectDir !== undefined ? { projectDir } : {}),
   });
   const library = await loadLibrary(ctx);
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
   const previous = await readLocationManifest(ctx, prompting, location);
 
   const initialTools =
@@ -168,17 +261,56 @@ export async function runInit(
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
 
+  const presets =
+    scope === 'project'
+      ? await loadPresetsIfAvailable(ctx.repoRoot, {
+          blockLibrary: library,
+          skillLibrary,
+        })
+      : [];
+  const { preset, style } = await resolveProjectPresetAndStyle({
+    scope,
+    prompting,
+    presets,
+    detection: location.detection,
+    previous,
+    requestedPreset,
+    requestedStyle,
+  });
+
+  const usePresetDefaults =
+    scope === 'project' &&
+    (requestedPreset !== undefined ||
+      requestedStyle !== undefined ||
+      (previous === null &&
+        (preset !== undefined ||
+          style !== undefined ||
+          (location.detection?.detectedBlocks.length ?? 0) > 0 ||
+          (location.detection?.detectedSkills.length ?? 0) > 0)));
+  const presetSelection = usePresetDefaults
+    ? resolvePresetSelection({
+        preset: preset ? findPreset(presets, preset) : undefined,
+        style: style ?? 'lean',
+        blockLibrary: library,
+        skillLibrary,
+        detectedBlocks: location.detection?.detectedBlocks ?? [],
+        detectedSkills: location.detection?.detectedSkills ?? [],
+      })
+    : null;
+
   if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
   const initialBlocks =
     requestedBlocks ??
-    (previous
-      ? dropUnknownBlocks({
-          ctx,
-          prompting,
-          library,
-          ids: previous.blocks,
-        })
-      : defaultBlockIds(library, scope));
+    (presetSelection
+      ? presetSelection.blocks
+      : previous
+        ? dropUnknownBlocks({
+            ctx,
+            prompting,
+            library,
+            ids: previous.blocks,
+          })
+        : defaultBlockIds(library, scope));
   const chosen = prompting
     ? await promptBlocks(library, scope, initialBlocks)
     : initialBlocks;
@@ -215,20 +347,24 @@ export async function runInit(
     );
   }
 
-  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
   if (requestedSkills) {
     checkExplicitSkills(skillLibrary, requestedSkills, scope);
   }
+  const usePresetSkillDefaults =
+    presetSelection !== null &&
+    (previous === null || requestedPreset !== undefined);
   const initialSkills =
     requestedSkills ??
-    (previous
-      ? dropUnknownSkills({
-          ctx,
-          prompting,
-          library: skillLibrary,
-          names: previous.skills,
-        })
-      : defaultSkillNames(skillLibrary, scope));
+    (usePresetSkillDefaults
+      ? presetSelection.skills
+      : previous
+        ? dropUnknownSkills({
+            ctx,
+            prompting,
+            library: skillLibrary,
+            names: previous.skills,
+          })
+        : defaultSkillNames(skillLibrary, scope));
   const skills = prompting
     ? await promptSkills(skillLibrary, scope, initialSkills)
     : initialSkills;
@@ -291,6 +427,8 @@ export async function runInit(
       linkCommand,
       keepLocal,
       skillMode,
+      ...(preset !== undefined ? { preset } : {}),
+      ...(style !== undefined ? { style } : {}),
     },
     library,
     paths: ctx.paths,

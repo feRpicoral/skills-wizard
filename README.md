@@ -33,7 +33,23 @@ Without a terminal, commands print the plan and only write when you pass `--yes`
 | `agents-config skill triggers <name>`     | Measure trigger precision, recall and false positive rate on `evals/trigger_queries.json`      |
 | `agents-config skill report <name> [dir]` | Regenerate `report.md` from an existing evaluation iteration directory                         |
 
-Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
+Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--preset <id>`, `--style lean|self-contained`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
+
+## Stack presets and project onboarding
+
+`agents-config init --project <dir>` inspects the project directory (`package.json`, `nx.json`, `pyproject.toml`, `.nvmrc`, `prisma/schema.prisma`, `supabase/config.toml`, `components.json` and workspace packages under `apps/*`, `packages/*`, `libs/*`) to auto-detect a stack preset and generate a project-specific seed preamble (`# <name>`, description, `## Commands`, `## Workspaces`) above `<!-- BEGIN:agents-config -->`:
+
+| Preset ID        | Stack blocks (`stack/*`)                                                                    | Preselected skills                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `nextjs-app`     | `typescript`, `node-yarn`, `lint-format`, `nextjs`, `tailwind-shadcn`, `tanstack-query`     | `vercel-react-best-practices`, `shadcn`, `frontend-design`, `eslint-configuration`, `prettier-configuration` |
+| `nestjs-api`     | `typescript`, `node-yarn`, `lint-format`, `nestjs`, `prisma`                                | `nestjs-module`, `eslint-configuration`, `prettier-configuration`                                            |
+| `nx-monorepo`    | `typescript`, `node-yarn`, `lint-format`, `nx` (+ detected workspace app/lib stack blocks)  | `eslint-configuration`, `prettier-configuration` (+ detected workspace skills)                               |
+| `expo-app`       | `typescript`, `node-yarn`, `lint-format`, `expo-react-native`, `tanstack-query`             | `vercel-react-native-skills`, `eslint-configuration`, `prettier-configuration`                               |
+| `vite-spa`       | `typescript`, `node-yarn`, `lint-format`, `react-vite`, `tailwind-shadcn`, `tanstack-query` | `vercel-react-best-practices`, `shadcn`, `frontend-design`, `eslint-configuration`, `prettier-configuration` |
+| `python-service` | `python-uv`                                                                                 | (none by default)                                                                                            |
+| `node-tool`      | `typescript`, `node-yarn`, `lint-format`                                                    | `eslint-configuration`, `prettier-configuration`                                                             |
+
+Additive detections automatically include `stack/prisma`, `stack/supabase-prisma` (`supabase-prisma`), `stack/llm-apps` (`ai-sdk`, `claude-api`) and `playwright-cli` when those packages or config files are present. Use `--style lean` (default) to include only `stack/*` blocks in project `AGENTS.md` alongside the global `AGENTS.md`, or `--style self-contained` to include core, engineering, git, tooling and stack blocks in a standalone file.
 
 ## How it works
 

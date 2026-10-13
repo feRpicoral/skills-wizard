@@ -86,6 +86,12 @@ export async function runSync(
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
+      ...(previous.options.preset !== undefined
+        ? { preset: previous.options.preset }
+        : {}),
+      ...(previous.options.style !== undefined
+        ? { style: previous.options.style }
+        : {}),
     },
     library,
     paths: ctx.paths,

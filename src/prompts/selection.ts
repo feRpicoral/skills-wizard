@@ -5,6 +5,11 @@ import { variableMessage } from '../blocks/variables.ts';
 import type { Paths } from '../env.ts';
 import { CancelledError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
+import type {
+  PresetDefinition,
+  PresetId,
+  ProjectStyle,
+} from '../project/presets.ts';
 import type { SkillMode } from '../skills/install.ts';
 import type { SkillDefinition, SkillLibrary } from '../skills/library.ts';
 import { TOOL_IDS, type ToolId, TOOLS } from '../tools/registry.ts';
@@ -33,6 +38,57 @@ export async function promptProjectDir(cwd: string): Promise<string> {
       root: cwd,
       directory: true,
       initialValue: cwd,
+    }),
+  );
+}
+
+export async function promptPreset(
+  presets: readonly PresetDefinition[],
+  detected?: PresetId,
+): Promise<PresetId | undefined> {
+  const choice = unwrap(
+    await clack.select<PresetId | 'none'>({
+      message: 'Which stack preset fits this project?',
+      options: [
+        ...presets.map((preset) => ({
+          value: preset.id,
+          label: preset.name,
+          hint:
+            preset.id === detected
+              ? `detected: ${preset.description}`
+              : preset.description,
+        })),
+        {
+          value: 'none',
+          label: 'None (custom)',
+          hint: 'pick blocks and skills manually',
+        },
+      ],
+      initialValue: detected ?? 'none',
+    }),
+  );
+  return choice === 'none' ? undefined : choice;
+}
+
+export async function promptProjectStyle(
+  initial: ProjectStyle,
+): Promise<ProjectStyle> {
+  return unwrap(
+    await clack.select<ProjectStyle>({
+      message: 'How should project instructions be structured?',
+      options: [
+        {
+          value: 'lean',
+          label: 'Lean (stack only)',
+          hint: 'assumes global AGENTS.md is installed',
+        },
+        {
+          value: 'self-contained',
+          label: 'Self-contained',
+          hint: 'includes core, engineering, git, and stack rules',
+        },
+      ],
+      initialValue: initial,
     }),
   );
 }

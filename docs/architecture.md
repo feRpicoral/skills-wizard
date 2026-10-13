@@ -34,7 +34,17 @@ sequenceDiagram
 
 Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library are dropped with a warning.
 
-The system-wide file is the global header plus the selected blocks joined by blank lines. A project file gets the selected blocks inside a managed region, below a `# <project name>` heading that is written once.
+The system-wide file is the global header plus the selected blocks joined by blank lines. A project file gets the selected blocks inside a managed region, below a project seed preamble (`# <project name>`, optional description, `## Commands` and `## Workspaces`) that is written once when creating the file and preserved outside `<!-- BEGIN:agents-config -->` across `sync` and `update`.
+
+## Project stack presets, detection and seed generation (`src/project/`)
+
+`presets/<id>.yaml` defines the seven built-in project stack presets (`nextjs-app`, `nestjs-api`, `nx-monorepo`, `expo-app`, `vite-spa`, `python-service`, `node-tool`), validated with `zod` against the repository's `BlockLibrary` and `SkillLibrary` (`src/project/presets.ts`).
+
+When initializing a project (`agents-config init --project <dir>`), `detectProject` (`src/project/detect.ts`) inspects regular files inside the project boundary (`package.json`, `nx.json`, `pyproject.toml`, `.nvmrc`, `prisma/schema.prisma`, `prisma.config.ts`, `supabase/config.toml`, `components.json`, lockfiles and workspace packages under `apps/*`, `packages/*`, `libs/*`) to:
+
+1. Select a matching preset (or union workspace sub-app/lib stacks for `nx-monorepo`) and additive blocks/skills (`stack/prisma`, `stack/supabase-prisma`, `supabase-prisma`, `stack/llm-apps`, `ai-sdk`, `claude-api`, `playwright-cli`).
+2. Resolve the block selection in either `lean` style (default: only `stack/*` blocks, assuming global `AGENTS.md` is installed) or `self-contained` style (global-default project-scoped blocks plus `stack/*` blocks).
+3. Synthesize the initial project seed preamble (`src/project/seed.ts`) with `# <name>`, description, `## Commands` and `## Workspaces` (falling back to `# <name>` when no scripts or workspaces exist).
 
 ## Skills and the source cache
 

@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path';
 import { composeGlobal, composeProject } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
+import type { PresetId, ProjectStyle } from '../project/presets.ts';
 import type { SkillMode, SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
 import {
@@ -20,11 +21,14 @@ export interface Selection {
   linkCommand: boolean;
   keepLocal: boolean;
   skillMode: SkillMode;
+  preset?: PresetId;
+  style?: ProjectStyle;
 }
 
 export interface ProjectContext {
   dir: string;
   title: string;
+  seed?: string;
   git?: { root: string; excludePath: string };
 }
 
@@ -351,7 +355,7 @@ function projectTargets(input: PlanInput): Target[] {
       kind: 'region',
       path: instructionsPath,
       body: composeProject(library, selection.blocks, selection.variables),
-      preamble: `# ${project.title}`,
+      preamble: project.seed ?? `# ${project.title}`,
       label: 'project instructions',
     },
     ...projectToolTargets({

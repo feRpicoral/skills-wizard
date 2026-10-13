@@ -240,6 +240,12 @@ export async function runDoctor(
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal: manifest.options.keepLocal ?? false,
       skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
+      ...(manifest.options.preset !== undefined
+        ? { preset: manifest.options.preset }
+        : {}),
+      ...(manifest.options.style !== undefined
+        ? { style: manifest.options.style }
+        : {}),
     },
     library,
     paths: ctx.paths,
