@@ -23,8 +23,8 @@ order:
   - tooling/shell-commands
   - tooling/external-clis
   - git/github-repo-setup
-  - git/branching-and-prs
   - git/pr-reviews
+  - git/branching-and-prs
   - git/pr-descriptions
   - git/git-behavior
   - git/commits
