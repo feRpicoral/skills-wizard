@@ -45,9 +45,15 @@ Skills come from two places:
 
 Upstream repositories are cached under `${XDG_CACHE_HOME:-~/.cache}/agents-config/sources/<owner>/<repo>` as depth-1, blob-filtered (`--filter=blob:none`), sparse checkouts limited to the paths listed in `catalog.yaml`. Update checks run `git ls-remote` at most once every 24 hours per repository unless forced by `agents-config update`.
 
-When a skill is installed as a copy, the tree walker leaves out `.git`, `.github`, `node_modules`, `.DS_Store`, root `evals/`, and any nested `AGENTS.md`, `CLAUDE.md` or `GEMINI.md`, then hashes every file path, mode and SHA-256 digest. In system-wide `link` mode, first-party skills are symlinked directly to `skills/<name>` while third-party skills remain copies.
+When a skill is installed as a copy, the tree walker leaves out `.git`, `.github`, `node_modules`, `.venv`, generated output (`.DS_Store`, `__pycache__`, `*.pyc`, `.pytest_cache`), root `evals/`, and any nested `AGENTS.md`, `CLAUDE.md` or `GEMINI.md`. The manifest records a hash of what is copied: each file's path, whether it is a file or a link, its executable bit and the SHA-256 digest of its content (the target for a link).
 
-`agents-config update` diffs each installed skill copy against the freshly fetched source and scans added or modified files for risky patterns (`curl`/`wget` piped to a shell, `npx -y`/`--yes`, unpinned `@latest` packages, `rm -rf`, base64 decoded into a shell, new executable files, hooks and `allowed-tools` changes) before asking for confirmation.
+Links inside a skill are copied as links only when they are relative and resolve, from the link's own directory and following any other links in the skill along the way, inside the skill folder. An absolute link, one that leaves the folder, such as `/etc/hosts`, `../../shared` or `up/../secret` where `up` links to `..`, or a link loop is a validation error, so the skill is skipped with a problem message, and the copy step refuses it as well.
+
+To decide whether an installed copy is still the one the CLI wrote, the CLI hashes the installed folder the same way but without the copy exclusions: every path counts except generated output, plus `node_modules` and `.venv` when the install record says the skill has a `setup` command. A pristine copy matches the recorded hash, running the skill's scripts or its setup does not change it, and any file someone added, including an `evals/` folder or a nested `AGENTS.md`, makes the copy count as changed outside the CLI.
+
+In system-wide `link` mode, first-party skills are symlinked directly to `skills/<name>` while third-party skills remain copies.
+
+`agents-config update` diffs each installed skill copy against the freshly fetched source and scans added or modified files for risky patterns (`curl`/`wget` piped to a shell, downloads run through `bash <(curl …)`, `sh -c "$(wget …)"` or `eval "$(curl …)"`, `npx -y`/`--yes`, unpinned `@latest` packages, `rm -rf` including split flags such as `rm -r -f`, base64 decoded into a shell, new executable files, new or retargeted links, hooks and `allowed-tools` changes, whether written as a string or a list) before asking for confirmation.
 
 ## Skill evaluation (`src/evals/`)
 
@@ -91,7 +97,7 @@ Each target becomes one action:
 
 Conflicts come from malformed markers, JSON files with comments or invalid syntax, unmanaged files or skill directories at a path the CLI wants to own, installed skill copies whose content hash no longer matches the manifest, paths that are directories, special files or unreadable, links to missing locations, and project files whose real location is outside the project.
 
-`agents-config adopt` resolves conflicts on unmanaged skill directories by moving the existing folder and tool links into `~/.agents/agents-config/backups/<timestamp>/` before installing the managed copy and links. If an unmanaged skill is tracked in `~/.agents/.skill-lock.json` with a GitHub upstream, `adopt` also adds it to `catalog.yaml`.
+`agents-config adopt` resolves conflicts on unmanaged skill directories by moving the existing folder and tool links into `~/.agents/agents-config/backups/<timestamp>/` before installing the managed copy and links. It needs an existing system-wide install (`agents-config init --global`) and refuses a skill when any of its locations, or the folder a link resolves to, is named differently from the skill's declared `name`, so no duplicate is left behind. If an unmanaged skill is tracked in `~/.agents/.skill-lock.json` with a GitHub upstream, `adopt` also adds it to `catalog.yaml`: the entry is checked against the catalog rules before anything changes, appended to the end of the file without reformatting it, and written just before the plan is applied. If `catalog.yaml` cannot be written, nothing is applied, and if applying fails, the original `catalog.yaml` is put back, so the catalog and the manifest stay consistent.
 
 ## Writers
 
@@ -114,9 +120,11 @@ Writes are atomic: content goes to a temporary file, which is then renamed over 
 | Project           | `<project>/.agents/agents-config.json`  | Relative, so it can be committed |
 | Projects registry | `~/.agents/agents-config/projects.json` | Absolute project directories     |
 
-A manifest stores the selection (tools, blocks, skills, variables, options) and one entry per owned path. Skill entries record provenance (`catalog` with repo, path, optional ref and commit SHA, or `local` with path) and the install record (`copy` with tree SHA-256 hash, or `link` with target). After an apply, the manifest records every action that actually ran, so if an action fails, the files already written stay tracked.
+A manifest stores the selection (tools, blocks, skills, variables, options) and one entry per owned path. Skill entries record provenance (`catalog` with repo, path, optional ref and commit SHA, or `local` with path) and the install record (`copy` with tree SHA-256 hash and `setup: true` when the skill has a setup command, or `link` with target). After an apply, the manifest records every action that actually ran, so if an action fails, the files already written stay tracked.
 
-Applying a project install records the project directory in `~/.agents/agents-config/projects.json`; removing a project install removes its entry from the registry. `agents-config update` uses this registry to refresh every recorded project alongside the system-wide install, skipping and dropping any project whose manifest was deleted.
+When a manifest is read, every skill entry must be `<skills folder>/<name>` (`~/.agents/skills/<name>` system-wide, `.agents/skills/<name>` in a project), and every skill link must be a link named after a skill directly inside a tool's skills folder (in a project, every recorded link must be such a skill link). Otherwise the manifest is refused before anything is reported or planned; `agents-config update` skips such a project with a warning.
+
+Applying a project install records the project directory in `~/.agents/agents-config/projects.json`; removing a project install removes its entry from the registry. `agents-config update` uses this registry to refresh every recorded project alongside the system-wide install. A project whose manifest was deleted is skipped and forgotten only once the update is applied, never on a dry run, a declined confirmation or a run without `--yes`. A project whose manifest cannot be read or is refused, and a corrupt registry, are skipped with a warning while everything else is still updated.
 
 ## Ownership rules
 

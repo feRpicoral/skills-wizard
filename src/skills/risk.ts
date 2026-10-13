@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { parseFrontmatter } from '../frontmatter.ts';
@@ -13,11 +13,13 @@ import { SKILL_FILE } from './validate.ts';
 
 export type RiskKind =
   | 'pipe-to-shell'
+  | 'download-to-shell'
   | 'npx-yes'
   | 'unpinned-latest'
   | 'rm-rf'
   | 'base64-shell'
   | 'executable'
+  | 'symlink'
   | 'hooks'
   | 'allowed-tools';
 
@@ -33,37 +35,64 @@ const HOOK_EVENTS =
 
 const TEXT_PATTERNS: readonly {
   kind: RiskKind;
-  pattern: RegExp;
+  patterns: readonly RegExp[];
   detail: string;
 }[] = [
   {
     kind: 'pipe-to-shell',
-    pattern: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da|a|k)?sh\b/i,
+    patterns: [
+      /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da|a|k)?sh\b/i,
+    ],
     detail: 'pipes a download into a shell',
   },
   {
+    kind: 'download-to-shell',
+    patterns: [
+      /(?:\b(?:(?:ba|z|da|a|k)?sh|source)|(?:^|[\s;&|(])\.)\s+(?:-\S+\s+)*<\(\s*(?:sudo\s+)?(?:curl|wget)\b/im,
+      /\b(?:ba|z|da|a|k)?sh\s+(?:-\S+\s+)*-[A-Za-z]*c[A-Za-z]*\s+["']?(?:\$\(|`)\s*(?:curl|wget)\b/i,
+      /\beval\s+["']?(?:\$\(|`)\s*(?:curl|wget)\b/i,
+    ],
+    detail: 'runs a downloaded script in a shell',
+  },
+  {
     kind: 'npx-yes',
-    pattern: /\bnpx\s+(?:[^\n]*?\s)?(?:-y|--yes)\b/,
+    patterns: [/\bnpx\s+(?:[^\n]*?\s)?(?:-y|--yes)\b/],
     detail: 'runs npx with --yes',
   },
   {
     kind: 'unpinned-latest',
-    pattern: /[A-Za-z0-9._-]+@latest\b/,
+    patterns: [/[A-Za-z0-9._-]+@latest\b/],
     detail: 'uses an unpinned @latest package',
   },
   {
     kind: 'rm-rf',
-    pattern:
-      /\brm\s+(?:-[A-Za-z]*r[A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*r|--recursive\s+--force|--force\s+--recursive)\b/,
+    patterns: [
+      /\brm(?=(?:\s+-[-A-Za-z]+)*\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)\b)(?=(?:\s+-[-A-Za-z]+)*\s+(?:-[A-Za-z]*f[A-Za-z]*|--force)\b)/,
+    ],
     detail: 'runs rm -rf',
   },
   {
     kind: 'base64-shell',
-    pattern:
+    patterns: [
       /\bbase64\s+(?:-d|--decode)\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|a|k)?sh|eval|python\d?|node|perl|ruby)\b/i,
+    ],
     detail: 'pipes decoded base64 into a shell',
   },
 ];
+
+function toolList(value: unknown): string | undefined {
+  const tools =
+    typeof value === 'string'
+      ? [value]
+      : Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string')
+        : [];
+  const joined = tools
+    .map((tool) => tool.trim())
+    .filter(Boolean)
+    .join(' ');
+  return joined || undefined;
+}
 
 function allowedTools(markdown: string | null): string | undefined {
   if (!markdown) return undefined;
@@ -72,8 +101,7 @@ function allowedTools(markdown: string | null): string | undefined {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       return undefined;
     }
-    const value = (data as Record<string, unknown>)['allowed-tools'];
-    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    return toolList((data as Record<string, unknown>)['allowed-tools']);
   } catch {
     return undefined;
   }
@@ -136,7 +164,17 @@ export async function scanSkillRisks({
         detail: 'adds or modifies hook configuration',
       });
     }
-    if (afterFile.link) continue;
+    if (afterFile.link) {
+      const target = await readlink(join(nextDir, ...path.split('/')));
+      flags.push({
+        file: path,
+        kind: 'symlink',
+        detail: beforeFile?.link
+          ? `changes a link to point at ${target}`
+          : `adds a link to ${target}`,
+      });
+      continue;
+    }
 
     const text = await readUtf8IfText(join(nextDir, ...path.split('/')));
     if (text === null) continue;
@@ -148,7 +186,7 @@ export async function scanSkillRisks({
       });
     }
     for (const rule of TEXT_PATTERNS) {
-      if (rule.pattern.test(text)) {
+      if (rule.patterns.some((pattern) => pattern.test(text))) {
         flags.push({ file: path, kind: rule.kind, detail: rule.detail });
       }
     }
