@@ -1,6 +1,6 @@
 ---
 title: NestJS
-summary: Domain modules, controller/service/repository layering and nestjs-zod DTOs
+summary: Domain modules, controller/service/repository layering, nestjs-zod DTOs and Jest
 group: stack
 scopes: [project]
 defaults: []
@@ -8,7 +8,7 @@ defaults: []
 
 ## NestJS
 
-- Organize backend features by domain module (`<domain>.module.ts`, `<domain>.controller.ts`, `<domain>.service.ts`, `<domain>.repository.ts`, `<domain>.dto.ts`, and `<domain>.service.spec.ts`).
-- Keep layer boundaries strict: controllers handle HTTP routing, status codes, guards, and DTO bindings only; services own business logic and domain exceptions; repositories encapsulate all `PrismaService` queries and persistence.
-- Define request and response DTOs from `zod` schemas with `nestjs-zod` (`createZodDto`, `ZodValidationPipe`, `@ZodResponse`) instead of `class-validator` and `class-transformer` decorators unless the repository already requires them.
-- Use the `nestjs-module` skill when scaffolding, extending, or refactoring a NestJS domain module.
+- Organize backend features as one module per domain (`<domain>.module.ts`, `<domain>.controller.ts`, `<domain>.service.ts`, `<domain>.repository.ts`, `<domain>.dto.ts`) with strict `controller -> service -> repository` layering: controllers handle HTTP only, services own business logic, and `PrismaService` is injected only inside repositories.
+- Define request and response DTOs from `zod` schemas using `nestjs-zod` (`createZodDto`, `ZodValidationPipe`, and `@ZodResponse`), never `class-validator` or `class-transformer` decorators.
+- Validate environment configuration at startup through a `zod`-backed config service that fails fast at boot and lists all validation issues.
+- Run unit tests with Jest and `@swc/jest` in co-located `*.spec.ts` files, and use Testcontainers for database integration tests. Use the `nestjs-module` skill when scaffolding or refactoring a module.
