@@ -17,6 +17,10 @@ export interface FakeRunnerOptions {
   onGrader?: (
     request: RunnerGraderRequest,
   ) => Promise<Partial<RunnerGraderResult>> | Partial<RunnerGraderResult>;
+  /** Called by `preflight()`; throw a RunnerError to simulate a missing CLI. */
+  onPreflight?: () => Promise<void> | void;
+  /** Reported as `EvalRunner.sandboxSupported` (default true). */
+  sandboxSupported?: boolean;
 }
 
 interface SkillActiveCheckParams {
@@ -73,9 +77,15 @@ function extractAssertionsFromGraderPrompt(prompt: string): string[] {
 export function createFakeRunner({
   onTask,
   onGrader,
+  onPreflight,
+  sandboxSupported = true,
 }: FakeRunnerOptions = {}): EvalRunner {
   return {
     name: 'fake',
+    sandboxSupported,
+    async preflight(): Promise<void> {
+      await onPreflight?.();
+    },
     async runTask({
       prompt,
       workdir,
@@ -128,6 +138,7 @@ export function createFakeRunner({
           usage,
         })}\n`;
       const rawStderr = custom.rawStderr ?? '';
+      const usageReported = custom.usageReported ?? usage.total_tokens > 0;
 
       await writeFile(join(runDir, 'stdout.log'), rawStdout);
       await writeFile(join(runDir, 'stderr.log'), rawStderr);
@@ -137,10 +148,12 @@ export function createFakeRunner({
         triggered,
         durationMs,
         usage,
+        usageReported,
         exitCode,
         timedOut,
         rawStdout,
         rawStderr,
+        ...(custom.error !== undefined ? { error: custom.error } : {}),
       };
     },
 

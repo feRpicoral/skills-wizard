@@ -243,7 +243,7 @@ export function parseAgyGraderJson({
 export interface CreateAgyRunnerParams {
   binary?: string;
   agyConfig?: AgyConfig;
-  env?: Environment;
+  env: Environment;
 }
 
 async function runWithRetries<T>(
@@ -270,7 +270,7 @@ export function createAgyRunner({
   binary,
   agyConfig,
   env,
-}: CreateAgyRunnerParams = {}): EvalRunner {
+}: CreateAgyRunnerParams): EvalRunner {
   const resolvedBin = binary ?? agyConfig?.bin ?? 'agy';
   const extraArgs = agyConfig?.extraArgs ?? [];
 

@@ -69,7 +69,8 @@ export interface CreateEvalRunnerParams {
   runner: EvalRunnerName;
   binary?: string;
   agyConfig?: AgyConfig;
-  env?: Environment;
+  /** The complete environment for runner processes (never `process.env`). */
+  env: Environment;
   fakeOptions?: FakeRunnerOptions;
 }
 
@@ -123,9 +124,15 @@ export type {
   EvalRunner,
   EvalRunnerName,
   ParsedGraderOutput,
+  ParsedTaskStream,
   RunnerGraderRequest,
   RunnerGraderResult,
   RunnerTaskRequest,
   RunnerTaskResult,
   RunnerUsage,
+} from './types.ts';
+export {
+  checkRunnerBinary,
+  mentionsSkillFile,
+  normalizeUsage,
 } from './types.ts';
