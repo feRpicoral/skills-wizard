@@ -106,9 +106,18 @@ function isAgySkillTriggerStep({
 
   const targetSuffix = `/${skillName}/SKILL.md`;
   const targetSubstr = `${skillName}/SKILL.md`;
+  const filePath =
+    typeof params.AbsolutePath === 'string'
+      ? params.AbsolutePath
+      : typeof params.Path === 'string'
+        ? params.Path
+        : undefined;
 
-  if (toolName === 'view_file' && typeof params.AbsolutePath === 'string') {
-    const normalized = params.AbsolutePath.replaceAll('\\', '/');
+  if (
+    (toolName === 'view_file' || toolName === 'read_file') &&
+    filePath !== undefined
+  ) {
+    const normalized = filePath.replaceAll('\\', '/');
     return normalized.endsWith(targetSuffix) || normalized === targetSubstr;
   }
   if (toolName === 'run_command' && typeof params.CommandLine === 'string') {
@@ -129,6 +138,7 @@ export function parseAgyStreamJson({
   let durationMs = fallbackDurationMs;
   let usage = normalizeUsage(undefined);
   let sawResult = false;
+  let streamError: string | undefined;
 
   for (const event of events) {
     if (isAgySkillTriggerStep({ event, skillName })) {
@@ -142,6 +152,17 @@ export function parseAgyStreamJson({
           : undefined;
     if (resultPayload) {
       sawResult = true;
+      if (
+        resultPayload.status === 'ERROR' ||
+        (typeof resultPayload.error === 'string' &&
+          resultPayload.error.length > 0)
+      ) {
+        streamError =
+          typeof resultPayload.error === 'string' &&
+          resultPayload.error.length > 0
+            ? resultPayload.error
+            : 'agy task reported status ERROR';
+      }
       if (typeof resultPayload.response === 'string') {
         response = resultPayload.response;
       }
@@ -156,6 +177,9 @@ export function parseAgyStreamJson({
 
   if (!sawResult) {
     throw new RunnerError('agy stream ended without a final result event');
+  }
+  if (streamError !== undefined && response.length === 0) {
+    throw new RunnerError(`agy task failed: ${streamError}`);
   }
 
   return {
@@ -194,6 +218,15 @@ export function parseAgyGraderJson({
     };
   }
 
+  if (
+    doc.status === 'ERROR' ||
+    (typeof doc.error === 'string' && doc.error.length > 0)
+  ) {
+    throw new RunnerError(
+      `agy grader failed: ${typeof doc.error === 'string' && doc.error.length > 0 ? doc.error : 'status ERROR'}`,
+    );
+  }
+
   if (typeof doc.response === 'string') {
     return {
       output: extractJsonFromText(doc.response),
@@ -211,6 +244,26 @@ export interface CreateAgyRunnerParams {
   binary?: string;
   agyConfig?: AgyConfig;
   env?: Environment;
+}
+
+async function runWithRetries<T>(
+  fn: () => Promise<T>,
+  retries = 2,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1000 * (attempt + 1)),
+        );
+      }
+    }
+  }
+  throw lastError;
 }
 
 export function createAgyRunner({
@@ -237,29 +290,31 @@ export function createAgyRunner({
         sandbox,
         extraArgs,
       });
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args,
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
+      return runWithRetries(async () => {
+        const proc = await spawnRunnerProcess({
+          binary: resolvedBin,
+          args,
+          cwd: workdir,
+          runDir,
+          timeoutSeconds,
+          env,
+        });
+        const parsed = parseAgyStreamJson({
+          stdout: proc.stdout,
+          skillName,
+          fallbackDurationMs: proc.durationMs,
+        });
+        return {
+          response: parsed.response,
+          triggered: parsed.triggered,
+          durationMs: parsed.durationMs,
+          usage: parsed.usage,
+          exitCode: proc.exitCode,
+          timedOut: proc.timedOut,
+          rawStdout: proc.stdout,
+          rawStderr: proc.stderr,
+        };
       });
-      const parsed = parseAgyStreamJson({
-        stdout: proc.stdout,
-        skillName,
-        fallbackDurationMs: proc.durationMs,
-      });
-      return {
-        response: parsed.response,
-        triggered: parsed.triggered,
-        durationMs: parsed.durationMs,
-        usage: parsed.usage,
-        exitCode: proc.exitCode,
-        timedOut: proc.timedOut,
-        rawStdout: proc.stdout,
-        rawStderr: proc.stderr,
-      };
     },
 
     async runGrader({
@@ -275,26 +330,28 @@ export function createAgyRunner({
         timeoutSeconds,
         extraArgs,
       });
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args,
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
-        logPrefix: 'grader',
+      return runWithRetries(async () => {
+        const proc = await spawnRunnerProcess({
+          binary: resolvedBin,
+          args,
+          cwd: workdir,
+          runDir,
+          timeoutSeconds,
+          env,
+          logPrefix: 'grader',
+        });
+        const parsed = parseAgyGraderJson({
+          stdout: proc.stdout,
+          fallbackDurationMs: proc.durationMs,
+        });
+        return {
+          output: parsed.output,
+          durationMs: parsed.durationMs,
+          usage: parsed.usage,
+          rawStdout: proc.stdout,
+          rawStderr: proc.stderr,
+        };
       });
-      const parsed = parseAgyGraderJson({
-        stdout: proc.stdout,
-        fallbackDurationMs: proc.durationMs,
-      });
-      return {
-        output: parsed.output,
-        durationMs: parsed.durationMs,
-        usage: parsed.usage,
-        rawStdout: proc.stdout,
-        rawStderr: proc.stderr,
-      };
     },
   };
 }
