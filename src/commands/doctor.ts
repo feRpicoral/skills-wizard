@@ -17,7 +17,7 @@ import {
   readTextIfExists,
   statIfExists,
 } from '../install/fs.ts';
-import { buildPlan } from '../install/plan.ts';
+import { buildPlan, type PlannedAction } from '../install/plan.ts';
 import { scanInstalledSkills } from '../skills/collisions.ts';
 import {
   DEFAULT_SKILL_MODE,
@@ -146,6 +146,13 @@ interface PlanFindingsParams {
   reportOutdated: boolean;
 }
 
+// Skill folders and links never contain block variables, so a placeholder
+// cannot make them look out of date.
+function rendersBlocks(action: PlannedAction): boolean {
+  const kind = (action.entry ?? action.previous)?.kind;
+  return kind !== 'skill' && kind !== 'symlink';
+}
+
 async function planFindings({
   ctx,
   location,
@@ -190,7 +197,10 @@ async function planFindings({
             : 'warn',
         message: `${where}: ${action.reason ?? 'conflict'}`,
       });
-    } else if (reportOutdated && action.change.type !== 'none') {
+    } else if (
+      action.change.type !== 'none' &&
+      (reportOutdated || !rendersBlocks(action))
+    ) {
       findings.push({
         level: 'warn',
         message: `${where} is out of date; run agents-config sync`,
@@ -336,7 +346,8 @@ export async function runDoctor(
     });
   }
   // A placeholder keeps conflict checks running without a value, but the
-  // rendered files would always differ, so out-of-date files are not reported.
+  // rendered files would always differ, so out-of-date files are not reported
+  // (skill folders and links still are).
   const variables = {
     ...found,
     ...Object.fromEntries(unresolved.map((name) => [name, `<${name}>`])),
