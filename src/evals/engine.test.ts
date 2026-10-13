@@ -194,6 +194,58 @@ test('runSkillTriggers warns once and marks the summary possibly contaminated wh
   assert.match(result.reportMarkdown, /## Warnings/);
 });
 
+test('runSkillTriggers records failed and throwing runner results as errored runs', async (t) => {
+  const paths = await tempPaths(t);
+  const repoRoot = await tempDir(t);
+  const skillDir = join(repoRoot, 'skills', 'demo-skill');
+  await writeFiles(skillDir, {
+    'SKILL.md': skillSource('demo-skill'),
+    'evals/trigger_queries.json': triggerQueries,
+  });
+  const runner = createFakeRunner({
+    onTask: ({ prompt }) => {
+      if (prompt.startsWith('Please')) {
+        return { triggered: true, error: 'claude exited with code 1' };
+      }
+      if (prompt.startsWith('Help')) {
+        throw new RunnerError('spawn failed');
+      }
+      return { triggered: false };
+    },
+  });
+
+  const result = await runSkillTriggers({
+    skillName: 'demo-skill',
+    skillDir,
+    evalsRootDir: paths.evalsDir,
+    runner,
+    parallel: 1,
+    paths,
+    env: isolatedGitEnv(repoRoot),
+  });
+  const byQuery = new Map(
+    result.summary.queries.map((item) => [item.query, item]),
+  );
+
+  assert.equal(result.summary.metadata.possibly_contaminated, false);
+  assert.deepEqual(result.summary.metadata.warnings, []);
+  assert.equal(
+    byQuery.get('Please run demo-skill on my project')?.errored_runs,
+    1,
+  );
+  assert.equal(
+    byQuery.get('Please run demo-skill on my project')?.trigger_rate,
+    null,
+  );
+  assert.equal(
+    byQuery.get('Help me configure demo-skill options')?.errored_runs,
+    1,
+  );
+  assert.equal(result.summary.metrics.errored_queries, 2);
+  assert.equal(result.summary.metrics.true_negatives, 1);
+  assert.equal(result.summary.metrics.accuracy, 1);
+});
+
 const evalSuite = (
   assertions: unknown[] = ['The output confirms skill execution'],
 ) =>

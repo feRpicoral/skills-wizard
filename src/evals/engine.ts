@@ -505,6 +505,7 @@ export async function runSkillTriggers({
           should_trigger: job.shouldTrigger,
           triggered,
           duration_ms: durationMs,
+          ...(failure !== undefined ? { error: failure } : {}),
         };
         onLog?.(
           `[query ${job.queryIndex}] run ${job.runIndex}/${runs}: triggered=${triggered} (expected=${job.shouldTrigger})${failure === undefined ? '' : `; agent run failed: ${failure}`}`,
