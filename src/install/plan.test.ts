@@ -244,7 +244,26 @@ test('deselecting Gemini CLI restores a string context file name', async (t) => 
 
   assert.equal(
     await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
-    '{\n    "context": {\n        "fileName": "GEMINI.md"\n    }\n}\n',
+    '{\n    "context": { "fileName": "GEMINI.md" }\n}\n',
+  );
+});
+
+test('deselecting Gemini CLI keeps other settings and parents as written', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, {
+    '.gemini/settings.json': '{\n  "ratio": 1.0,\n  "context": {}\n}\n',
+  });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  const content = await readFile(
+    join(paths.geminiHome, 'settings.json'),
+    'utf8',
+  );
+  assert.deepEqual(
+    [content.includes('"ratio": 1.0'), JSON.parse(content)],
+    [true, { ratio: 1, context: {} }],
   );
 });
 
@@ -436,6 +455,113 @@ test('a CLAUDE.md that links to AGENTS.md needs no import line', async (t) => {
   assert.ok((await lstat(join(dir, 'CLAUDE.md'))).isSymbolicLink());
 });
 
+test('an AGENTS.md that links to CLAUDE.md gets the region and no self-import', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+
+  assert.equal(
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+    `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+test('removing an install from an AGENTS.md that links to CLAUDE.md leaves no region', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+  for (let round = 0; round < 2; round += 1) {
+    await installProject({
+      paths,
+      project: { dir, title: 'app' },
+      tools: ['claude-code'],
+    });
+  }
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '# Team\n');
+});
+
+test('a self-import added before AGENTS.md became a link is removed with the region kept', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'CLAUDE.md': '# Team\n' });
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+  await rm(join(dir, 'AGENTS.md'));
+  await symlink('CLAUDE.md', join(dir, 'AGENTS.md'));
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['claude-code'],
+  });
+
+  assert.equal(
+    await readFile(join(dir, 'CLAUDE.md'), 'utf8'),
+    `# Team\n\n${BEGIN}\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+async function linkedDotfile(paths: Paths): Promise<string> {
+  await writeFiles(paths.home, { 'dotfiles/AGENTS.md': '# Mine\n' });
+  const real = await realpath(join(paths.home, 'dotfiles', 'AGENTS.md'));
+  await mkdir(paths.claudeHome, { recursive: true });
+  await mkdir(paths.codexHome, { recursive: true });
+  await symlink(real, join(paths.claudeHome, 'CLAUDE.md'));
+  await symlink(real, join(paths.codexHome, 'AGENTS.md'));
+  return real;
+}
+
+test('two linked instructions files that share one real file get one region', async (t) => {
+  const paths = await tempPaths(t);
+  const real = await linkedDotfile(paths);
+
+  await installGlobal(paths, ['claude-code', 'codex']);
+
+  assert.equal(
+    await readFile(real, 'utf8'),
+    `# Mine\n\n${BEGIN}\n# Rules\n\nGitHub username: octocat\n\n## Style\n\nBe direct.\n${END}\n`,
+  );
+});
+
+test('a real file shared through links keeps its region while a tool still uses it', async (t) => {
+  const paths = await tempPaths(t);
+  const real = await linkedDotfile(paths);
+  await installGlobal(paths, ['claude-code', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.match(await readFile(real, 'utf8'), new RegExp(BEGIN));
+});
+
+test('a real file shared through links loses its region once no tool uses it', async (t) => {
+  const paths = await tempPaths(t);
+  const real = await linkedDotfile(paths);
+  await installGlobal(paths, ['claude-code', 'codex']);
+  await installGlobal(paths, ['codex']);
+
+  await installGlobal(paths, []);
+
+  assert.equal(await readFile(real, 'utf8'), '# Mine\n');
+});
+
 test('removing a project install deletes the files it created', async (t) => {
   const paths = await tempPaths(t);
   const dir = await realpath(await tempDir(t));
@@ -486,6 +612,25 @@ test('keep-local patterns are relative to the repository root, one region per pr
   assert.match(
     exclude,
     /# BEGIN:agents-config packages\/web\n\/packages\/web\/AGENTS\.md/,
+  );
+});
+
+test('keep-local patterns match paths with gitignore metacharacters literally', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const app = await gitProject({ root, subdir: 'packages/[app]*?' });
+
+  await installProject({
+    paths,
+    project: app,
+    tools: ['codex'],
+    overrides: { keepLocal: true },
+  });
+
+  await assert.doesNotReject(
+    run('git', ['check-ignore', '-q', 'packages/[app]*?/AGENTS.md'], {
+      cwd: root,
+    }),
   );
 });
 
@@ -606,6 +751,25 @@ test('a project file recreated after deletion is removed with its heading', asyn
   });
 
   await assert.rejects(lstat(join(dir, 'AGENTS.md')), { code: 'ENOENT' });
+});
+
+test('a blank AGENTS.md that existed is left empty once the install is removed', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'AGENTS.md': ' \n' });
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: ['codex'],
+  });
+
+  await installProject({
+    paths,
+    project: { dir, title: 'app' },
+    tools: [],
+  });
+
+  assert.equal(await readFile(join(dir, 'AGENTS.md'), 'utf8'), '');
 });
 
 test('a CLAUDE.md link to an AGENTS.md that does not exist yet needs no import line', async (t) => {

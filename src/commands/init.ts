@@ -1,5 +1,8 @@
+import { resolve } from 'node:path';
+
 import {
   defaultBlockIds,
+  outOfScopeBlockIds,
   requiredVariables,
   selectBlocks,
   unknownBlockIds,
@@ -34,7 +37,7 @@ import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
@@ -69,12 +72,10 @@ function checkExplicitBlocks(
   if (unknown.length > 0) {
     throw new UsageError(`Unknown blocks: ${unknown.join(', ')}`);
   }
-  const outOfScope = library.blocks.filter(
-    (block) => ids.includes(block.id) && !block.scopes.includes(scope),
-  );
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
   if (outOfScope.length > 0) {
     throw new UsageError(
-      `Blocks not available for ${scope} scope: ${outOfScope.map((block) => block.id).join(', ')}`,
+      `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
 }
@@ -96,6 +97,11 @@ function checkExplicitSkills(
       `Skills not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
+}
+
+function isOnSearchPath(ctx: Context, dir: string): boolean {
+  const wanted = resolve(dir);
+  return ctx.searchPath.some((entry) => resolve(ctx.cwd, entry) === wanted);
 }
 
 interface ScopeSpecificOptions {
@@ -172,11 +178,12 @@ export async function runInit(
   const initialBlocks =
     requestedBlocks ??
     (previous
-      ? dropUnknownBlocks({
+      ? dropUnavailableBlocks({
           ctx,
           prompting,
           library,
           ids: previous.blocks,
+          scope,
         })
       : defaultBlockIds(library, scope));
   const chosen = prompting
@@ -313,7 +320,7 @@ export async function runInit(
   if (
     result.applied &&
     linkCommand &&
-    !ctx.searchPath.includes(ctx.paths.localBin)
+    !isOnSearchPath(ctx, ctx.paths.localBin)
   ) {
     notify({
       ctx,

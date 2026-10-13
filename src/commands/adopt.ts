@@ -37,7 +37,7 @@ import { readManifest } from '../state/manifest.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
@@ -353,11 +353,12 @@ export async function runAdopt(
       'No tools recorded; pass --tools <ids> or run agents-config init --global.',
     );
   }
-  const knownBlocks = dropUnknownBlocks({
+  const knownBlocks = dropUnavailableBlocks({
     ctx,
     prompting,
     library,
     ids: previous.blocks,
+    scope: 'global',
   });
   const { ids: blocks } = withRequirements(library, knownBlocks);
   const priorSkills = dropUnknownSkills({
