@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { SetupError } from '../errors.ts';
 import { tempDir } from '../test-support/fixtures.ts';
@@ -64,4 +66,74 @@ test('a setup that runs too long is stopped', async (t) => {
     runSetup({ dir, command: 'echo working >&2; sleep 30', timeoutMs: 100 }),
     /timed out after 0\.1 seconds/,
   );
+});
+
+const BACKGROUND_JOB = 'sleep 30 & echo $! > job.pid; wait';
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(check: () => Promise<boolean> | boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await check()) return;
+    await delay(20);
+  }
+  assert.fail('timed out waiting for the condition');
+}
+
+async function jobPid(dir: string): Promise<number> {
+  let pid = 0;
+  await waitFor(async () => {
+    pid = Number.parseInt(
+      await readFile(join(dir, 'job.pid'), 'utf8').catch(() => ''),
+      10,
+    );
+    return pid > 0;
+  });
+  return pid;
+}
+
+test('a setup that runs too long is stopped along with its background jobs', async (t) => {
+  const dir = await tempDir(t);
+
+  await assert.rejects(
+    runSetup({ dir, command: BACKGROUND_JOB, timeoutMs: 300 }),
+    /timed out/,
+  );
+
+  const pid = await jobPid(dir);
+  await waitFor(() => !isRunning(pid));
+});
+
+test('an interrupt stops the setup, its background jobs and the CLI', async (t) => {
+  const dir = await tempDir(t);
+  const setupModule = new URL('./setup.ts', import.meta.url).href;
+  const cli = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `const { runSetup } = await import(${JSON.stringify(setupModule)});
+await runSetup({ dir: ${JSON.stringify(dir)}, command: ${JSON.stringify(BACKGROUND_JOB)} });`,
+    ],
+    { stdio: 'ignore' },
+  );
+  const exited = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve) => {
+    cli.on('exit', (code, signal) => resolve({ code, signal }));
+  });
+  const pid = await jobPid(dir);
+
+  cli.kill('SIGINT');
+
+  assert.deepEqual(await exited, { code: null, signal: 'SIGINT' });
+  await waitFor(() => !isRunning(pid));
 });
