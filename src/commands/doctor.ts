@@ -18,6 +18,14 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan, type PlannedAction } from '../install/plan.ts';
+import {
+  allServerSecrets,
+  type McpCatalog,
+  outOfScopeMcpServerNames,
+  requiredServerSecrets,
+  selectMcpServers,
+  unknownMcpServerNames,
+} from '../mcp/model.ts';
 import { isPresetId, type PresetId } from '../project/presets.ts';
 import { scanInstalledSkills } from '../skills/collisions.ts';
 import {
@@ -30,6 +38,7 @@ import type { Manifest } from '../state/manifest.ts';
 import { orderedTools } from '../tools/registry.ts';
 import {
   loadLibrary,
+  loadMcpServers,
   type Location,
   readLocationManifest,
   replacementSkillHint,
@@ -144,16 +153,21 @@ interface PlanFindingsParams {
   variables: Record<string, string>;
   skills: string[];
   skillSources: ReadonlyMap<string, SkillSource>;
+  mcp: string[];
+  mcpCatalog: McpCatalog;
   keepLocal: boolean;
   preset: PresetId | undefined;
   reportOutdated: boolean;
 }
 
-// Skill folders and links never contain block variables, so a placeholder
-// cannot make them look out of date.
 function rendersBlocks(action: PlannedAction): boolean {
   const kind = (action.entry ?? action.previous)?.kind;
-  return kind !== 'skill' && kind !== 'symlink';
+  return (
+    kind !== 'skill' &&
+    kind !== 'symlink' &&
+    kind !== 'mcp-json' &&
+    kind !== 'mcp-toml'
+  );
 }
 
 async function planFindings({
@@ -165,6 +179,8 @@ async function planFindings({
   variables,
   skills,
   skillSources,
+  mcp,
+  mcpCatalog,
   keepLocal,
   preset,
   reportOutdated,
@@ -177,6 +193,7 @@ async function planFindings({
       tools: manifest.tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
@@ -193,6 +210,7 @@ async function planFindings({
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
 
   for (const action of plan.actions) {
@@ -214,6 +232,9 @@ async function planFindings({
         message: `${where} is out of date; run agents-config sync`,
       });
     }
+  }
+  for (const warning of plan.warnings ?? []) {
+    findings.push({ level: 'warn', message: warning });
   }
   return findings;
 }
@@ -245,6 +266,93 @@ async function skillFindings(
       message: `Unmanaged skills: ${list}`,
     });
   }
+  return findings;
+}
+
+interface McpFindingsParams {
+  ctx: Context;
+  scope: Scope;
+  manifest: Manifest;
+  mcpCatalog: McpCatalog;
+  mcp: readonly string[];
+}
+
+function mcpFindings({
+  ctx,
+  scope,
+  manifest,
+  mcpCatalog,
+  mcp,
+}: McpFindingsParams): Finding[] {
+  if (mcp.length === 0 || manifest.tools.length === 0) return [];
+  const findings: Finding[] = [];
+  const servers = selectMcpServers({
+    catalog: mcpCatalog,
+    names: mcp,
+    scope,
+  });
+
+  for (const server of servers) {
+    const missingSecrets = requiredServerSecrets(server).filter(
+      (secret) => !(ctx.hasEnvVar?.(secret) ?? false),
+    );
+    if (missingSecrets.length > 0) {
+      findings.push({
+        level: 'warn',
+        message: `MCP server "${server.name}" requires unset environment variable${missingSecrets.length === 1 ? '' : 's'}: ${missingSecrets.join(', ')}`,
+      });
+    }
+  }
+
+  if (manifest.tools.includes('antigravity')) {
+    const stdioSecretServers = servers.filter(
+      (server) =>
+        server.transport === 'stdio' && allServerSecrets(server).length > 0,
+    );
+    if (stdioSecretServers.length > 0) {
+      const names = stdioSecretServers.map((server) => server.name).join(', ');
+      findings.push({
+        level: 'note',
+        message: `Antigravity stdio MCP server${stdioSecretServers.length === 1 ? '' : 's'} (${names}) read secret environment variables from the process environment; launching Antigravity from the macOS Dock may not inherit shell variables unless launched from a terminal or configured via launchctl`,
+      });
+    }
+  }
+
+  if (scope === 'project') {
+    if (manifest.tools.includes('claude-code')) {
+      findings.push({
+        level: 'note',
+        message:
+          'Claude Code requires interactive project approval before loading MCP servers from .mcp.json',
+      });
+    }
+    if (manifest.tools.includes('codex')) {
+      findings.push({
+        level: 'note',
+        message:
+          'Codex loads project .codex/config.toml MCP servers only after the project is marked trusted',
+      });
+    }
+    if (manifest.tools.includes('gemini-cli')) {
+      findings.push({
+        level: 'note',
+        message:
+          'Gemini CLI loads project .gemini/settings.json MCP servers only in trusted folders',
+      });
+    }
+  }
+
+  if (manifest.tools.includes('gemini-cli')) {
+    const totalTools = servers.reduce(
+      (sum, server) => sum + (server.estimatedTools ?? 0),
+      0,
+    );
+    findings.push({
+      level: 'note',
+      message: `Gemini CLI loads all MCP tool schemas into context up front (~${totalTools} estimated tool${totalTools === 1 ? '' : 's'} across ${servers.length} server${servers.length === 1 ? '' : 's'})`,
+    });
+  }
+
   return findings;
 }
 
@@ -338,6 +446,28 @@ export async function runDoctor(
       message: `Skipped checking the ${name} skill: ${problem}`,
     });
   }
+  const mcpCatalog = await loadMcpServers(ctx);
+  const unknownMcp = unknownMcpServerNames(mcpCatalog, manifest.mcp);
+  if (unknownMcp.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `MCP servers no longer in mcp/servers.yaml: ${unknownMcp.join(', ')}; agents-config sync will remove them`,
+    });
+  }
+  const outOfScopeMcp = outOfScopeMcpServerNames({
+    catalog: mcpCatalog,
+    names: manifest.mcp,
+    scope,
+  });
+  if (outOfScopeMcp.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `MCP servers no longer available for ${scope} scope: ${outOfScopeMcp.join(', ')}; agents-config sync will remove them`,
+    });
+  }
+  const mcp = manifest.mcp.filter(
+    (name) => !unknownMcp.includes(name) && !outOfScopeMcp.includes(name),
+  );
   const recordedLocal = manifest.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   if (location.project && recordedLocal && !keepLocal) {
@@ -379,11 +509,14 @@ export async function runDoctor(
       variables,
       skills,
       skillSources: resolution.sources,
+      mcp,
+      mcpCatalog,
       keepLocal,
       preset,
       reportOutdated: unresolved.length === 0,
     })),
   );
+  findings.push(...mcpFindings({ ctx, scope, manifest, mcpCatalog, mcp }));
   findings.push(...(await symlinkFindings(ctx, manifest)));
   if (scope === 'global') {
     findings.push(

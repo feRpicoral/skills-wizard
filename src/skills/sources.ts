@@ -36,6 +36,7 @@ export interface SourceSettings {
   env: Environment;
   now: () => Date;
   skillsShUrl?: string | (() => string);
+  mcpRegistryUrl?: string | ((official?: boolean) => string);
   fetch?: typeof globalThis.fetch;
 }
 

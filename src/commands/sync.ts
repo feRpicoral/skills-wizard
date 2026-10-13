@@ -9,10 +9,12 @@ import { loadSkillLibrary } from '../skills/library.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
+  dropUnavailableMcpServers,
   dropUnknownPreset,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
+  loadMcpServers,
   notify,
   notifyLeftGit,
   readLocationManifest,
@@ -82,6 +84,14 @@ export async function runSync(
     library: skillLibrary,
     names: previous.tools.length > 0 ? skills : [],
   });
+  const mcpCatalog = await loadMcpServers(ctx);
+  const mcp = dropUnavailableMcpServers({
+    ctx,
+    prompting,
+    catalog: mcpCatalog,
+    names: previous.mcp,
+    scope,
+  });
   const recordedLocal = previous.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   if (location.project && recordedLocal && !keepLocal) {
@@ -98,6 +108,7 @@ export async function runSync(
       tools: previous.tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
@@ -114,6 +125,7 @@ export async function runSync(
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
   if (keepLocal) {
     await warnTrackedFiles({

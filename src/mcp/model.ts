@@ -52,6 +52,34 @@ export function isSecretValue(value: McpValue): value is McpSecretValue {
   return typeof value === 'object' && value !== null && 'secret' in value;
 }
 
+export function requiredServerSecrets(server: McpServerDefinition): string[] {
+  const values =
+    server.transport === 'stdio'
+      ? Object.values(server.env)
+      : Object.values(server.headers);
+  const secrets: string[] = [];
+  for (const val of values) {
+    if (isSecretValue(val) && !val.optional && !secrets.includes(val.secret)) {
+      secrets.push(val.secret);
+    }
+  }
+  return secrets;
+}
+
+export function allServerSecrets(server: McpServerDefinition): string[] {
+  const values =
+    server.transport === 'stdio'
+      ? Object.values(server.env)
+      : Object.values(server.headers);
+  const secrets: string[] = [];
+  for (const val of values) {
+    if (isSecretValue(val) && !secrets.includes(val.secret)) {
+      secrets.push(val.secret);
+    }
+  }
+  return secrets;
+}
+
 const toolFilterSchema = z.strictObject({
   allow: z.array(z.string().min(1)).min(1).optional(),
   deny: z.array(z.string().min(1)).min(1).optional(),

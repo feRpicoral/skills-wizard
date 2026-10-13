@@ -19,10 +19,12 @@ import {
   CatalogError,
   EnvironmentError,
   EvalError,
+  ManifestError,
   UsageError,
 } from '../errors.ts';
 import { createFakeRunner } from '../evals/runners/index.ts';
 import { lstatIfExists } from '../install/fs.ts';
+import { loadMcpCatalog, mcpCatalogPath } from '../mcp/model.ts';
 import { loadCatalog } from '../skills/catalog.ts';
 import { AWESOME_INDEX_FILE } from '../skills/discover.ts';
 import { ensureSource, sourceCommit } from '../skills/sources.ts';
@@ -40,6 +42,7 @@ import { runAdd } from './add.ts';
 import { runAdopt } from './adopt.ts';
 import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
+import { runMcp } from './mcp.ts';
 import { runSkill, warnUnsupportedSandbox } from './skill.ts';
 import { runUpdate } from './update.ts';
 
@@ -1794,4 +1797,206 @@ test('runAdd --dry-run restores the sparse-checkout cone and GitHub default-bran
   assert.equal(addCode, 0);
   assert.equal(addedEntry?.repo, 'owner/multi-skills');
   assert.equal(addedEntry?.ref, undefined);
+});
+
+test('runMcp lists, adds, removes, and searches MCP servers and preserves MCP across update and adopt', async (t) => {
+  const upstream = await createUpstream(t, {
+    'SKILL.md': skillSource('pretty-mermaid'),
+  });
+  const { ctx, repoRoot, output } = await testContext(t, {
+    url: () => upstream.url,
+  });
+  await writeFiles(repoRoot, {
+    'mcp/servers.yaml': await readFile(mcpCatalogPath(REPO_ROOT), 'utf8'),
+  });
+  ctx.sources.fetch = () =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          servers: [
+            {
+              server: {
+                name: 'io.github.example/memory-mcp',
+                description: 'In-memory graph MCP server',
+                version: '0.6.2',
+                packages: [
+                  {
+                    registryType: 'npm',
+                    identifier: '@modelcontextprotocol/server-memory',
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['claude-code', 'codex'],
+    blocks: ['core/identity'],
+    skills: ['pretty-mermaid'],
+    mcp: ['context7'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  await writeFiles(ctx.paths.home, {
+    '.agents/skills/adopt-me/SKILL.md': skillSource('adopt-me'),
+    '.agents/.skill-lock.json': JSON.stringify({
+      version: 3,
+      skills: {
+        'adopt-me': {
+          source: 'owner/mermaid',
+          sourceType: 'github',
+          skillPath: 'SKILL.md',
+        },
+      },
+    }),
+  });
+
+  const addCode = await runMcp(ctx, {
+    subcommand: 'add',
+    args: ['fetcher'],
+    scope: 'global',
+    yes: true,
+    dryRun: false,
+  });
+  const listCode = await runMcp(ctx, {
+    subcommand: 'list',
+    args: [],
+    scope: 'global',
+    yes: false,
+    dryRun: false,
+  });
+  const updateCode = await runUpdate(ctx, { yes: true, dryRun: false });
+  const adoptCode = await runAdopt(ctx, {
+    names: ['adopt-me'],
+    yes: true,
+    dryRun: false,
+  });
+  const removeCode = await runMcp(ctx, {
+    subcommand: 'remove',
+    args: ['context7'],
+    scope: 'global',
+    yes: true,
+    dryRun: false,
+  });
+  const searchDryRunCode = await runMcp(ctx, {
+    subcommand: 'search',
+    args: ['memory'],
+    add: true,
+    yes: true,
+    dryRun: true,
+  });
+  const catalogAfterDryRun = await loadMcpCatalog(mcpCatalogPath(repoRoot));
+  const searchAddCode = await runMcp(ctx, {
+    subcommand: 'search',
+    args: ['memory'],
+    add: true,
+    yes: true,
+    dryRun: false,
+  });
+  const catalogAfterAdd = await loadMcpCatalog(mcpCatalogPath(repoRoot));
+  const manifest = await readManifest(globalManifestPath(ctx.paths));
+
+  assert.equal(addCode, 0);
+  assert.equal(listCode, 0);
+  assert.equal(updateCode, 0);
+  assert.equal(adoptCode, 0);
+  assert.equal(removeCode, 0);
+  assert.equal(searchDryRunCode, 0);
+  assert.equal(
+    catalogAfterDryRun.servers.some((s) => s.name === 'memory-mcp'),
+    false,
+  );
+  assert.equal(searchAddCode, 0);
+  assert.equal(
+    catalogAfterAdd.servers.some((s) => s.name === 'memory-mcp'),
+    true,
+  );
+  assert.deepEqual(manifest?.mcp, ['fetcher']);
+  assert.match(output.join('\n'), /context7\s+\[installed\]/);
+});
+
+test('runDoctor reports missing MCP secrets, Antigravity stdio notes, project trust notes, Gemini tool counts, and tampered MCP manifest paths', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  const project = await realpath(await tempDir(t));
+  await writeFiles(repoRoot, {
+    'mcp/servers.yaml': await readFile(mcpCatalogPath(REPO_ROOT), 'utf8'),
+  });
+  ctx.hasEnvVar = (name) => name === 'SENTRY_AUTH_TOKEN';
+  await runInit(ctx, {
+    scope: 'project',
+    projectDir: project,
+    tools: ['antigravity', 'claude-code', 'codex', 'gemini-cli'],
+    blocks: ['core/identity'],
+    skills: [],
+    mcp: ['supabase', 'sentry'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  const projectManifestFile = join(project, '.agents', 'agents-config.json');
+  const rawManifest = JSON.parse(
+    await readFile(projectManifestFile, 'utf8'),
+  ) as {
+    mcp: string[];
+    entries: { kind: string; path: string; servers?: string[] }[];
+  };
+  rawManifest.mcp.push('retired-mcp', 'fetcher');
+  await writeFile(projectManifestFile, JSON.stringify(rawManifest, null, 2));
+
+  const doctorCode = await runDoctor(ctx, {
+    scope: 'project',
+    projectDir: project,
+  });
+  const doctorOutput = output.join('\n');
+  rawManifest.entries.push({
+    kind: 'mcp-json',
+    path: 'evil.json',
+    servers: ['supabase'],
+  });
+  await writeFile(projectManifestFile, JSON.stringify(rawManifest, null, 2));
+  const tamperedAttempt = runDoctor(ctx, {
+    scope: 'project',
+    projectDir: project,
+  });
+
+  assert.equal(doctorCode, 0);
+  assert.match(
+    doctorOutput,
+    /MCP server "supabase" requires unset environment variable: SUPABASE_ACCESS_TOKEN/,
+  );
+  assert.doesNotMatch(doctorOutput, /SENTRY_AUTH_TOKEN/);
+  assert.match(
+    doctorOutput,
+    /Antigravity stdio MCP server \(supabase\) read secret environment variables/,
+  );
+  assert.match(
+    doctorOutput,
+    /Claude Code requires interactive project approval before loading MCP servers from \.mcp\.json/,
+  );
+  assert.match(
+    doctorOutput,
+    /Codex loads project \.codex\/config\.toml MCP servers only after the project is marked trusted/,
+  );
+  assert.match(
+    doctorOutput,
+    /Gemini CLI loads project \.gemini\/settings\.json MCP servers only in trusted folders/,
+  );
+  assert.match(
+    doctorOutput,
+    /Gemini CLI loads all MCP tool schemas into context up front \(~32 estimated tools across 2 servers\)/,
+  );
+  assert.match(
+    doctorOutput,
+    /MCP servers no longer in mcp\/servers\.yaml: retired-mcp/,
+  );
+  assert.match(
+    doctorOutput,
+    /MCP servers no longer available for project scope: fetcher/,
+  );
+  await assert.rejects(tamperedAttempt, ManifestError);
 });

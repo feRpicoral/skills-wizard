@@ -1155,3 +1155,76 @@ test('add rejects invalid --source, --ref, --category, and disallowed flags', as
     /Pass a search query, owner\/repo\[@skill\], or GitHub URL/,
   );
 });
+
+test('init auto-detects project MCP servers and mcp subcommands manage and validate flags', async (t) => {
+  const { cli } = await sandbox(t);
+  const project = await tempDir(t);
+  await writeFiles(project, {
+    'nx.json': '{}',
+    'supabase/config.toml': 'project_id = "demo"\n',
+    'package.json': JSON.stringify({
+      name: 'monorepo',
+      dependencies: { '@sentry/nextjs': '^9.0.0' },
+    }),
+  });
+
+  const initResult = await cli([
+    'init',
+    '--project',
+    project,
+    '--tools',
+    'claude-code,codex',
+    '--skills',
+    '',
+    '--yes',
+  ]);
+  const listResult = await cli(['mcp', 'list', '--project', project]);
+  const removeResult = await cli([
+    'mcp',
+    'remove',
+    'sentry',
+    '--project',
+    project,
+    '--yes',
+  ]);
+  const addResult = await cli([
+    'mcp',
+    'add',
+    'sentry',
+    '--project',
+    project,
+    '--yes',
+  ]);
+  const [badSubcommand, badListFlag, badRemoveTools, badSearchScope] =
+    await Promise.all([
+      cli(['mcp', 'invalid']),
+      cli(['mcp', 'list', '--yes']),
+      cli(['mcp', 'remove', 'nx', '--tools', 'codex']),
+      cli(['mcp', 'search', 'sentry', '--global']),
+    ]);
+  const mcpJson = JSON.parse(
+    await readFile(join(project, '.mcp.json'), 'utf8'),
+  ) as {
+    mcpServers: Record<string, unknown>;
+  };
+
+  assert.equal(initResult.code, 0);
+  assert.equal(listResult.code, 0);
+  assert.match(listResult.stdout, /nx\s+\[installed\]/);
+  assert.match(listResult.stdout, /supabase\s+\[installed\]/);
+  assert.match(listResult.stdout, /sentry\s+\[installed\]/);
+  assert.equal(removeResult.code, 0);
+  assert.equal(addResult.code, 0);
+  assert.deepEqual(Object.keys(mcpJson.mcpServers), [
+    'nx',
+    'supabase',
+    'sentry',
+  ]);
+  assert.equal(badSubcommand.code, 2);
+  assert.equal(badListFlag.code, 2);
+  assert.match(badListFlag.stderr, /--yes does not apply to mcp list/);
+  assert.equal(badRemoveTools.code, 2);
+  assert.match(badRemoveTools.stderr, /--tools does not apply to mcp remove/);
+  assert.equal(badSearchScope.code, 2);
+  assert.match(badSearchScope.stderr, /--global does not apply to mcp search/);
+});

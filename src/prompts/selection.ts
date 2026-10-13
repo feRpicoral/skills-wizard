@@ -5,6 +5,8 @@ import { variableMessage } from '../blocks/variables.ts';
 import type { Paths } from '../env.ts';
 import { CancelledError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
+import type { McpCatalog } from '../mcp/model.ts';
+import type { McpSearchCandidate } from '../mcp/search.ts';
 import type {
   PresetDefinition,
   PresetId,
@@ -346,6 +348,46 @@ export async function promptRepoSkillLocation({
         value: location,
         label: location.name,
         hint: `${location.path} · ${location.description}`,
+      })),
+    }),
+  );
+}
+
+export async function promptMcpServers(
+  catalog: McpCatalog,
+  scope: Scope,
+  initial: readonly string[],
+): Promise<string[]> {
+  const available = catalog.servers.filter((server) =>
+    server.scopes.includes(scope),
+  );
+  if (available.length === 0) return [];
+  return unwrap(
+    await clack.multiselect<string>({
+      message: 'Which MCP servers should be configured?',
+      options: available.map((server) => ({
+        value: server.name,
+        label: server.name,
+        hint: server.description,
+      })),
+      initialValues: initial.filter((name) =>
+        available.some((server) => server.name === name),
+      ),
+      required: false,
+    }),
+  );
+}
+
+export async function promptMcpSearchCandidate(
+  candidates: readonly McpSearchCandidate[],
+): Promise<McpSearchCandidate> {
+  return unwrap(
+    await clack.select<McpSearchCandidate>({
+      message: 'Which MCP server do you want to add?',
+      options: candidates.map((candidate) => ({
+        value: candidate,
+        label: candidate.name,
+        hint: `${candidate.fullName} · ${candidate.transport} · ${candidate.description}`,
       })),
     }),
   );

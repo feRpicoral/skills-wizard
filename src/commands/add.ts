@@ -56,9 +56,11 @@ import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
+  dropUnavailableMcpServers,
   dropUnknownPreset,
   dropUnknownSkills,
   loadLibrary,
+  loadMcpServers,
   type Location,
   notify,
   notifyLeftGit,
@@ -665,12 +667,21 @@ async function installAddedSkill({
     prompting,
     preset: previous.options.preset,
   });
+  const mcpCatalog = await loadMcpServers(ctx);
+  const mcp = dropUnavailableMcpServers({
+    ctx,
+    prompting,
+    catalog: mcpCatalog,
+    names: previous.mcp,
+    scope,
+  });
   const plan = await buildPlan({
     scope,
     selection: {
       tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
@@ -687,6 +698,7 @@ async function installAddedSkill({
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
   if (keepLocal) {
     await warnTrackedFiles({

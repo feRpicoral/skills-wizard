@@ -10,6 +10,7 @@ import { runAdd } from './commands/add.ts';
 import { runAdopt } from './commands/adopt.ts';
 import { runDoctor } from './commands/doctor.ts';
 import { runInit } from './commands/init.ts';
+import { type McpSubcommand, runMcp } from './commands/mcp.ts';
 import { runMenu } from './commands/menu.ts';
 import { runSkill } from './commands/skill.ts';
 import { runSync } from './commands/sync.ts';
@@ -54,6 +55,10 @@ Commands:
   skill eval <name>         Run with-skill vs baseline benchmark and grade assertions
   skill triggers <name>     Measure trigger precision/recall on trigger_queries.json
   skill report <name> [dir] Regenerate report.md from an existing benchmark iteration or run-dir
+  mcp [list]                List curated MCP servers and their install status
+  mcp add <name...>         Install curated MCP servers into the selected scope
+  mcp remove <name...>      Remove installed MCP servers from the selected scope
+  mcp search <query>        Search the MCP registry (and optionally append to mcp/servers.yaml)
   help                      Show this help
 
 Run without a command in a terminal to open the interactive menu.
@@ -66,6 +71,8 @@ Options:
   --blocks <ids>        Comma-separated block ids, for example core/no-ai-tells
   --skills <names>      Comma-separated skills from catalog.yaml or skills/
                         (an empty list removes every installed skill)
+  --mcp <names>         Comma-separated MCP servers from mcp/servers.yaml
+                        (an empty list removes every installed MCP server)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --preset <id>         Project preset: ${PRESET_IDS.join(', ')}
   --style <mode>        Project instructions style: lean (default with a system-wide install)
@@ -75,6 +82,9 @@ Options:
   --ref <ref>           add: pin repository branch, tag, or commit SHA
   --include-offensive   add: include offensive security skills in awesome index search
   --install             add: also install the skill after adding it to catalog.yaml
+  --official            mcp search: query registry.modelcontextprotocol.io instead of GitHub
+  --limit <n>           mcp search: maximum number of registry results (default: 10)
+  --add                 mcp search: append the selected server to mcp/servers.yaml
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -109,6 +119,7 @@ const OPTIONS = {
   tools: { type: 'string' },
   blocks: { type: 'string' },
   skills: { type: 'string' },
+  mcp: { type: 'string' },
   'skill-mode': { type: 'string' },
   preset: { type: 'string' },
   style: { type: 'string' },
@@ -117,6 +128,9 @@ const OPTIONS = {
   ref: { type: 'string' },
   'include-offensive': { type: 'boolean' },
   install: { type: 'boolean' },
+  official: { type: 'boolean' },
+  limit: { type: 'string' },
+  add: { type: 'boolean' },
   catalog: { type: 'boolean' },
   template: { type: 'string' },
   'with-evals': { type: 'boolean' },
@@ -158,6 +172,7 @@ const COMMANDS = [
   'adopt',
   'doctor',
   'skill',
+  'mcp',
 ] as const;
 
 type Command = (typeof COMMANDS)[number];
@@ -169,6 +184,7 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'tools',
     'blocks',
     'skills',
+    'mcp',
     'skill-mode',
     'preset',
     'style',
@@ -211,6 +227,16 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'keep-workdirs',
     'split',
     'threshold',
+  ],
+  mcp: [
+    'global',
+    'project',
+    'tools',
+    'official',
+    'limit',
+    'add',
+    'yes',
+    'dry-run',
   ],
 };
 
@@ -517,6 +543,36 @@ function rejectSkillOptions(
   }
 }
 
+const MCP_SUBCOMMAND_OPTIONS: Readonly<
+  Record<McpSubcommand, readonly OptionName[]>
+> = {
+  list: ['global', 'project'],
+  add: ['global', 'project', 'tools', 'yes', 'dry-run'],
+  remove: ['global', 'project', 'yes', 'dry-run'],
+  search: ['official', 'limit', 'add', 'yes', 'dry-run'],
+};
+
+function parseMcpSubcommand(value: string | undefined): McpSubcommand {
+  if (value === undefined || value === 'list') return 'list';
+  if (value === 'add' || value === 'remove' || value === 'search') {
+    return value;
+  }
+  throw new UsageError(
+    'Usage: agents-config mcp [list | add <name...> | remove <name...> | search <query>]',
+  );
+}
+
+function rejectMcpOptions(
+  subcommand: McpSubcommand,
+  provided: readonly string[],
+): void {
+  const allowed: readonly string[] = MCP_SUBCOMMAND_OPTIONS[subcommand];
+  const extra = provided.filter((name) => !allowed.includes(name));
+  if (extra.length > 0) {
+    throw new UsageError(`${flags(extra)} does not apply to mcp ${subcommand}`);
+  }
+}
+
 async function version(): Promise<string> {
   const packageJson = JSON.parse(
     await readFile(join(REPO_ROOT, 'package.json'), 'utf8'),
@@ -594,6 +650,7 @@ async function main(argv: string[]): Promise<number> {
     command !== 'add' &&
     command !== 'adopt' &&
     command !== 'skill' &&
+    command !== 'mcp' &&
     positionals.length > 1
   ) {
     throw new UsageError(
@@ -606,6 +663,10 @@ async function main(argv: string[]): Promise<number> {
   }
   rejectOptions(command, provided);
   if (command === 'skill') rejectSkillOptions(positionals[1], provided);
+  if (command === 'mcp') {
+    const subcommand = parseMcpSubcommand(positionals[1]);
+    rejectMcpOptions(subcommand, provided);
+  }
 
   const ctx = createContext({
     repoRoot: REPO_ROOT,
@@ -629,6 +690,7 @@ async function main(argv: string[]): Promise<number> {
       const tools = parseTools(values.tools);
       const blocks = parseList(values.blocks);
       const skills = parseList(values.skills);
+      const mcp = parseList(values.mcp);
       const skillMode = parseSkillMode(values['skill-mode']);
       const preset = parsePreset(values.preset);
       const style = parseProjectStyle(values.style);
@@ -641,6 +703,7 @@ async function main(argv: string[]): Promise<number> {
         ...(tools ? { tools } : {}),
         ...(blocks ? { blocks } : {}),
         ...(skills ? { skills } : {}),
+        ...(mcp ? { mcp } : {}),
         ...(skillMode ? { skillMode } : {}),
         ...(preset ? { preset } : {}),
         ...(style ? { style } : {}),
@@ -755,6 +818,29 @@ async function main(argv: string[]): Promise<number> {
           : {}),
         ...(values.split !== undefined ? { split: values.split } : {}),
         ...(threshold !== undefined ? { threshold } : {}),
+      });
+    }
+    case 'mcp': {
+      const subcommand = parseMcpSubcommand(positionals[1]);
+      if (terminal && !yes && subcommand !== 'list') {
+        clack.intro('agents-config');
+      }
+      const tools = parseTools(values.tools);
+      const limit = parsePositiveInt({
+        value: values.limit,
+        flagName: 'limit',
+      });
+      return runMcp(ctx, {
+        subcommand,
+        args: positionals.slice(2),
+        ...(scope ? { scope } : {}),
+        ...projectDir,
+        ...(tools ? { tools } : {}),
+        ...(values.official !== undefined ? { official: values.official } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(values.add !== undefined ? { add: values.add } : {}),
+        yes,
+        dryRun,
       });
     }
   }

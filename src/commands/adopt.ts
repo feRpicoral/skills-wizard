@@ -38,9 +38,11 @@ import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
+  dropUnavailableMcpServers,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
+  loadMcpServers,
   notify,
   readLocationManifest,
   resolveLocation,
@@ -383,6 +385,14 @@ export async function runAdopt(
     library: skillLibrary,
     names: skills,
   });
+  const mcpCatalog = await loadMcpServers(ctx);
+  const mcp = dropUnavailableMcpServers({
+    ctx,
+    prompting,
+    catalog: mcpCatalog,
+    names: previous.mcp,
+    scope: 'global',
+  });
 
   const stamp = ctx.sources.now().toISOString().replace(/[:.]/g, '-');
   const backupDir = join(ctx.paths.stateDir, 'backups', stamp);
@@ -392,6 +402,7 @@ export async function runAdopt(
       tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: false,
@@ -403,6 +414,7 @@ export async function runAdopt(
     previous,
     manifestPath: location.manifestPath,
     skillSources,
+    mcpCatalog,
     adopt: { names: new Set(picked), backupDir },
   });
 
