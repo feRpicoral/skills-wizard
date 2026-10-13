@@ -16,16 +16,21 @@ import { basename, dirname, join } from 'node:path';
 
 import { lstatIfExists } from '../install/fs.ts';
 
-const EXCLUDED_EVERYWHERE: ReadonlySet<string> = new Set([
+const GENERATED: ReadonlySet<string> = new Set([
+  '.DS_Store',
+  '__pycache__',
+  '.pytest_cache',
+]);
+const GENERATED_SUFFIX = '.pyc';
+const SETUP_OUTPUT: ReadonlySet<string> = new Set(['node_modules', '.venv']);
+const NOT_COPIED: ReadonlySet<string> = new Set([
   '.git',
   '.github',
-  'node_modules',
-  '.DS_Store',
   'AGENTS.md',
   'CLAUDE.md',
   'GEMINI.md',
 ]);
-const EXCLUDED_AT_ROOT: ReadonlySet<string> = new Set(['evals']);
+const NOT_COPIED_AT_ROOT: ReadonlySet<string> = new Set(['evals']);
 const EXECUTABLE_BITS = 0o111;
 const PERMISSION_BITS = 0o777;
 const HASH_PREFIX = 'sha256:';
@@ -44,12 +49,31 @@ interface TreeEntry {
   mode: number;
 }
 
+type SkipEntry = (name: string, segments: readonly string[]) => boolean;
+
+function isGenerated(name: string, setup: boolean): boolean {
+  return (
+    GENERATED.has(name) ||
+    name.endsWith(GENERATED_SUFFIX) ||
+    (setup && SETUP_OUTPUT.has(name))
+  );
+}
+
+function notCopied(name: string, segments: readonly string[]): boolean {
+  return (
+    isGenerated(name, true) ||
+    NOT_COPIED.has(name) ||
+    (segments.length === 0 && NOT_COPIED_AT_ROOT.has(name))
+  );
+}
+
 function digest(content: string | Buffer): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
 async function walk(
   root: string,
+  skip: SkipEntry,
   segments: readonly string[] = [],
 ): Promise<TreeEntry[]> {
   const dir = join(root, ...segments);
@@ -58,12 +82,11 @@ async function walk(
 
   const entries: TreeEntry[] = [];
   for (const child of children) {
-    if (EXCLUDED_EVERYWHERE.has(child.name)) continue;
-    if (segments.length === 0 && EXCLUDED_AT_ROOT.has(child.name)) continue;
+    if (skip(child.name, segments)) continue;
     const path = [...segments, child.name];
     const absolute = join(root, ...path);
     if (child.isDirectory()) {
-      entries.push(...(await walk(root, path)));
+      entries.push(...(await walk(root, skip, path)));
     } else if (child.isFile() || child.isSymbolicLink()) {
       const stats = await lstat(absolute);
       entries.push({
@@ -77,11 +100,11 @@ async function walk(
   return entries;
 }
 
-export async function snapshotTree(
-  root: string,
+async function snapshotEntries(
+  entries: readonly TreeEntry[],
 ): Promise<Map<string, TreeFile>> {
   const files = new Map<string, TreeFile>();
-  for (const entry of await walk(root)) {
+  for (const entry of entries) {
     const content = entry.link
       ? await readlink(entry.absolute)
       : await readFile(entry.absolute);
@@ -95,12 +118,35 @@ export async function snapshotTree(
   return files;
 }
 
-export async function hashTree(root: string): Promise<string> {
-  const lines = [...(await snapshotTree(root)).values()].map(
+function hashFiles(files: Map<string, TreeFile>): string {
+  const lines = [...files.values()].map(
     (file) =>
       `${file.link ? 'link' : 'file'}\0${file.path}\0${file.executable ? 'x' : '-'}\0${file.digest}\n`,
   );
   return `${HASH_PREFIX}${digest(lines.join(''))}`;
+}
+
+export async function snapshotTree(
+  root: string,
+): Promise<Map<string, TreeFile>> {
+  return snapshotEntries(await walk(root, notCopied));
+}
+
+export async function hashTree(root: string): Promise<string> {
+  return hashFiles(await snapshotTree(root));
+}
+
+interface HashInstalledCopyParams {
+  dir: string;
+  setup: boolean;
+}
+
+export async function hashInstalledCopy({
+  dir,
+  setup,
+}: HashInstalledCopyParams): Promise<string> {
+  const entries = await walk(dir, (name) => isGenerated(name, setup));
+  return hashFiles(await snapshotEntries(entries));
 }
 
 interface CopySkillTreeParams {
@@ -113,7 +159,7 @@ export async function copySkillTree({
   destination,
 }: CopySkillTreeParams): Promise<void> {
   await mkdir(destination, { recursive: true });
-  for (const entry of await walk(source)) {
+  for (const entry of await walk(source, notCopied)) {
     const target = join(destination, ...entry.path.split('/'));
     await mkdir(dirname(target), { recursive: true });
     if (entry.link) {

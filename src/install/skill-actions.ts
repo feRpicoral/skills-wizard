@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path';
 
 import type { Scope } from '../blocks/library.ts';
 import type { SkillSource } from '../skills/install.ts';
-import { hashTree } from '../skills/tree.ts';
+import { hashInstalledCopy, hashTree } from '../skills/tree.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import { lstatIfExists, readSymlink, realLocation } from './fs.ts';
 import {
@@ -37,7 +37,11 @@ export async function installedState(
       : 'changed';
   }
   if (!stats.isDirectory()) return 'changed';
-  return (await hashTree(path)) === prior.install.hash ? 'owned' : 'changed';
+  const hash = await hashInstalledCopy({
+    dir: path,
+    setup: prior.install.setup === true,
+  });
+  return hash === prior.install.hash ? 'owned' : 'changed';
 }
 
 interface InstallPairParams {
@@ -47,7 +51,9 @@ interface InstallPairParams {
 
 function sameInstall({ current, next }: InstallPairParams): boolean {
   return current.mode === 'copy'
-    ? next.mode === 'copy' && next.hash === current.hash
+    ? next.mode === 'copy' &&
+        next.hash === current.hash &&
+        next.setup === current.setup
     : next.mode === 'link' && next.target === current.target;
 }
 
@@ -204,7 +210,11 @@ export async function planSkill({
   const install: SkillEntry['install'] =
     target.mode === 'link'
       ? { mode: 'link', target: source.dir }
-      : { mode: 'copy', hash: await hashTree(source.dir) };
+      : {
+          mode: 'copy',
+          hash: await hashTree(source.dir),
+          ...(source.setup ? { setup: true } : {}),
+        };
   const entry: ManifestEntry = {
     kind: 'skill',
     path: target.path,
