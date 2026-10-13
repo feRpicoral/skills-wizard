@@ -31,7 +31,7 @@ interface InstalledStateOptions {
 export async function installedState(
   path: string,
   prior: SkillEntry | null,
-  { sourceHasSetup = false }: InstalledStateOptions = {},
+  { sourceHasSetup }: InstalledStateOptions = {},
 ): Promise<InstalledState> {
   const stats = await lstatIfExists(path);
   if (!stats) return 'missing';
@@ -42,11 +42,19 @@ export async function installedState(
       : 'changed';
   }
   if (!stats.isDirectory()) return 'changed';
-  // Records written before the setup flag existed have no `setup` field, so
-  // the current source decides whether setup output is expected.
-  const setup = prior.install.setup ?? sourceHasSetup;
-  const hash = await hashInstalledCopy({ dir: path, setup });
-  return hash === prior.install.hash ? 'owned' : 'changed';
+  // Copies always record `setup`; records written before the flag existed
+  // have none, so the current source decides whether setup output is
+  // expected. Without a source (removal), either reading is accepted.
+  const recorded = prior.install.setup ?? sourceHasSetup;
+  const readings = recorded === undefined ? [false, true] : [recorded];
+  for (const setup of readings) {
+    if (
+      (await hashInstalledCopy({ dir: path, setup })) === prior.install.hash
+    ) {
+      return 'owned';
+    }
+  }
+  return 'changed';
 }
 
 interface InstallPairParams {
@@ -58,7 +66,7 @@ function sameInstall({ current, next }: InstallPairParams): boolean {
   return current.mode === 'copy'
     ? next.mode === 'copy' &&
         next.hash === current.hash &&
-        next.setup === current.setup
+        (next.setup ?? false) === (current.setup ?? false)
     : next.mode === 'link' && next.target === current.target;
 }
 
@@ -218,7 +226,7 @@ export async function planSkill({
       : {
           mode: 'copy',
           hash: await hashTree(source.dir),
-          ...(source.setup ? { setup: true } : {}),
+          setup: source.setup !== undefined,
         };
   const entry: ManifestEntry = {
     kind: 'skill',
