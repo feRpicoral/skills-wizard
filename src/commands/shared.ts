@@ -6,12 +6,24 @@ import { promisify } from 'node:util';
 import * as clack from '@clack/prompts';
 
 import {
+  outOfScopeBlockIds,
+  requiredVariables,
+  selectBlocks,
+  unknownBlockIds,
+} from '../blocks/compose.ts';
+import {
   type BlockLibrary,
   loadBlockLibrary,
   type Scope,
 } from '../blocks/library.ts';
+import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
-import { AgentsConfigError, isSystemError, UsageError } from '../errors.ts';
+import {
+  AgentsConfigError,
+  isSystemError,
+  MissingVariablesError,
+  UsageError,
+} from '../errors.ts';
 import { applyPlan } from '../install/apply.ts';
 import {
   conflicts,
@@ -22,25 +34,27 @@ import {
 } from '../install/describe.ts';
 import { isDirectory, lstatIfExists } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
+import { skillFolders } from '../install/targets.ts';
 import { detectProject, type ProjectDetection } from '../project/detect.ts';
 import { buildProjectSeed } from '../project/seed.ts';
-import { confirmApply } from '../prompts/selection.ts';
+import { confirmApply, promptVariables } from '../prompts/selection.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
 import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import { readSkillLock, skillLockPath } from '../skills/lock.ts';
 import type { SourceCache } from '../skills/sources.ts';
 import {
+  checkSkillEntries,
   globalManifestPath,
   type Manifest,
   projectManifestPath,
-  readManifest,
+  readGlobalManifest,
   readProjectManifest,
 } from '../state/manifest.ts';
 import { forgetProject, recordProject } from '../state/projects.ts';
 
 const run = promisify(execFile);
 
-interface Location {
+export interface Location {
   scope: Scope;
   manifestPath: string;
   project?: ProjectContext;
@@ -131,9 +145,33 @@ export async function resolveLocation({
 export async function readLocationManifest(
   ctx: Context,
   prompting: boolean,
+  location: Location,
+): Promise<Manifest | null> {
+  const manifest = await readRecordedManifest(ctx, prompting, location);
+  const folders = manifest
+    ? skillFolders({
+        scope: location.scope,
+        paths: ctx.paths,
+        ...(location.project ? { project: location.project } : {}),
+      })
+    : null;
+  if (manifest && folders) {
+    checkSkillEntries({
+      file: location.manifestPath,
+      entries: manifest.entries,
+      folders,
+      scope: location.scope,
+    });
+  }
+  return manifest;
+}
+
+async function readRecordedManifest(
+  ctx: Context,
+  prompting: boolean,
   { manifestPath, project }: Location,
 ): Promise<Manifest | null> {
-  if (!project) return readManifest(manifestPath);
+  if (!project) return readGlobalManifest(manifestPath);
 
   const result = await readProjectManifest(manifestPath, {
     dir: project.dir,
@@ -143,11 +181,86 @@ export async function readLocationManifest(
     notify({
       ctx,
       prompting,
-      message: `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`,
+      message: project.git
+        ? `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`
+        : `The recorded git exclude entries (${path}) were left untouched because the project is no longer in a git repository.`,
       level: 'warn',
     });
   }
   return result?.manifest ?? null;
+}
+
+interface SetVariablesCommandParams {
+  ctx: Context;
+  location: Location;
+  names: readonly string[];
+}
+
+const SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+
+function shellQuote(value: string): string {
+  return SHELL_SAFE.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+// A leading ~ stays unquoted so the shell still expands it.
+function shellPath(path: string): string {
+  if (path === '~') return path;
+  return path.startsWith('~/')
+    ? `~/${shellQuote(path.slice(2))}`
+    : shellQuote(path);
+}
+
+export function setVariablesCommand({
+  ctx,
+  location,
+  names,
+}: SetVariablesCommandParams): string {
+  const target = location.project
+    ? `--project ${shellPath(displayPath({ path: location.project.dir, home: ctx.paths.home }))}`
+    : '--global';
+  const variables = names.map((name) => `--var ${name}=<value>`).join(' ');
+  return `agents-config init ${target} ${variables}`;
+}
+
+interface ResolveVariablesParams {
+  ctx: Context;
+  prompting: boolean;
+  library: BlockLibrary;
+  blocks: readonly string[];
+  location: Location;
+  recorded: Readonly<Record<string, string>>;
+}
+
+// A block edited to use a new variable has no recorded value yet. Look it up
+// (or ask for it) the way init does, and stop with the init command otherwise.
+export async function resolveVariables({
+  ctx,
+  prompting,
+  library,
+  blocks,
+  location,
+  recorded,
+}: ResolveVariablesParams): Promise<Record<string, string>> {
+  const needed = requiredVariables(
+    selectBlocks(library, blocks, location.scope),
+  );
+  const missing = needed.filter((name) => !recorded[name]?.trim());
+  if (missing.length === 0) return { ...recorded };
+
+  const found = await lookupVariables(missing, recorded);
+  if (prompting) {
+    return { ...recorded, ...(await promptVariables(missing, found)) };
+  }
+  const unresolved = missing.filter((name) => !found[name]?.trim());
+  if (unresolved.length > 0) {
+    throw new MissingVariablesError(
+      `The blocks now use variables with no recorded value: ${unresolved.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolved })}`,
+    );
+  }
+  ctx.print(
+    `Using looked-up values for new variables: ${missing.map((name) => `${name}=${found[name] ?? ''}`).join(', ')}`,
+  );
+  return found;
 }
 
 export function notifyLeftGit(
@@ -163,30 +276,40 @@ export function notifyLeftGit(
   });
 }
 
-interface DropUnknownBlocksParams {
+interface DropUnavailableBlocksParams {
   ctx: Context;
   prompting: boolean;
   library: BlockLibrary;
   ids: readonly string[];
+  scope: Scope;
 }
 
-export function dropUnknownBlocks({
+export function dropUnavailableBlocks({
   ctx,
   prompting,
   library,
   ids,
-}: DropUnknownBlocksParams): string[] {
-  const known = new Set(library.blocks.map((block) => block.id));
-  const dropped = ids.filter((id) => !known.has(id));
-  if (dropped.length > 0) {
+  scope,
+}: DropUnavailableBlocksParams): string[] {
+  const unknown = unknownBlockIds(library, ids);
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
+  if (unknown.length > 0) {
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer in the library were dropped: ${dropped.join(', ')}`,
+      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}`,
       level: 'warn',
     });
   }
-  return ids.filter((id) => known.has(id));
+  if (outOfScope.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
 }
 
 interface DropUnknownSkillsParams {
@@ -303,6 +426,7 @@ export async function warnTrackedFiles({
 export interface ConfirmOptions {
   yes: boolean;
   dryRun: boolean;
+  beforeApply?: () => Promise<void>;
 }
 
 async function trackProject(
@@ -333,7 +457,7 @@ async function trackProject(
 export async function confirmAndApply(
   ctx: Context,
   plan: Plan,
-  { yes, dryRun }: ConfirmOptions,
+  { yes, dryRun, beforeApply }: ConfirmOptions,
 ): Promise<{ code: number; applied: boolean }> {
   const prompting = ctx.interactive && !yes;
   const lines = describePlan(plan, ctx.paths.home);
@@ -363,6 +487,7 @@ export async function confirmAndApply(
     return { code: 1, applied: false };
   }
 
+  await beforeApply?.();
   const outcome = await applyPlan(plan);
   await trackProject(ctx, prompting, plan);
   const changed = outcome.applied.filter(

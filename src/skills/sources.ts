@@ -12,7 +12,12 @@ import {
   readTextIfExists,
   writeTextAtomic,
 } from '../install/fs.ts';
-import { WHOLE_REPOSITORY } from './catalog.ts';
+import {
+  isGitRef,
+  isRepository,
+  isRepositoryPath,
+  WHOLE_REPOSITORY,
+} from './catalog.ts';
 import { failureDetail } from './process.ts';
 
 const run = promisify(execFile);
@@ -22,6 +27,7 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const STATE_FILE = 'agents-config.json';
 const COMMIT = /^[0-9a-f]{40}$/;
 const DEFAULT_REF = 'HEAD';
+const END_OF_OPTIONS = '--end-of-options';
 
 export interface SourceSettings {
   url: (repo: string) => string;
@@ -61,7 +67,22 @@ export function githubUrl(repo: string): string {
 }
 
 function sourceDir(cache: SourceCache, repo: string): string {
+  if (!isRepository(repo)) {
+    throw new SourceError(`${repo} is not an owner/repo name`);
+  }
   return join(cache.root, ...repo.split('/'));
+}
+
+function checkSpec(spec: SourceSpec): void {
+  if (spec.ref !== undefined && !isGitRef(spec.ref)) {
+    throw new SourceError(`${spec.repo}: ${spec.ref} is not a valid ref`);
+  }
+  const invalid = spec.paths.find((path) => !isRepositoryPath(path));
+  if (invalid !== undefined) {
+    throw new SourceError(
+      `${spec.repo}: ${invalid} is not a path inside the repository`,
+    );
+  }
 }
 
 interface GitRunParams {
@@ -155,6 +176,8 @@ async function applyPaths(
       .sort();
     if (current.join('\n') === wanted.join('\n')) return;
   }
+  // checkSpec rejects paths starting with "-"; sparse-checkout only accepts
+  // --end-of-options from git 2.44, so it is not passed here.
   await git({
     cache,
     args: ['sparse-checkout', 'set', '--cone', ...wanted],
@@ -176,6 +199,7 @@ async function checkoutRef(
       '--quiet',
       '--depth',
       '1',
+      END_OF_OPTIONS,
       'origin',
       spec.ref ?? DEFAULT_REF,
     ],
@@ -209,7 +233,8 @@ async function clone(
         '1',
         '--filter=blob:none',
         '--no-checkout',
-        ...(spec.ref && !pinnedCommit ? ['--branch', spec.ref] : []),
+        ...(spec.ref && !pinnedCommit ? [`--branch=${spec.ref}`] : []),
+        END_OF_OPTIONS,
         cache.url(spec.repo),
         staging,
       ],
@@ -239,6 +264,7 @@ export async function ensureSource(
   cache: SourceCache,
   spec: SourceSpec,
 ): Promise<string> {
+  checkSpec(spec);
   const dir = sourceDir(cache, spec.repo);
   if (!(await isDirectory(join(dir, '.git')))) {
     await clone(cache, dir, spec);
@@ -280,7 +306,7 @@ async function remoteCommit(
   const ref = spec.ref ?? DEFAULT_REF;
   const output = await git({
     cache,
-    args: ['ls-remote', cache.url(spec.repo), ref, `${ref}^{}`],
+    args: ['ls-remote', END_OF_OPTIONS, cache.url(spec.repo), ref, `${ref}^{}`],
     failure: `Could not check ${spec.repo} for updates`,
   });
   const commits = new Map(
@@ -308,6 +334,7 @@ export async function checkSource(
   spec: SourceSpec,
   { force }: CheckSourceOptions,
 ): Promise<UpdateCheck> {
+  checkSpec(spec);
   const dir = sourceDir(cache, spec.repo);
   const current = await sourceCommit(cache, spec.repo);
   if (spec.ref !== undefined && COMMIT.test(spec.ref)) {
@@ -334,6 +361,7 @@ export async function updateSource(
   cache: SourceCache,
   spec: SourceSpec,
 ): Promise<{ previous: string; current: string }> {
+  checkSpec(spec);
   const dir = sourceDir(cache, spec.repo);
   const previous = await sourceCommit(cache, spec.repo);
   await checkoutRef(cache, dir, spec);

@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { lstatIfExists, readTextIfExists } from '../../install/fs.ts';
+import { lstatIfExists } from '../../install/fs.ts';
+import { stagedSkillDir } from '../workspace.ts';
 import type {
   EvalRunner,
   RunnerGraderRequest,
@@ -17,6 +19,10 @@ export interface FakeRunnerOptions {
   onGrader?: (
     request: RunnerGraderRequest,
   ) => Promise<Partial<RunnerGraderResult>> | Partial<RunnerGraderResult>;
+  /** Called by `preflight()`; throw a RunnerError to simulate a missing CLI. */
+  onPreflight?: () => Promise<void> | void;
+  /** Reported as `EvalRunner.sandboxSupported` (default true). */
+  sandboxSupported?: boolean;
 }
 
 interface SkillActiveCheckParams {
@@ -24,31 +30,42 @@ interface SkillActiveCheckParams {
   skillName: string;
 }
 
+/**
+ * The fake runner "sees" the skill when it is staged where the harness stages
+ * it for the fake runner. Baseline workspaces never stage it, and
+ * `excludeSkill` is honored as well.
+ */
 async function isSkillActiveInWorkdir({
   workdir,
   skillName,
 }: SkillActiveCheckParams): Promise<boolean> {
-  if (
-    (await lstatIfExists(
-      join(workdir, '.agents', 'skills', skillName, 'SKILL.md'),
-    )) === null
-  ) {
-    return false;
-  }
-  const excludeJson = await readTextIfExists(
-    join(workdir, '.agents', 'skills.json'),
+  const skillFile = join(
+    stagedSkillDir({ workdir, runner: 'fake', skillName }),
+    'SKILL.md',
   );
-  if (excludeJson) {
-    try {
-      const parsed = JSON.parse(excludeJson) as { exclude?: unknown };
-      if (Array.isArray(parsed.exclude) && parsed.exclude.includes(skillName)) {
-        return false;
-      }
-    } catch {
-      return true;
-    }
-  }
-  return true;
+  return (await lstatIfExists(skillFile)) !== null;
+}
+
+export interface FakeTriggerDecisionParams {
+  prompt: string;
+  skillName: string;
+}
+
+/**
+ * The fake runner's default trigger decision when the skill is staged: a
+ * stable hash of the skill name and prompt puts about half of all prompts in
+ * the "triggered" bucket. It reads no labels from the prompt, so trigger
+ * metrics from the fake runner are arbitrary; they only exercise the suite
+ * structure in dry runs. Tests that need specific outcomes use `onTask`.
+ */
+export function fakeTriggerDecision({
+  prompt,
+  skillName,
+}: FakeTriggerDecisionParams): boolean {
+  const digest = createHash('sha256')
+    .update(`${skillName}\0${prompt}`)
+    .digest('hex');
+  return Number.parseInt(digest.slice(0, 8), 16) % 100 < 50;
 }
 
 function extractAssertionsFromGraderPrompt(prompt: string): string[] {
@@ -73,9 +90,15 @@ function extractAssertionsFromGraderPrompt(prompt: string): string[] {
 export function createFakeRunner({
   onTask,
   onGrader,
+  onPreflight,
+  sandboxSupported = true,
 }: FakeRunnerOptions = {}): EvalRunner {
   return {
     name: 'fake',
+    sandboxSupported,
+    async preflight(): Promise<void> {
+      await onPreflight?.();
+    },
     async runTask({
       prompt,
       workdir,
@@ -104,7 +127,8 @@ export function createFakeRunner({
           })
         : {};
 
-      const shouldTriggerDefault = active && !prompt.includes('[negative]');
+      const shouldTriggerDefault =
+        active && fakeTriggerDecision({ prompt, skillName });
       const response =
         custom.response ??
         (active
@@ -128,6 +152,7 @@ export function createFakeRunner({
           usage,
         })}\n`;
       const rawStderr = custom.rawStderr ?? '';
+      const usageReported = custom.usageReported ?? usage.total_tokens > 0;
 
       await writeFile(join(runDir, 'stdout.log'), rawStdout);
       await writeFile(join(runDir, 'stderr.log'), rawStderr);
@@ -137,10 +162,12 @@ export function createFakeRunner({
         triggered,
         durationMs,
         usage,
+        usageReported,
         exitCode,
         timedOut,
         rawStdout,
         rawStderr,
+        ...(custom.error !== undefined ? { error: custom.error } : {}),
       };
     },
 

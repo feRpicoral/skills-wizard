@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
@@ -85,6 +86,27 @@ test('resolves first-party skills from the repository without fetching', async (
     record: { type: 'local', path: 'skills/notes' },
     linkable: true,
   });
+});
+
+test('a skill whose link chain leaves the skill folder is skipped with a problem', async (t) => {
+  const { library, cache, root } = await fixture(t, 'file:///nowhere.git');
+  const dir = join(root, 'skills', 'notes');
+  await writeFiles(dir, { 'deep/file.md': 'f\n' });
+  await symlink('..', join(dir, 'deep', 'up'));
+  await symlink('deep/up/../../secret.txt', join(dir, 'leak'));
+
+  const { sources, problems } = await resolveSkillSources({
+    library,
+    names: ['notes'],
+    cache,
+    fetch: false,
+  });
+
+  assert.equal(sources.has('notes'), false);
+  assert.equal(
+    problems.get('notes'),
+    'leak does not resolve inside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
+  );
 });
 
 test('an upstream SKILL.md that declares another name is not installed', async (t) => {

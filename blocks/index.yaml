@@ -22,8 +22,8 @@ order:
   - engineering/environment-variables
   - tooling/shell-commands
   - tooling/external-clis
-  - git/branching-and-prs
   - git/pr-reviews
+  - git/branching-and-prs
   - git/pr-descriptions
   - git/git-behavior
   - git/commits

@@ -1,9 +1,9 @@
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
-import { isDirectory } from '../install/fs.ts';
+import { isDirectory, lstatIfExists, statIfExists } from '../install/fs.ts';
 import {
   aggregateBenchmark,
   aggregateTriggerRuns,
@@ -18,15 +18,21 @@ import {
   loadEvalSuite,
   loadTriggerQueries,
   selectTriggerQueries,
+  splitTriggerQueries,
   type TriggerSplit,
 } from './cases.ts';
-import { gradeEvalRun } from './grade.ts';
+import { gradeEvalRun, recordFailedRun, runFailure } from './grade.ts';
 import { renderBenchmarkReport, renderTriggerReport } from './report.ts';
-import type { EvalRunner } from './runners/types.ts';
+import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 import {
+  assertSafeGitRef,
   type EvalVariant,
+  personalSkillShadowWarning,
   prepareEvalWorkspace,
   prepareTriggerWorkspace,
+  resolveSkillRepository,
+  validateEvalSuiteFileDestinations,
+  verifySkillAtRef,
 } from './workspace.ts';
 
 interface BoundedConcurrencyParams<T, R> {
@@ -35,6 +41,8 @@ interface BoundedConcurrencyParams<T, R> {
   worker: (item: T, index: number) => Promise<R>;
 }
 
+// Workers catch their own per-job failures, so an error reaching this loop is
+// fatal: no new jobs start, the running ones finish, then the error is thrown.
 async function runWithConcurrency<T, R>({
   items,
   concurrency,
@@ -43,14 +51,18 @@ async function runWithConcurrency<T, R>({
   const limit = Math.max(1, concurrency);
   const results = new Array<R>(items.length);
   let nextIndex = 0;
+  let fatal: { error: unknown } | undefined;
 
   async function next(): Promise<void> {
-    while (nextIndex < items.length) {
+    while (fatal === undefined && nextIndex < items.length) {
       const current = nextIndex;
       nextIndex += 1;
       const item = items[current];
-      if (item !== undefined) {
+      if (item === undefined) continue;
+      try {
         results[current] = await worker(item, current);
+      } catch (error) {
+        fatal ??= { error };
       }
     }
   }
@@ -59,7 +71,57 @@ async function runWithConcurrency<T, R>({
     next(),
   );
   await Promise.all(workers);
+  if (fatal !== undefined) throw fatal.error;
   return results;
+}
+
+const MAX_ITERATION_ATTEMPTS = 1000;
+
+// Gives the owner write and search permission on every folder below `path`,
+// so folders the agent made read-only can be removed. Best effort.
+async function makeTreeWritable(path: string): Promise<void> {
+  const info = await lstatIfExists(path);
+  if (!info?.isDirectory()) return;
+  try {
+    await chmod(path, (info.mode & 0o7777) | 0o700);
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      if (entry.isDirectory()) await makeTreeWritable(join(path, entry.name));
+    }
+  } catch {
+    // Not ours to change; the retry below reports what is left.
+  }
+}
+
+interface RemoveWorkdirParams {
+  path: string;
+  onLog?: (line: string) => void;
+}
+
+// Agents can leave read-only folders behind. Cleanup must not turn a graded
+// run into a fatal error, so a workdir that cannot be removed is left with a
+// warning.
+async function removeWorkdir({
+  path,
+  onLog,
+}: RemoveWorkdirParams): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+    return;
+  } catch {
+    await makeTreeWritable(path);
+  }
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    onLog?.(
+      `warning: could not remove workdir ${path} (${reason}); left it in place`,
+    );
+  }
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
 }
 
 export interface AllocateIterationDirParams {
@@ -68,6 +130,8 @@ export interface AllocateIterationDirParams {
   prefix?: string;
 }
 
+// The final mkdir is not recursive, so two evals started together never share
+// a directory: the loser gets EEXIST and moves on to the next number.
 export async function allocateIterationDir({
   evalsRootDir,
   skillName,
@@ -75,20 +139,42 @@ export async function allocateIterationDir({
 }: AllocateIterationDirParams): Promise<string> {
   const skillEvalsDir = join(evalsRootDir, skillName);
   await mkdir(skillEvalsDir, { recursive: true });
-  const entries = await readdir(skillEvalsDir, { withFileTypes: true });
+  const numbers = await iterationNumbers({ dir: skillEvalsDir, prefix });
+  let candidate = (numbers[0] ?? 0) + 1;
+  for (let attempt = 0; attempt < MAX_ITERATION_ATTEMPTS; attempt += 1) {
+    const iterationDir = join(skillEvalsDir, `${prefix}-${candidate}`);
+    try {
+      await mkdir(iterationDir);
+      return iterationDir;
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      candidate += 1;
+    }
+  }
+  throw new EvalError(
+    `Could not allocate a new ${prefix} directory in ${skillEvalsDir}`,
+  );
+}
+
+interface IterationNumbersParams {
+  dir: string;
+  prefix: string;
+}
+
+/** Iteration numbers found in `dir`, highest first. */
+async function iterationNumbers({
+  dir,
+  prefix,
+}: IterationNumbersParams): Promise<number[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
   const pattern = new RegExp(`^${prefix}-(\\d+)$`);
-  let maxNumber = 0;
+  const numbers: number[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const match = pattern.exec(entry.name);
-    if (match?.[1]) {
-      const num = Number.parseInt(match[1], 10);
-      if (num > maxNumber) maxNumber = num;
-    }
+    if (match?.[1]) numbers.push(Number.parseInt(match[1], 10));
   }
-  const iterationDir = join(skillEvalsDir, `${prefix}-${maxNumber + 1}`);
-  await mkdir(iterationDir, { recursive: true });
-  return iterationDir;
+  return numbers.sort((left, right) => right - left);
 }
 
 export interface FindLatestIterationDirParams {
@@ -96,6 +182,7 @@ export interface FindLatestIterationDirParams {
   skillName: string;
 }
 
+/** The newest iteration that finished, i.e. has a benchmark.json. */
 export async function findLatestIterationDir({
   evalsRootDir,
   skillName,
@@ -104,26 +191,25 @@ export async function findLatestIterationDir({
   if (!(await isDirectory(skillEvalsDir))) {
     throw new EvalError(`No evaluation iterations found for "${skillName}"`);
   }
-  const entries = await readdir(skillEvalsDir, { withFileTypes: true });
-  let maxNumber = 0;
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const match = /^iteration-(\d+)$/.exec(entry.name);
-    if (match?.[1]) {
-      const num = Number.parseInt(match[1], 10);
-      if (num > maxNumber) maxNumber = num;
-    }
+  const numbers = await iterationNumbers({
+    dir: skillEvalsDir,
+    prefix: 'iteration',
+  });
+  for (const num of numbers) {
+    const iterationDir = join(skillEvalsDir, `iteration-${num}`);
+    const benchmark = await statIfExists(join(iterationDir, 'benchmark.json'));
+    if (benchmark?.isFile()) return iterationDir;
   }
-  if (maxNumber === 0) {
-    throw new EvalError(`No evaluation iterations found for "${skillName}"`);
-  }
-  return join(skillEvalsDir, `iteration-${maxNumber}`);
+  throw new EvalError(
+    numbers.length === 0
+      ? `No evaluation iterations found for "${skillName}"`
+      : `No completed evaluation iterations found for "${skillName}" (${numbers.length} without benchmark.json)`,
+  );
 }
 
 export interface RunSkillEvalParams {
   skillName: string;
   skillDir: string;
-  repoRoot: string;
   evalsRootDir: string;
   runner: EvalRunner;
   runs?: number;
@@ -136,7 +222,7 @@ export interface RunSkillEvalParams {
   sandbox?: boolean;
   keepWorkdirs?: boolean;
   paths?: Paths;
-  env?: Environment;
+  env: Environment;
   onLog?: (line: string) => void;
 }
 
@@ -155,7 +241,6 @@ interface EvalJob {
 export async function runSkillEval({
   skillName,
   skillDir,
-  repoRoot,
   evalsRootDir,
   runner,
   runs = 1,
@@ -186,10 +271,21 @@ export async function runSkillEval({
   if (selectedCases.length === 0) {
     throw new EvalError(`No eval cases found in ${skillName}`);
   }
+  validateEvalSuiteFileDestinations({ cases: selectedCases, skillName });
 
   const variants: EvalVariant[] = ['with_skill'];
   if (baseline) variants.push('without_skill');
   if (compareRef) variants.push('old_skill');
+
+  // Everything that can fail for every job is checked before the iteration
+  // directory exists, so a bad ref or a missing CLI leaves nothing behind.
+  await runner.preflight?.();
+  let repoRoot: string | undefined;
+  if (compareRef !== undefined) {
+    assertSafeGitRef(compareRef);
+    repoRoot = await resolveSkillRepository({ skillDir, env });
+    await verifySkillAtRef({ repoRoot, skillDir, ref: compareRef, env });
+  }
 
   const iterationDir = await allocateIterationDir({
     evalsRootDir,
@@ -207,11 +303,13 @@ export async function runSkillEval({
 
   const warnings = new Set<string>();
   let possiblyContaminated = false;
+  let withSkillContaminated = false;
 
   const records = await runWithConcurrency({
     items: jobs,
     concurrency: parallel,
     async worker(job) {
+      const label = `[${job.evalCase.id}] ${job.variant} run ${job.runIndex}/${runs}`;
       const runDir = join(
         iterationDir,
         `eval-${job.evalCase.id}`,
@@ -219,6 +317,8 @@ export async function runSkillEval({
         `run-${job.runIndex}`,
       );
       await mkdir(runDir, { recursive: true });
+      // A workspace that cannot be prepared is a harness problem shared by
+      // every job, so it is fatal rather than a failed run.
       const prepared = await prepareEvalWorkspace({
         runDir,
         skillDir,
@@ -235,34 +335,54 @@ export async function runSkillEval({
       if (prepared.possiblyContaminated) {
         possiblyContaminated = true;
       }
+      if (prepared.skillShadowed) {
+        withSkillContaminated = true;
+      }
       if (prepared.warning && !warnings.has(prepared.warning)) {
         warnings.add(prepared.warning);
         onLog?.(`warning: ${prepared.warning}`);
       }
 
       try {
-        const taskResult = await runner.runTask({
-          prompt: job.evalCase.prompt,
-          workdir: prepared.workdir,
-          runDir,
-          skillName,
-          timeoutSeconds,
-          sandbox,
-          excludeSkill: job.variant === 'without_skill',
-        });
+        const startedAt = Date.now();
+        let taskResult: RunnerTaskResult | undefined;
+        let launchError: string | undefined;
+        try {
+          taskResult = await runner.runTask({
+            prompt: job.evalCase.prompt,
+            workdir: prepared.workdir,
+            runDir,
+            skillName,
+            timeoutSeconds,
+            sandbox,
+            excludeSkill: job.variant === 'without_skill',
+          });
+        } catch (error) {
+          launchError = error instanceof Error ? error.message : String(error);
+        }
 
-        const { grading, timing } = await gradeEvalRun({
-          evalCase: job.evalCase,
-          workdir: prepared.workdir,
-          runDir,
-          taskResult,
-          runner,
-          timeoutSeconds,
-          env,
-        });
+        const { grading, timing } =
+          taskResult === undefined
+            ? await recordFailedRun({
+                evalCase: job.evalCase,
+                runDir,
+                error: launchError ?? 'Runner failed',
+                durationMs: Date.now() - startedAt,
+              })
+            : await gradeEvalRun({
+                evalCase: job.evalCase,
+                workdir: prepared.workdir,
+                runDir,
+                taskResult,
+                runner,
+                timeoutSeconds,
+                env,
+              });
 
         onLog?.(
-          `[${job.evalCase.id}] ${job.variant} run ${job.runIndex}/${runs}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds}s)`,
+          timing.error === undefined
+            ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds.toFixed(1)}s)`
+            : `${label}: agent run failed: ${timing.error}`,
         );
 
         const record: EvalRunRecord = {
@@ -276,7 +396,7 @@ export async function runSkillEval({
         return record;
       } finally {
         if (!keepWorkdirs) {
-          await rm(prepared.workdir, { recursive: true, force: true });
+          await removeWorkdir({ path: prepared.workdir, onLog });
         }
       }
     },
@@ -291,6 +411,7 @@ export async function runSkillEval({
     runs: records,
     baselineEnabled: baseline,
     possiblyContaminated,
+    withSkillContaminated,
     compareRef,
     warnings: [...warnings],
   });
@@ -321,6 +442,7 @@ export interface RunSkillTriggersParams {
   timeoutSeconds?: number;
   sandbox?: boolean;
   keepWorkdirs?: boolean;
+  paths?: Paths;
   env?: Environment;
   onLog?: (line: string) => void;
 }
@@ -350,11 +472,26 @@ export async function runSkillTriggers({
   timeoutSeconds = 120,
   sandbox = false,
   keepWorkdirs = false,
+  paths,
   env,
   onLog,
 }: RunSkillTriggersParams): Promise<RunSkillTriggersResult> {
   const allQueries = await loadTriggerQueries(skillDir);
   const selectedQueries = selectTriggerQueries(allQueries, split);
+  const warnings: string[] = [];
+  if (split !== 'all') {
+    warnings.push(...splitTriggerQueries(allQueries).warnings);
+  }
+  // Every trigger workspace stages the same skill, so a personal skill that
+  // shadows it affects every run: check once.
+  const shadowWarning = await personalSkillShadowWarning({
+    runner: runner.name,
+    skillName,
+    paths,
+  });
+  if (shadowWarning !== undefined) warnings.push(shadowWarning);
+  for (const warning of warnings) onLog?.(`warning: ${warning}`);
+  await runner.preflight?.();
   const outputDir = await allocateIterationDir({
     evalsRootDir,
     skillName,
@@ -387,30 +524,44 @@ export async function runSkillTriggers({
         runDir,
         skillDir,
         skillName,
+        runner: runner.name,
         env,
       });
       try {
-        const taskResult = await runner.runTask({
-          prompt: job.query,
-          workdir,
-          runDir,
-          skillName,
-          timeoutSeconds,
-          sandbox,
-        });
+        const startedAt = Date.now();
+        let triggered = false;
+        let durationMs: number;
+        let failure: string | undefined;
+        try {
+          const taskResult = await runner.runTask({
+            prompt: job.query,
+            workdir,
+            runDir,
+            skillName,
+            timeoutSeconds,
+            sandbox,
+          });
+          triggered = taskResult.triggered;
+          durationMs = taskResult.durationMs;
+          failure = runFailure({ taskResult, timeoutSeconds });
+        } catch (error) {
+          durationMs = Date.now() - startedAt;
+          failure = error instanceof Error ? error.message : String(error);
+        }
         const runResult: TriggerQueryRunResult = {
           query: job.query,
           should_trigger: job.shouldTrigger,
-          triggered: taskResult.triggered,
-          duration_ms: taskResult.durationMs,
+          triggered,
+          duration_ms: durationMs,
+          ...(failure !== undefined ? { error: failure } : {}),
         };
         onLog?.(
-          `[query ${job.queryIndex}] run ${job.runIndex}/${runs}: triggered=${taskResult.triggered} (expected=${job.shouldTrigger})`,
+          `[query ${job.queryIndex}] run ${job.runIndex}/${runs}: triggered=${triggered} (expected=${job.shouldTrigger})${failure === undefined ? '' : `; agent run failed: ${failure}`}`,
         );
         return runResult;
       } finally {
         if (!keepWorkdirs) {
-          await rm(workdir, { recursive: true, force: true });
+          await removeWorkdir({ path: workdir, onLog });
         }
       }
     },
@@ -425,6 +576,8 @@ export async function runSkillTriggers({
     threshold,
     queries: selectedQueries,
     results,
+    possiblyContaminated: shadowWarning !== undefined,
+    warnings,
   });
   const reportMarkdown = renderTriggerReport(summary);
 

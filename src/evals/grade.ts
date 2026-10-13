@@ -1,20 +1,58 @@
-import { spawn } from 'node:child_process';
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { type ChildProcess, spawn } from 'node:child_process';
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Environment } from '../env.ts';
-import { lstatIfExists, readTextIfExists } from '../install/fs.ts';
+import { lstatIfExists, statIfExists } from '../install/fs.ts';
 import type { EvalAssertion, EvalCase, ScriptedAssertion } from './cases.ts';
+import { trackChildGroup } from './children.ts';
 import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 
 const COMMAND_ASSERTION_TIMEOUT_MS = 30_000;
+const KILL_GRACE_MS = 2_000;
+const OUTPUT_DRAIN_MS = 1_000;
+// Byte budgets keep the grader prompt under PROMPT_BUDGET_BYTES.
+const PROMPT_BUDGET_BYTES = 100_000;
+const WORKSPACE_SUMMARY_BUDGET = 60_000;
+const RESPONSE_BUDGET_BYTES = 24_000;
+const FILE_PREVIEW_BYTES = 8_000;
+const LISTING_BUDGET_BYTES = 6_000;
+const GRADER_DIR_PREFIX = 'agents-config-grader-';
+const MALFORMED_GRADER_OUTPUT = 'Malformed grader output';
 const WORKSPACE_SKIP_DIRS = new Set([
   '.git',
   '.agents',
   '.claude',
   '.gemini',
   '.codex',
+  '.cache',
+  '.gradle',
+  '.mypy_cache',
+  '.next',
+  '.nuxt',
+  '.pytest_cache',
+  '.tox',
+  '.turbo',
+  '.venv',
+  '__pycache__',
+  'build',
+  'coverage',
+  'dist',
   'node_modules',
+  'out',
+  'target',
+  'vendor',
+  'venv',
 ]);
 
 export const GRADER_JSON_SCHEMA: Record<string, unknown> = {
@@ -28,8 +66,11 @@ export const GRADER_JSON_SCHEMA: Record<string, unknown> = {
           assertion: { type: 'string' },
           passed: { type: 'boolean' },
           evidence: { type: 'string' },
+          quote: { type: 'string' },
         },
-        required: ['assertion', 'passed', 'evidence'],
+        // Strict structured-output modes need every property listed; an empty
+        // quote means the grader had nothing to quote.
+        required: ['assertion', 'passed', 'evidence', 'quote'],
         additionalProperties: false,
       },
     },
@@ -66,6 +107,10 @@ export interface TimingReport {
   triggered: boolean;
   exit_code: number;
   timed_out: boolean;
+  /** False when the runner reported no token usage; token fields are then 0. */
+  usage_reported?: boolean;
+  /** Why the agent run failed, when it did. */
+  error?: string;
 }
 
 export function formatAssertionLabel(assertion: EvalAssertion): string {
@@ -86,21 +131,41 @@ export function formatAssertionLabel(assertion: EvalAssertion): string {
   }
 }
 
-interface RunShellCommandParams {
+export interface RunShellCommandParams {
   command: string;
   cwd: string;
-  env?: Environment;
+  env: Environment;
   timeoutMs?: number;
 }
 
-interface ShellCommandResult {
+export interface ShellCommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
   timedOut: boolean;
 }
 
-async function runShellCommand({
+interface SignalGroupParams {
+  child: ChildProcess;
+  signal: NodeJS.Signals;
+}
+
+// The command runs in its own process group, so the whole tree (the shell and
+// anything it started) is signalled, not only the shell.
+function signalGroup({ child, signal }: SignalGroupParams): void {
+  if (child.pid === undefined) return;
+  try {
+    if (process.platform === 'win32') {
+      child.kill(signal);
+    } else {
+      process.kill(-child.pid, signal);
+    }
+  } catch {
+    // The group is already gone.
+  }
+}
+
+export async function runShellCommand({
   command,
   cwd,
   env,
@@ -109,40 +174,77 @@ async function runShellCommand({
   return new Promise<ShellCommandResult>((resolve) => {
     const child = spawn(command, {
       cwd,
-      env: env ? { ...env } : process.env,
+      env: { ...env },
       shell: true,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // Stops the group if this process is interrupted while it runs.
+    const untrack = trackChildGroup(child);
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    const openStreams = new Set(['stdout', 'stderr']);
+    const timers: NodeJS.Timeout[] = [];
     let timedOut = false;
+    let exited = false;
+    let exitCode: number | null = null;
+    let settled = false;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, timeoutMs);
+    const finish = (spawnError?: Error): void => {
+      if (settled) return;
+      settled = true;
+      for (const timer of timers) clearTimeout(timer);
+      // Stragglers that outlived the shell would otherwise keep running.
+      signalGroup({ child, signal: 'SIGKILL' });
+      untrack();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve({
+        exitCode: spawnError ? 1 : (exitCode ?? (timedOut ? 124 : 1)),
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: spawnError
+          ? spawnError.message
+          : Buffer.concat(stderrChunks).toString('utf8'),
+        timedOut,
+      });
+    };
+
+    const streamClosed = (name: string): void => {
+      openStreams.delete(name);
+      if (exited && openStreams.size === 0) finish();
+    };
+
+    timers.push(
+      setTimeout(() => {
+        timedOut = true;
+        signalGroup({ child, signal: 'SIGTERM' });
+        timers.push(
+          setTimeout(() => {
+            signalGroup({ child, signal: 'SIGKILL' });
+            // Settle even if the exit event never arrives.
+            timers.push(setTimeout(() => finish(), OUTPUT_DRAIN_MS));
+          }, KILL_GRACE_MS),
+        );
+      }, timeoutMs),
+    );
 
     child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout.on('close', () => streamClosed('stdout'));
+    child.stderr.on('close', () => streamClosed('stderr'));
 
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolve({
-        exitCode: 1,
-        stdout: '',
-        stderr: error.message,
-        timedOut,
-      });
-    });
+    child.on('error', (error) => finish(error));
 
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({
-        exitCode: code ?? (timedOut ? 124 : 1),
-        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf8'),
-        timedOut,
-      });
+    // Settle on exit rather than close: a background process that inherited
+    // the pipes would hold close open. Give the output a short drain window.
+    child.on('exit', (code) => {
+      exited = true;
+      exitCode = code;
+      if (openStreams.size === 0) {
+        finish();
+      } else {
+        timers.push(setTimeout(() => finish(), OUTPUT_DRAIN_MS));
+      }
     });
   });
 }
@@ -150,10 +252,60 @@ async function runShellCommand({
 export interface EvaluateScriptedAssertionParams {
   assertion: ScriptedAssertion;
   workdir: string;
-  env?: Environment;
+  env: Environment;
 }
 
-export async function evaluateScriptedAssertion({
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Evaluates one scripted assertion. Whatever the agent left in the workspace
+ * (a folder where a file was expected, an unreadable file), the result is a
+ * failed expectation with the reason as evidence, never an exception.
+ */
+export async function evaluateScriptedAssertion(
+  params: EvaluateScriptedAssertionParams,
+): Promise<GradedExpectation> {
+  try {
+    return await evaluateScriptedAssertionUnchecked(params);
+  } catch (error) {
+    return {
+      text: formatAssertionLabel(params.assertion),
+      kind: params.assertion.type,
+      passed: false,
+      evidence: `Could not evaluate assertion: ${errorMessage(error)}`,
+    };
+  }
+}
+
+interface ReadWorkspaceFileParams {
+  workdir: string;
+  path: string;
+}
+
+type WorkspaceFileRead =
+  | { content: string; problem?: undefined }
+  | { content?: undefined; problem: string };
+
+// Only regular files are read: a folder or a FIFO at the path is reported
+// instead of failing (EISDIR) or blocking.
+async function readWorkspaceFile({
+  workdir,
+  path,
+}: ReadWorkspaceFileParams): Promise<WorkspaceFileRead> {
+  const fullPath = join(workdir, path);
+  const info = await statIfExists(fullPath);
+  if (info === null) {
+    return { problem: `File "${path}" does not exist in workspace.` };
+  }
+  if (!info.isFile()) {
+    return { problem: `"${path}" in workspace is not a regular file.` };
+  }
+  return { content: await readFile(fullPath, 'utf8') };
+}
+
+async function evaluateScriptedAssertionUnchecked({
   assertion,
   workdir,
   env,
@@ -199,15 +351,12 @@ export async function evaluateScriptedAssertion({
   }
 
   if (assertion.type === 'regex') {
-    const fullPath = join(workdir, assertion.path);
-    const content = await readTextIfExists(fullPath);
-    if (content === null) {
-      return {
-        text,
-        kind: 'regex',
-        passed: false,
-        evidence: `File "${assertion.path}" does not exist in workspace.`,
-      };
+    const { content, problem } = await readWorkspaceFile({
+      workdir,
+      path: assertion.path,
+    });
+    if (content === undefined) {
+      return { text, kind: 'regex', passed: false, evidence: problem };
     }
     const regex = new RegExp(assertion.pattern, assertion.flags);
     const match = regex.exec(content);
@@ -229,15 +378,12 @@ export async function evaluateScriptedAssertion({
   }
 
   if (assertion.type === 'json_valid') {
-    const fullPath = join(workdir, assertion.path);
-    const content = await readTextIfExists(fullPath);
-    if (content === null) {
-      return {
-        text,
-        kind: 'json_valid',
-        passed: false,
-        evidence: `File "${assertion.path}" does not exist in workspace.`,
-      };
+    const { content, problem } = await readWorkspaceFile({
+      workdir,
+      path: assertion.path,
+    });
+    if (content === undefined) {
+      return { text, kind: 'json_valid', passed: false, evidence: problem };
     }
     try {
       JSON.parse(content);
@@ -252,7 +398,7 @@ export async function evaluateScriptedAssertion({
         text,
         kind: 'json_valid',
         passed: false,
-        evidence: `Invalid JSON in "${assertion.path}": ${error instanceof Error ? error.message : String(error)}`,
+        evidence: `Invalid JSON in "${assertion.path}": ${errorMessage(error)}`,
       };
     }
   }
@@ -278,40 +424,214 @@ export async function evaluateScriptedAssertion({
   };
 }
 
-interface ListWorkspaceSummaryParams {
-  workdir: string;
-  segments?: readonly string[];
+interface WorkspaceFile {
+  relPath: string;
+  fullPath: string;
+  size: number;
 }
 
-async function listWorkspaceSummary({
+interface WorkspaceListing {
+  files: WorkspaceFile[];
+  /** Paths that could not be read, with the reason. */
+  unreadable: string[];
+}
+
+interface CollectWorkspaceFilesParams {
+  workdir: string;
+  segments?: readonly string[];
+  listing?: WorkspaceListing;
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string'
+    ? error.code
+    : errorMessage(error);
+}
+
+// Folders or files the agent made unreadable are listed, not fatal.
+async function collectWorkspaceFiles({
   workdir,
   segments = [],
-}: ListWorkspaceSummaryParams): Promise<string[]> {
-  const dir = join(workdir, ...segments);
-  const entries = await readdir(dir, { withFileTypes: true });
+  listing = { files: [], unreadable: [] },
+}: CollectWorkspaceFilesParams): Promise<WorkspaceListing> {
+  let entries;
+  try {
+    entries = await readdir(join(workdir, ...segments), {
+      withFileTypes: true,
+    });
+  } catch (error) {
+    listing.unreadable.push(
+      `${segments.length > 0 ? `${segments.join('/')}/` : './'} (${errorCode(error)})`,
+    );
+    return listing;
+  }
   entries.sort((left, right) => left.name.localeCompare(right.name));
-  const lines: string[] = [];
-
   for (const entry of entries) {
     if (WORKSPACE_SKIP_DIRS.has(entry.name)) continue;
     const relSegments = [...segments, entry.name];
-    const relPath = relSegments.join('/');
-    const fullPath = join(workdir, ...relSegments);
     if (entry.isDirectory()) {
-      lines.push(
-        ...(await listWorkspaceSummary({ workdir, segments: relSegments })),
-      );
+      await collectWorkspaceFiles({ workdir, segments: relSegments, listing });
     } else if (entry.isFile()) {
-      const info = await stat(fullPath);
-      const preview =
-        info.size <= 32768
-          ? ((await readTextIfExists(fullPath)) ?? '').slice(0, 8000)
-          : `(${info.size} bytes)`;
-      lines.push(`--- ${relPath} ---\n${preview}`);
+      const fullPath = join(workdir, ...relSegments);
+      const relPath = relSegments.join('/');
+      try {
+        const info = await stat(fullPath);
+        listing.files.push({ relPath, fullPath, size: info.size });
+      } catch (error) {
+        listing.unreadable.push(`${relPath} (${errorCode(error)})`);
+      }
     }
   }
+  return listing;
+}
 
-  return lines;
+async function readHead(path: string, bytes: number): Promise<Buffer> {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(bytes);
+    const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function isContinuationByte(byte: number | undefined): boolean {
+  return byte !== undefined && (byte & 0xc0) === 0x80;
+}
+
+/** The longest prefix of `buffer` within `maxBytes` that ends on a character. */
+function utf8Head(buffer: Buffer, maxBytes: number): string {
+  let end = Math.max(0, Math.min(maxBytes, buffer.length));
+  if (end < buffer.length) {
+    while (end > 0 && isContinuationByte(buffer[end])) end -= 1;
+  }
+  return buffer.subarray(0, end).toString('utf8');
+}
+
+/** The longest suffix of `buffer` within `maxBytes` that starts on a character. */
+function utf8Tail(buffer: Buffer, maxBytes: number): string {
+  let start = Math.max(0, buffer.length - Math.max(0, maxBytes));
+  while (start < buffer.length && isContinuationByte(buffer[start])) start += 1;
+  return buffer.subarray(start).toString('utf8');
+}
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf8');
+}
+
+interface ListingSectionParams {
+  title: string;
+  lines: readonly string[];
+}
+
+function listingSection({ title, lines }: ListingSectionParams): string {
+  const kept: string[] = [];
+  let used = byteLength(title);
+  for (const line of lines) {
+    used += byteLength(line) + 1;
+    if (used > LISTING_BUDGET_BYTES) break;
+    kept.push(line);
+  }
+  const more = lines.length - kept.length;
+  return [title, ...kept, ...(more > 0 ? [`... and ${more} more`] : [])].join(
+    '\n',
+  );
+}
+
+export interface SummarizeWorkspaceParams {
+  workdir: string;
+  /** UTF-8 bytes of file content and headers to include. */
+  budget?: number;
+}
+
+/**
+ * Renders workspace files for the blind grader: text files only, each capped,
+ * the whole summary capped (in UTF-8 bytes), build and vendor folders skipped.
+ * Files that were cut short, left out or unreadable are listed by path at the
+ * end.
+ */
+export async function summarizeWorkspace({
+  workdir,
+  budget = WORKSPACE_SUMMARY_BUDGET,
+}: SummarizeWorkspaceParams): Promise<string[]> {
+  const { files, unreadable } = await collectWorkspaceFiles({ workdir });
+  const sections: string[] = [];
+  const shortened: string[] = [];
+  let remaining = budget;
+
+  for (const file of files) {
+    if (remaining <= 0) {
+      shortened.push(`${file.relPath} (${file.size} bytes, omitted)`);
+      continue;
+    }
+    let head: Buffer;
+    try {
+      head = await readHead(
+        file.fullPath,
+        Math.min(file.size, FILE_PREVIEW_BYTES + 1),
+      );
+    } catch (error) {
+      unreadable.push(`${file.relPath} (${errorCode(error)})`);
+      continue;
+    }
+    if (head.includes(0)) {
+      const line = `--- ${file.relPath} (binary, ${file.size} bytes) ---`;
+      sections.push(line);
+      // Sections are joined with a blank line.
+      remaining -= byteLength(line) + 2;
+      continue;
+    }
+    const preview = utf8Head(head, Math.min(FILE_PREVIEW_BYTES, remaining));
+    const truncated = file.size > byteLength(preview);
+    const header = truncated
+      ? `--- ${file.relPath} (truncated, ${file.size} bytes) ---`
+      : `--- ${file.relPath} ---`;
+    if (truncated) {
+      shortened.push(`${file.relPath} (${file.size} bytes, truncated)`);
+    }
+    const section = `${header}\n${preview}`;
+    sections.push(section);
+    remaining -= byteLength(section) + 2;
+  }
+
+  if (shortened.length > 0) {
+    sections.push(
+      listingSection({
+        title: '--- files not shown in full (summary limit) ---',
+        lines: shortened,
+      }),
+    );
+  }
+  if (unreadable.length > 0) {
+    sections.push(
+      listingSection({
+        title: '--- unreadable paths (skipped) ---',
+        lines: unreadable,
+      }),
+    );
+  }
+
+  return sections;
+}
+
+/**
+ * Caps the agent response for the grader prompt, keeping its beginning and
+ * end, which usually carry the plan and the final answer.
+ */
+export function capResponse(
+  response: string,
+  maxBytes = RESPONSE_BUDGET_BYTES,
+): string {
+  const buffer = Buffer.from(response, 'utf8');
+  if (buffer.length <= maxBytes) return response;
+  const half = Math.floor(maxBytes / 2);
+  const head = utf8Head(buffer, half);
+  const tail = utf8Tail(buffer, half);
+  const omitted = buffer.length - byteLength(head) - byteLength(tail);
+  return `${head}\n\n[... ${omitted} bytes of the response omitted ...]\n\n${tail}`;
 }
 
 export interface BuildBlindGraderPromptParams {
@@ -334,6 +654,13 @@ export function buildBlindGraderPrompt({
     'An assertion passes ONLY if there is clear, concrete evidence in the response or workspace files.',
     'Always provide a specific, non-empty evidence string explaining why each assertion passed or failed.',
     '',
+    'Output format: a single JSON object {"results": [{"assertion": string, "passed": boolean, "evidence": string, "quote": string}]}.',
+    '- Return exactly one result per assertion, in the order the assertions are listed.',
+    '- "assertion" must repeat the assertion text verbatim, character for character.',
+    '- "passed" is true only when the evidence supports the assertion.',
+    '- "evidence" explains the verdict in one or two sentences.',
+    '- "quote" is a short excerpt copied verbatim from the agent response or a workspace file that supports a passing verdict; use "" when there is nothing to quote.',
+    '',
     '<task_prompt>',
     evalCase.prompt,
     '</task_prompt>',
@@ -341,6 +668,10 @@ export function buildBlindGraderPrompt({
     '<expected_output>',
     evalCase.expected_output,
     '</expected_output>',
+    '',
+    '<assertions>',
+    JSON.stringify(stringAssertions, null, 2),
+    '</assertions>',
     '',
     '<agent_response>',
     response || '(empty response)',
@@ -351,163 +682,175 @@ export function buildBlindGraderPrompt({
       ? workspaceSummary.join('\n\n')
       : '(no workspace files)',
     '</workspace_files>',
-    '',
-    '<assertions>',
-    JSON.stringify(stringAssertions, null, 2),
-    '</assertions>',
   ].join('\n');
 }
 
-export function normalizeGraderResults(
-  stringAssertions: readonly string[],
-  rawOutput: unknown,
-): GradedExpectation[] {
+interface GraderResultItem {
+  assertion: string;
+  passed: boolean;
+  evidence: string;
+  quote: string;
+}
+
+function parseGraderItem(raw: unknown): GraderResultItem | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  if (
+    typeof record.assertion !== 'string' ||
+    typeof record.passed !== 'boolean' ||
+    typeof record.evidence !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    assertion: record.assertion,
+    passed: record.passed,
+    evidence: record.evidence.trim(),
+    quote: typeof record.quote === 'string' ? record.quote.trim() : '',
+  };
+}
+
+function collapseWhitespace(text: string): string {
+  return text.replaceAll(/\s+/g, ' ').trim();
+}
+
+function failedString(assertion: string, evidence: string): GradedExpectation {
+  return { text: assertion, kind: 'string', passed: false, evidence };
+}
+
+export interface NormalizeGraderResultsParams {
+  assertions: readonly string[];
+  output: unknown;
+  /**
+   * Text the grader saw (response and workspace summary). When given, a passing
+   * result whose `quote` does not occur in it is downgraded to failed.
+   */
+  evidenceText?: string;
+}
+
+/**
+ * Matches grader results to assertions by exact text first. Results are taken
+ * by position only when the grader returned exactly one result per assertion
+ * and that slot was not already matched; anything else fails closed.
+ */
+export function normalizeGraderResults({
+  assertions,
+  output,
+  evidenceText,
+}: NormalizeGraderResultsParams): GradedExpectation[] {
   const rawResults =
-    typeof rawOutput === 'object' &&
-    rawOutput !== null &&
-    'results' in rawOutput &&
-    Array.isArray((rawOutput as Record<string, unknown>).results)
-      ? ((rawOutput as Record<string, unknown>).results as unknown[])
-      : [];
+    typeof output === 'object' &&
+    output !== null &&
+    Array.isArray((output as Record<string, unknown>).results)
+      ? ((output as Record<string, unknown>).results as unknown[])
+      : null;
+  if (rawResults === null) {
+    return assertions.map((assertion) =>
+      failedString(
+        assertion,
+        `${MALFORMED_GRADER_OUTPUT}: expected an object with a "results" array.`,
+      ),
+    );
+  }
 
-  return stringAssertions.map((assertion, index) => {
-    const matched =
-      rawResults.find(
-        (item) =>
-          typeof item === 'object' &&
-          item !== null &&
-          (item as Record<string, unknown>).assertion === assertion,
-      ) ?? rawResults[index];
+  const items = rawResults.map(parseGraderItem);
+  const used = new Set<number>();
+  const matched = new Array<GraderResultItem | undefined>(assertions.length);
 
-    if (typeof matched !== 'object' || matched === null) {
-      return {
-        text: assertion,
-        kind: 'string',
-        passed: false,
-        evidence: 'Grader did not return a result for this assertion.',
-      };
+  for (const [index, assertion] of assertions.entries()) {
+    const found = items.findIndex(
+      (item, position) =>
+        item !== null && !used.has(position) && item.assertion === assertion,
+    );
+    if (found !== -1) {
+      used.add(found);
+      matched[index] = items[found] ?? undefined;
     }
-
-    const record = matched as Record<string, unknown>;
-    const rawEvidence =
-      typeof record.evidence === 'string' ? record.evidence.trim() : '';
-    if (!rawEvidence) {
-      return {
-        text: assertion,
-        kind: 'string',
-        passed: false,
-        evidence: 'Grader provided no supporting evidence.',
-      };
+  }
+  if (items.length === assertions.length) {
+    for (const index of assertions.keys()) {
+      const item = items[index];
+      if (matched[index] === undefined && !used.has(index) && item) {
+        used.add(index);
+        matched[index] = item;
+      }
     }
+  }
 
+  const haystack =
+    evidenceText === undefined ? undefined : collapseWhitespace(evidenceText);
+
+  return assertions.map((assertion, index) => {
+    const item = matched[index];
+    if (item === undefined) {
+      return failedString(
+        assertion,
+        `${MALFORMED_GRADER_OUTPUT}: no result matched this assertion (${rawResults.length} results for ${assertions.length} assertions).`,
+      );
+    }
+    if (!item.evidence) {
+      return failedString(assertion, 'Grader provided no supporting evidence.');
+    }
+    if (
+      item.passed &&
+      item.quote &&
+      haystack !== undefined &&
+      !haystack.includes(collapseWhitespace(item.quote))
+    ) {
+      return failedString(
+        assertion,
+        `Unverified evidence: the quoted text was not found in the response or workspace files. ${item.evidence}`,
+      );
+    }
     return {
       text: assertion,
       kind: 'string',
-      passed: record.passed === true,
-      evidence: rawEvidence,
+      passed: item.passed,
+      evidence: item.evidence,
     };
   });
 }
 
-export interface GradeEvalRunParams {
-  evalCase: EvalCase;
-  workdir: string;
-  runDir: string;
+export interface RunFailureParams {
   taskResult: RunnerTaskResult;
-  runner: EvalRunner;
   timeoutSeconds: number;
-  env?: Environment;
 }
 
-export async function gradeEvalRun({
-  evalCase,
-  workdir,
-  runDir,
+/** Why the agent run failed, or undefined when it completed. */
+export function runFailure({
   taskResult,
-  runner,
   timeoutSeconds,
-  env,
-}: GradeEvalRunParams): Promise<{
+}: RunFailureParams): string | undefined {
+  if (taskResult.error) return taskResult.error;
+  if (taskResult.timedOut) return `Timed out after ${timeoutSeconds}s`;
+  return undefined;
+}
+
+export interface GradeResult {
   grading: GradingReport;
   timing: TimingReport;
-}> {
-  await mkdir(runDir, { recursive: true });
-  const scriptedByIndex = new Map<number, GradedExpectation>();
-  const stringAssertions: string[] = [];
+}
 
-  for (let index = 0; index < evalCase.assertions.length; index++) {
-    const assertion = evalCase.assertions[index];
-    if (assertion === undefined) continue;
-    if (typeof assertion === 'string') {
-      stringAssertions.push(assertion);
-    } else {
-      scriptedByIndex.set(
-        index,
-        await evaluateScriptedAssertion({
-          assertion,
-          workdir,
-          env,
-        }),
-      );
-    }
-  }
+interface WriteRunReportsParams {
+  runDir: string;
+  expectations: GradedExpectation[];
+  taskResult: RunnerTaskResult;
+  error?: string;
+}
 
-  let gradedStrings = new Map<string, GradedExpectation>();
-  if (stringAssertions.length > 0) {
-    const schemaPath = join(runDir, 'grader-schema.json');
-    await writeFile(
-      schemaPath,
-      `${JSON.stringify(GRADER_JSON_SCHEMA, null, 2)}\n`,
-    );
-    const workspaceSummary = await listWorkspaceSummary({ workdir });
-    const prompt = buildBlindGraderPrompt({
-      evalCase,
-      response: taskResult.response,
-      workspaceSummary,
-      stringAssertions,
-    });
-    const graderResult = await runner.runGrader({
-      prompt,
-      schemaPath,
-      schema: GRADER_JSON_SCHEMA,
-      workdir,
-      runDir,
-      timeoutSeconds,
-    });
-    const normalized = normalizeGraderResults(
-      stringAssertions,
-      graderResult.output,
-    );
-    gradedStrings = new Map(normalized.map((item) => [item.text, item]));
-  }
-
-  const expectations: GradedExpectation[] = evalCase.assertions.map(
-    (assertion, index) => {
-      if (typeof assertion === 'string') {
-        return (
-          gradedStrings.get(assertion) ?? {
-            text: assertion,
-            kind: 'string',
-            passed: false,
-            evidence: 'Grader did not return a result for this assertion.',
-          }
-        );
-      }
-      return (
-        scriptedByIndex.get(index) ?? {
-          text: formatAssertionLabel(assertion),
-          kind: assertion.type,
-          passed: false,
-          evidence: 'Scripted assertion was not evaluated.',
-        }
-      );
-    },
-  );
-
+async function writeRunReports({
+  runDir,
+  expectations,
+  taskResult,
+  error,
+}: WriteRunReportsParams): Promise<GradeResult> {
   const passed = expectations.filter((item) => item.passed).length;
   const total = expectations.length;
   const failed = total - passed;
-  const passRate = total === 0 ? 1 : Number((passed / total).toFixed(4));
+  // Stored exactly; reports round when rendering.
+  const passRate = total === 0 ? 1 : passed / total;
 
   const grading: GradingReport = {
     expectations,
@@ -521,15 +864,19 @@ export async function gradeEvalRun({
 
   const timing: TimingReport = {
     duration_ms: taskResult.durationMs,
-    total_duration_seconds: Number((taskResult.durationMs / 1000).toFixed(3)),
+    total_duration_seconds: taskResult.durationMs / 1000,
     input_tokens: taskResult.usage.input_tokens,
     output_tokens: taskResult.usage.output_tokens,
     total_tokens: taskResult.usage.total_tokens,
     triggered: taskResult.triggered,
     exit_code: taskResult.exitCode,
     timed_out: taskResult.timedOut,
+    usage_reported:
+      taskResult.usageReported ?? taskResult.usage.total_tokens > 0,
+    ...(error === undefined ? {} : { error }),
   };
 
+  await mkdir(runDir, { recursive: true });
   await writeFile(
     join(runDir, 'grading.json'),
     `${JSON.stringify(grading, null, 2)}\n`,
@@ -540,4 +887,195 @@ export async function gradeEvalRun({
   );
 
   return { grading, timing };
+}
+
+function failedExpectations(
+  evalCase: EvalCase,
+  evidence: string,
+): GradedExpectation[] {
+  return evalCase.assertions.map((assertion) => ({
+    text: formatAssertionLabel(assertion),
+    kind: typeof assertion === 'string' ? 'string' : assertion.type,
+    passed: false,
+    evidence,
+  }));
+}
+
+export interface RecordFailedRunParams {
+  evalCase: EvalCase;
+  runDir: string;
+  error: string;
+  durationMs: number;
+}
+
+/**
+ * Records a run whose agent could not run at all (the runner threw): every
+ * assertion fails and timing carries the error.
+ */
+export async function recordFailedRun({
+  evalCase,
+  runDir,
+  error,
+  durationMs,
+}: RecordFailedRunParams): Promise<GradeResult> {
+  return writeRunReports({
+    runDir,
+    expectations: failedExpectations(evalCase, `Agent run failed: ${error}`),
+    taskResult: {
+      response: '',
+      triggered: false,
+      durationMs,
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+      exitCode: 1,
+      timedOut: false,
+      rawStdout: '',
+      rawStderr: '',
+      usageReported: false,
+    },
+    error,
+  });
+}
+
+export interface GradeEvalRunParams {
+  evalCase: EvalCase;
+  workdir: string;
+  runDir: string;
+  taskResult: RunnerTaskResult;
+  runner: EvalRunner;
+  timeoutSeconds: number;
+  env: Environment;
+}
+
+export async function gradeEvalRun({
+  evalCase,
+  workdir,
+  runDir,
+  taskResult,
+  runner,
+  timeoutSeconds,
+  env,
+}: GradeEvalRunParams): Promise<GradeResult> {
+  await mkdir(runDir, { recursive: true });
+
+  const failure = runFailure({ taskResult, timeoutSeconds });
+  if (failure !== undefined) {
+    return writeRunReports({
+      runDir,
+      expectations: failedExpectations(
+        evalCase,
+        `Agent run failed: ${failure}`,
+      ),
+      taskResult,
+      error: failure,
+    });
+  }
+
+  const scriptedByIndex = new Map<number, GradedExpectation>();
+  const stringAssertions: string[] = [];
+  const stringIndexes: number[] = [];
+
+  for (const [index, assertion] of evalCase.assertions.entries()) {
+    if (typeof assertion === 'string') {
+      stringAssertions.push(assertion);
+      stringIndexes.push(index);
+    } else {
+      scriptedByIndex.set(
+        index,
+        await evaluateScriptedAssertion({
+          assertion,
+          workdir,
+          env,
+        }),
+      );
+    }
+  }
+
+  const gradedStrings = new Map<number, GradedExpectation>();
+  if (stringAssertions.length > 0) {
+    const schemaPath = join(runDir, 'grader-schema.json');
+    await writeFile(
+      schemaPath,
+      `${JSON.stringify(GRADER_JSON_SCHEMA, null, 2)}\n`,
+    );
+    const response = capResponse(taskResult.response);
+    // Whatever the fixed parts of the prompt leave, up to the summary budget.
+    const fixedBytes = byteLength(
+      buildBlindGraderPrompt({
+        evalCase,
+        response,
+        workspaceSummary: [],
+        stringAssertions,
+      }),
+    );
+    const workspaceSummary = await summarizeWorkspace({
+      workdir,
+      budget: Math.max(
+        0,
+        Math.min(
+          WORKSPACE_SUMMARY_BUDGET,
+          PROMPT_BUDGET_BYTES - fixedBytes - 2 * LISTING_BUDGET_BYTES,
+        ),
+      ),
+    });
+    const prompt = buildBlindGraderPrompt({
+      evalCase,
+      response,
+      workspaceSummary,
+      stringAssertions,
+    });
+    // The grader runs in an empty temporary folder whose path names neither
+    // the variant nor the run, away from the workspace it could otherwise
+    // read (revealing the variant) or change. Its logs stay in runDir.
+    const graderDir = await mkdtemp(join(tmpdir(), GRADER_DIR_PREFIX));
+    let normalized: GradedExpectation[];
+    try {
+      const graderResult = await runner.runGrader({
+        prompt,
+        schemaPath,
+        schema: GRADER_JSON_SCHEMA,
+        workdir: graderDir,
+        runDir,
+        timeoutSeconds,
+      });
+      normalized = normalizeGraderResults({
+        assertions: stringAssertions,
+        output: graderResult.output,
+        evidenceText: [response, ...workspaceSummary].join('\n'),
+      });
+    } catch (error) {
+      normalized = stringAssertions.map((assertion) =>
+        failedString(assertion, `Grader error: ${errorMessage(error)}`),
+      );
+    } finally {
+      await rm(graderDir, { recursive: true, force: true });
+    }
+    for (const [position, item] of normalized.entries()) {
+      const index = stringIndexes[position];
+      if (index !== undefined) gradedStrings.set(index, item);
+    }
+  }
+
+  const expectations: GradedExpectation[] = evalCase.assertions.map(
+    (assertion, index) => {
+      if (typeof assertion === 'string') {
+        return (
+          gradedStrings.get(index) ??
+          failedString(
+            assertion,
+            'Grader did not return a result for this assertion.',
+          )
+        );
+      }
+      return (
+        scriptedByIndex.get(index) ?? {
+          text: formatAssertionLabel(assertion),
+          kind: assertion.type,
+          passed: false,
+          evidence: 'Scripted assertion was not evaluated.',
+        }
+      );
+    },
+  );
+
+  return writeRunReports({ runDir, expectations, taskResult });
 }

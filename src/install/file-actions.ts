@@ -1,19 +1,16 @@
-import { basename } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import {
   lstatIfExists,
-  readTextIfExists,
+  readSymlink,
   resolveIfSymlink,
   statIfExists,
 } from './fs.ts';
-import { ensureLine, hasLine } from './import-line.ts';
-import {
-  ensureArrayValues,
-  parseJsonObject,
-  serializeJson,
-} from './json-merge.ts';
+import { ensureLine, hasLine, removeLine } from './import-line.ts';
+import { ensureArrayValues } from './json-merge.ts';
+import { isBlank } from './lines.ts';
 import {
   excludeMarkers,
   MARKDOWN_MARKERS,
@@ -23,12 +20,13 @@ import {
   conflict,
   fileKindProblem,
   leftInPlace,
-  linksTo,
   locationProblem,
   NONE,
   type PlannedAction,
+  sameFile,
   type TargetLabel,
 } from './safety.ts';
+import { readStaged, type StagedContents } from './staged.ts';
 import type {
   ExcludeRegionTarget,
   FileTarget,
@@ -87,17 +85,23 @@ function wasCreated(
 
 interface RegionPreambleParams {
   target: RegionTarget;
-  existing: string | null;
+  file: ResolvedTargetFile;
   previous: ManifestEntry | null;
 }
 
 function regionPreamble({
   target,
-  existing,
+  file,
   previous,
 }: RegionPreambleParams): string | undefined {
-  if (existing === null) return target.preamble;
-  return previous?.kind === 'region' ? previous.preamble : undefined;
+  // A file reached through a link is not the CLI's, so neither is its heading.
+  if (file.writePath !== target.path) return undefined;
+  const { existing } = file;
+  if (existing === null || isBlank(existing)) return target.preamble;
+  const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
+  return preamble && existing.trimStart().startsWith(preamble)
+    ? preamble
+    : undefined;
 }
 
 interface FileActionParams<T extends FileTarget> {
@@ -112,17 +116,16 @@ function planRegion({
   previous,
 }: FileActionParams<RegionTarget>): PlannedAction {
   try {
+    // A heading is only written into a file the CLI may own, never through a
+    // link, so install and removal agree on who owns it.
+    const ownsHeading = file.writePath === target.path;
     const next = upsertRegion({
       existing: file.existing,
       body: target.body,
       markers: MARKDOWN_MARKERS,
-      ...(target.preamble ? { preamble: target.preamble } : {}),
+      ...(target.preamble && ownsHeading ? { preamble: target.preamble } : {}),
     });
-    const preamble = regionPreamble({
-      target,
-      existing: file.existing,
-      previous,
-    });
+    const preamble = regionPreamble({ target, file, previous });
     const entry: ManifestEntry = {
       kind: 'region',
       path: target.path,
@@ -188,6 +191,31 @@ function planLine({
   });
 }
 
+type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
+
+interface CreatedShape {
+  createdKeys?: number;
+  original?: string;
+}
+
+function shapeOf({ createdKeys, original }: CreatedShape): CreatedShape {
+  return {
+    ...(createdKeys === undefined ? {} : { createdKeys }),
+    ...(original === undefined ? {} : { original }),
+  };
+}
+
+function createdShape(
+  earlier: JsonArrayEntry | null,
+  result: CreatedShape & { createdKeys: number },
+): CreatedShape {
+  if (!earlier) return shapeOf(result);
+  if (earlier.createdKeys === undefined) {
+    return result.createdKeys > 0 ? shapeOf(result) : {};
+  }
+  return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
+}
+
 function planJsonArray({
   target,
   file,
@@ -195,7 +223,7 @@ function planJsonArray({
 }: FileActionParams<JsonArrayTarget>): PlannedAction {
   try {
     const result = ensureArrayValues({
-      doc: parseJsonObject(file.existing),
+      existing: file.existing,
       keyPath: target.key,
       values: target.values,
     });
@@ -208,20 +236,23 @@ function planJsonArray({
         ...result.added,
       ]),
     ];
-    const next =
-      file.existing === null || result.added.length > 0
-        ? serializeJson(result.doc, file.existing)
-        : file.existing;
     return writeAction({
       target,
       file,
-      next,
+      next: result.content,
       entry: {
         kind: 'json-array',
         path: target.path,
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
+        ...createdShape(earlier, result),
+        ...((earlier ? earlier.wasEmpty : result.wasEmpty)
+          ? { wasEmpty: true }
+          : {}),
+        ...((earlier ? earlier.blankText : result.blankText) !== undefined
+          ? { blankText: earlier ? earlier.blankText : result.blankText }
+          : {}),
         createdFile: file.createdFile,
       },
       previous,
@@ -237,31 +268,19 @@ function planJsonArray({
 export interface PlanFileParams {
   target: FileTarget;
   previous: ManifestEntry | null;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function resolveTargetFile({
   target,
   previous,
+  staged,
   boundary,
 }: PlanFileParams): Promise<PlannedAction | ResolvedTargetFile> {
   let writePath = target.path;
   const stats = await lstatIfExists(target.path);
   if (stats?.isSymbolicLink()) {
-    if (
-      target.kind === 'line' &&
-      target.satisfiedBy &&
-      (await linksTo({ link: target.path, destination: target.satisfiedBy }))
-    ) {
-      return {
-        path: target.path,
-        label: `${target.label} (links to ${basename(target.satisfiedBy)})`,
-        status: 'unchanged',
-        change: NONE,
-        entry: null,
-        previous,
-      };
-    }
     const resolved = await resolveIfSymlink(target.path);
     if (resolved === null) {
       return conflict({
@@ -287,11 +306,74 @@ async function resolveTargetFile({
     return conflict({ target, previous, reason: kindProblem });
   }
 
-  const existing = await readTextIfExists(writePath);
+  const { current, onDisk } = await readStaged({ staged, path: writePath });
   return {
     writePath,
-    existing,
-    createdFile: wasCreated(existing, previous),
+    existing: current,
+    createdFile: writePath === target.path && wasCreated(onDisk, previous),
+  };
+}
+
+interface PlanSatisfiedLineParams extends PlanFileParams {
+  target: LineTarget;
+  satisfiedBy: string;
+}
+
+interface SameFileNoteParams {
+  path: string;
+  other: string;
+}
+
+async function pointsAt({ path, other }: SameFileNoteParams): Promise<boolean> {
+  const link = await readSymlink(path);
+  return link !== null && resolve(dirname(path), link) === other;
+}
+
+async function sameFileNote({
+  path,
+  other,
+}: SameFileNoteParams): Promise<string> {
+  const name = basename(other);
+  if (await pointsAt({ path, other })) return `links to ${name}`;
+  if (await pointsAt({ path: other, other: path })) return `${name} links here`;
+  return `same file as ${name}`;
+}
+
+async function planSatisfiedLine({
+  target,
+  previous,
+  satisfiedBy,
+  ...rest
+}: PlanSatisfiedLineParams): Promise<PlannedAction> {
+  const unchanged: PlannedAction = {
+    path: target.path,
+    label: `${target.label} (${await sameFileNote({ path: target.path, other: satisfiedBy })})`,
+    status: 'unchanged',
+    change: NONE,
+    entry: null,
+    previous,
+  };
+  if (previous?.kind !== 'line' || !previous.added) return unchanged;
+
+  const resolved = await resolveTargetFile({ target, previous, ...rest });
+  if ('status' in resolved) return resolved;
+  if (
+    resolved.existing === null ||
+    !hasLine({ content: resolved.existing, line: target.line })
+  ) {
+    return unchanged;
+  }
+  return {
+    ...unchanged,
+    ...(resolved.writePath !== target.path
+      ? { writePath: resolved.writePath }
+      : {}),
+    status: 'update',
+    change: {
+      type: 'write',
+      content: removeLine({ existing: resolved.existing, line: target.line }),
+    },
+    reason: 'removes an import of the file itself',
   };
 }
 
@@ -300,6 +382,18 @@ export async function planFile({
   previous,
   ...rest
 }: PlanFileParams): Promise<PlannedAction> {
+  if (
+    target.kind === 'line' &&
+    target.satisfiedBy !== undefined &&
+    (await sameFile({ path: target.path, other: target.satisfiedBy }))
+  ) {
+    return planSatisfiedLine({
+      target,
+      previous,
+      satisfiedBy: target.satisfiedBy,
+      ...rest,
+    });
+  }
   const resolved = await resolveTargetFile({ target, previous, ...rest });
   if ('status' in resolved) return resolved;
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -237,5 +238,55 @@ test('warns when a referenced file links to further references', async (t) => {
 
   assert.deepEqual(report.warnings, [
     'references/api.md links to references/errors.md; keep references one level deep from SKILL.md',
+  ]);
+});
+
+test('links that are absolute or leave the skill folder are errors', async (t) => {
+  const root = await tempDir(t);
+  const dir = await skillDir({
+    root,
+    folder: 'linked',
+    files: { 'SKILL.md': skillSource('linked'), 'docs/guide.md': 'g\n' },
+  });
+  await symlink('/etc/hosts', join(dir, 'hosts'));
+  await symlink('../../shared', join(dir, 'docs', 'shared'));
+
+  const report = await validateSkill(dir, { strict: false });
+
+  assert.deepEqual(report.errors, [
+    'docs/shared does not resolve inside the skill folder (../../shared); links must be relative and stay inside it',
+    'hosts does not resolve inside the skill folder (/etc/hosts); links must be relative and stay inside it',
+  ]);
+});
+
+test('links that stay inside the skill folder are allowed', async (t) => {
+  const root = await tempDir(t);
+  const dir = await skillDir({
+    root,
+    folder: 'linked',
+    files: { 'SKILL.md': skillSource('linked'), 'docs/guide.md': 'g\n' },
+  });
+  await symlink('docs/guide.md', join(dir, 'guide.md'));
+  await symlink('../guide.md', join(dir, 'docs', 'again.md'));
+
+  const report = await validateSkill(dir, { strict: true });
+
+  assert.deepEqual(report.errors, []);
+});
+
+test('a link chain that leaves the skill folder is an error', async (t) => {
+  const root = await tempDir(t);
+  const dir = await skillDir({
+    root,
+    folder: 'linked',
+    files: { 'SKILL.md': skillSource('linked'), 'deep/file.md': 'f\n' },
+  });
+  await symlink('..', join(dir, 'deep', 'up'));
+  await symlink('deep/up/../../secret.txt', join(dir, 'leak'));
+
+  const report = await validateSkill(dir, { strict: false });
+
+  assert.deepEqual(report.errors, [
+    'leak does not resolve inside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
   ]);
 });

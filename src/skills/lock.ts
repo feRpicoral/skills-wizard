@@ -1,13 +1,13 @@
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 
 import { z } from 'zod';
 
 import type { Paths } from '../env.ts';
 import { readTextIfExists } from '../install/fs.ts';
-import { WHOLE_REPOSITORY } from './catalog.ts';
+import { isRepository, isRepositoryPath, WHOLE_REPOSITORY } from './catalog.ts';
+import { SKILL_FILE } from './validate.ts';
 
 const LOCK_FILE = '.skill-lock.json';
-const GITHUB_REPOSITORY = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 
 const lockSchema = z.looseObject({
   skills: z.record(
@@ -29,15 +29,27 @@ export function skillLockPath(paths: Paths): string {
   return join(dirname(paths.skillsDir), LOCK_FILE);
 }
 
-function upstreamOf(entry: z.infer<typeof lockSchema>['skills'][string]) {
+function skillFolder(skillPath: string | undefined): string | null {
+  if (!skillPath) return WHOLE_REPOSITORY;
+  if (skillPath.includes('\\')) return null;
+  const file = posix.normalize(skillPath);
+  if (posix.basename(file) !== SKILL_FILE) return null;
+  const folder = posix.dirname(file);
+  return isRepositoryPath(folder) ? folder : null;
+}
+
+function upstreamOf(
+  entry: z.infer<typeof lockSchema>['skills'][string],
+): LockedSkill {
   if (
     entry.sourceType !== 'github' ||
     !entry.source ||
-    !GITHUB_REPOSITORY.test(entry.source)
+    !isRepository(entry.source)
   ) {
     return {};
   }
-  const folder = entry.skillPath ? dirname(entry.skillPath) : WHOLE_REPOSITORY;
+  const folder = skillFolder(entry.skillPath);
+  if (folder === null) return {};
   return { repo: entry.source, path: folder };
 }
 

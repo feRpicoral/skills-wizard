@@ -5,11 +5,12 @@ import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import type { PresetId, ProjectStyle } from '../project/presets.ts';
 import type { SkillMode, SkillSource } from '../skills/install.ts';
-import type { Manifest } from '../state/manifest.ts';
+import type { Manifest, SkillFolders } from '../state/manifest.ts';
 import {
   orderedTools,
   type ToolDefinition,
   type ToolId,
+  TOOLS,
 } from '../tools/registry.ts';
 import { isInside } from './fs.ts';
 
@@ -317,6 +318,13 @@ function projectToolTargets({
   return targets;
 }
 
+function gitignorePattern(path: string): string {
+  const escaped = path
+    .replace(/[[\]*?\\]/g, '\\$&')
+    .replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length));
+  return `/${escaped}`;
+}
+
 interface GitExcludeTargetParams {
   root: string;
   excludePath: string;
@@ -333,7 +341,7 @@ function gitExcludeTarget({
   manifestPath,
 }: GitExcludeTargetParams): ExcludeRegionTarget {
   const patterns = [...targets.map((target) => target.path), manifestPath]
-    .map((path) => `/${relative(root, path)}`)
+    .map((path) => gitignorePattern(relative(root, path)))
     .join('\n');
   return {
     kind: 'exclude-region',
@@ -383,4 +391,25 @@ function projectTargets(input: PlanInput): Target[] {
 export function targetsForPlan({ scope, ...rest }: PlanInput): Target[] {
   const input: PlanInput = { scope, ...rest };
   return scope === 'global' ? globalTargets(input) : projectTargets(input);
+}
+
+export function skillFolders({
+  scope,
+  paths,
+  project,
+}: Pick<PlanInput, 'scope' | 'paths' | 'project'>): SkillFolders | null {
+  const tools = Object.values(TOOLS);
+  if (scope === 'global') {
+    return {
+      copies: paths.skillsDir,
+      links: tools.flatMap((tool) => tool.global.skills?.(paths) ?? []),
+    };
+  }
+  if (!project) return null;
+  return {
+    copies: join(project.dir, PROJECT_SKILLS_DIR),
+    links: tools.flatMap((tool) =>
+      tool.project.skills ? [join(project.dir, tool.project.skills)] : [],
+    ),
+  };
 }

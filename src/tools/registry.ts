@@ -31,8 +31,10 @@ export interface ToolDefinition {
   global: {
     instructions: (paths: Paths) => string;
     skills?: (paths: Paths) => string;
+    extraSkills?: (paths: Paths) => string[];
     settings?: (paths: Paths) => ArraySetting;
     shadowedBy?: (paths: Paths) => string;
+    alsoLoads?: (paths: Paths) => string[];
     limits?: SizeLimits;
   };
   project: {
@@ -49,6 +51,14 @@ const ANTIGRAVITY_RULE_LIMITS: SizeLimits = { bytes: 24_000 };
 const sharedGeminiInstructions = (paths: Paths) =>
   join(paths.geminiHome, 'AGENTS.md');
 
+const geminiContextFile = (paths: Paths) => join(paths.geminiHome, 'GEMINI.md');
+
+const antigravityExtraFiles = (paths: Paths) => [
+  geminiContextFile(paths),
+  join(paths.geminiHome, 'config', 'AGENTS.md'),
+  join(paths.geminiHome, 'config', 'GEMINI.md'),
+];
+
 export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
   antigravity: {
     id: 'antigravity',
@@ -63,6 +73,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     global: {
       instructions: sharedGeminiInstructions,
       skills: (paths) => join(paths.geminiHome, 'config', 'skills'),
+      alsoLoads: antigravityExtraFiles,
       limits: ANTIGRAVITY_RULE_LIMITS,
     },
     project: {},
@@ -77,6 +88,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     global: {
       instructions: sharedGeminiInstructions,
       skills: (paths) => join(paths.geminiHome, 'antigravity-cli', 'skills'),
+      alsoLoads: antigravityExtraFiles,
       limits: ANTIGRAVITY_RULE_LIMITS,
     },
     project: {},
@@ -87,6 +99,8 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     detect: { dirs: () => [], bins: ['gemini'] },
     global: {
       instructions: sharedGeminiInstructions,
+      extraSkills: (paths) => [join(paths.geminiHome, 'skills')],
+      alsoLoads: (paths) => [geminiContextFile(paths)],
       settings: (paths) => ({
         file: join(paths.geminiHome, 'settings.json'),
         key: 'context.fileName',
@@ -132,6 +146,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     global: {
       instructions: (paths) =>
         join(paths.copilotHome, 'copilot-instructions.md'),
+      extraSkills: (paths) => [join(paths.copilotHome, 'skills')],
     },
     project: {},
   },
