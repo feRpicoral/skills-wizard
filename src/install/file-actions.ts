@@ -292,6 +292,9 @@ function planJsonArray({
         ...((earlier ? earlier.wasEmpty : result.wasEmpty)
           ? { wasEmpty: true }
           : {}),
+        ...((earlier ? earlier.blankText : result.blankText) !== undefined
+          ? { blankText: earlier ? earlier.blankText : result.blankText }
+          : {}),
         createdFile: file.createdFile,
       },
       previous,

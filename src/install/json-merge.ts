@@ -107,6 +107,8 @@ interface EnsureResult {
   added: string[];
   wasString: boolean;
   wasEmpty: boolean;
+  /** The whitespace a blank file held, so removal can put it back. */
+  blankText?: string;
   createdKeys: number;
   original?: string;
 }
@@ -181,11 +183,13 @@ export function ensureArrayValues({
     added.length > 0 && existing !== null && !isBlank(existing)
       ? originalText({ existing, keys, createdKeys })
       : undefined;
+  const wasEmpty = added.length > 0 && existing !== null && isBlank(existing);
   return {
     content,
     added,
     wasString: typeof original === 'string',
-    wasEmpty: added.length > 0 && existing !== null && isBlank(existing),
+    wasEmpty,
+    ...(wasEmpty && existing ? { blankText: existing } : {}),
     createdKeys,
     ...(raw === undefined ? {} : { original: raw }),
   };
