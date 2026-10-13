@@ -33,6 +33,10 @@ export interface RunnerTaskResult {
   timedOut: boolean;
   rawStdout: string;
   rawStderr: string;
+  /** Why the run failed (timeout, non-zero exit, missing or error result). */
+  error?: string;
+  /** Whether the CLI reported token usage; defaults to `total_tokens > 0`. */
+  usageReported?: boolean;
 }
 
 export interface RunnerGraderRequest {
@@ -62,6 +66,8 @@ export interface EvalRunner {
   readonly name: EvalRunnerName;
   runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult>;
   runGrader(request: RunnerGraderRequest): Promise<RunnerGraderResult>;
+  /** Fails fast (RunnerError) when the runner cannot start, e.g. a missing binary. */
+  preflight?(): Promise<void>;
 }
 
 export interface SpawnRunnerProcessParams {
