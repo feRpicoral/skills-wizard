@@ -868,6 +868,57 @@ test('the claude runner passes a dash-leading prompt through unchanged after --'
   assert.deepEqual(argv.slice(-2), ['--', '--version please']);
 });
 
+test('the gemini runner trusts the eval workspace through GEMINI_CLI_TRUST_WORKSPACE for task and grader runs', async (t) => {
+  const root = await tempDir(t);
+  const logFile = join(root, 'calls.jsonl');
+  const binary = await stubBinary(
+    root,
+    'gemini',
+    [
+      '#!/usr/bin/env node',
+      "const { appendFileSync } = require('node:fs');",
+      'const args = process.argv.slice(2);',
+      `appendFileSync(${JSON.stringify(logFile)}, JSON.stringify({ args, trust: process.env.GEMINI_CLI_TRUST_WORKSPACE ?? null }) + '\\n');`,
+      "if (args.includes('--output-format=json')) {",
+      '  console.log(JSON.stringify({ response: JSON.stringify({ results: [] }), stats: { models: {} } }));',
+      '} else {',
+      "  console.log(JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 1, output_tokens: 1, total_tokens: 2, duration_ms: 5 } }));",
+      '}',
+      '',
+    ].join('\n'),
+  );
+  const runner = createEvalRunner({ runner: 'gemini', binary, env: STUB_ENV });
+
+  const task = await runner.runTask({
+    prompt: 'do it',
+    workdir: root,
+    runDir: join(root, 'run'),
+    skillName: 'demo-skill',
+    timeoutSeconds: 10,
+  });
+  await runner.runGrader({
+    prompt: 'grade it',
+    schemaPath: join(root, 'schema.json'),
+    schema: {},
+    workdir: root,
+    runDir: join(root, 'run'),
+    timeoutSeconds: 10,
+  });
+  const calls = (await readFile(logFile, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { args: string[]; trust: string });
+
+  assert.equal(task.error, undefined);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.trust, 'true');
+    // Older Gemini CLI versions reject unknown flags such as --skip-trust.
+    assert.equal(call.args.includes('--skip-trust'), false);
+  }
+  assert.equal('GEMINI_CLI_TRUST_WORKSPACE' in STUB_ENV, false);
+});
+
 test('agy does not retry task runs but retries grader runs', async (t) => {
   const root = await tempDir(t);
   const counter = join(root, 'count');

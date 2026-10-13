@@ -21,10 +21,11 @@ Gemini CLI also reads `~/.gemini/skills/` and Copilot also reads `$COPILOT_HOME/
 
 `agents-config skill eval` and `skill triggers` drive one agent CLI per run (`--runner agy|claude|codex|gemini`, auto-detected on `PATH` in that order, or `fake` for a dry run that calls no agent). `--binary <path>` overrides the runner's executable.
 
-| Variable         | Used by     | Meaning                                                                                                                          |
-| ---------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `AGY_BIN`        | `agy` evals | Absolute path to the `agy` binary. When it names an existing file, auto-detection picks `agy`. `--binary` wins over it.          |
-| `AGY_EXTRA_ARGS` | `agy` evals | JSON array of strings appended to every `agy` task and grader invocation, for example `["--model=…"]`. Read only for `agy` runs. |
+| Variable                     | Used by        | Meaning                                                                                                                                             |
+| ---------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGY_BIN`                    | `agy` evals    | Absolute path to the `agy` binary. When it names an existing file, auto-detection picks `agy`. `--binary` wins over it.                             |
+| `AGY_EXTRA_ARGS`             | `agy` evals    | JSON array of strings appended to every `agy` task and grader invocation, for example `["--model=…"]`. Read only for `agy` runs.                    |
+| `GEMINI_CLI_TRUST_WORKSPACE` | `gemini` evals | Not read: the CLI sets it to `true` for every `gemini` run so a headless run trusts the temporary workspace when `security.folderTrust` is enabled. |
 
 Eval runs use your real home directory, so each agent CLI reads its usual settings, credentials and system-wide skills. They are not confined to the temporary workspace: `--sandbox` is passed only to runners that support it, and the CLI prints a warning when the selected runner cannot honor it.
 
@@ -38,4 +39,5 @@ Eval runs use your real home directory, so each agent CLI reads its usual settin
 - [Codex AGENTS.md](https://developers.openai.com/codex/guides/agents-md)
 - [Copilot customization](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
 - [Gemini CLI agent skills](https://geminicli.com/docs/cli/skills)
+- [Gemini CLI trusted folders](https://geminicli.com/docs/cli/trusted-folders)
 - [Copilot agent skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills)
