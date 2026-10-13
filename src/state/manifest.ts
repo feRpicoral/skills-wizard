@@ -1,8 +1,15 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 
 import { z } from 'zod';
 
-import { SCOPES } from '../blocks/library.ts';
+import { type Scope, SCOPES } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import { ManifestError } from '../errors.ts';
 import {
@@ -137,6 +144,45 @@ function resolveProjectEntry(
     throw new ManifestError(`${file}: ${entry.path} is outside the project`);
   }
   return { ...entry, path };
+}
+
+export interface SkillFolders {
+  copies: string;
+  links: readonly string[];
+}
+
+interface CheckSkillEntriesParams {
+  file: string;
+  entries: readonly ManifestEntry[];
+  folders: SkillFolders;
+  scope: Scope;
+}
+
+export function checkSkillEntries({
+  file,
+  entries,
+  folders,
+  scope,
+}: CheckSkillEntriesParams): void {
+  for (const entry of entries) {
+    if (entry.kind === 'skill') {
+      const expected = join(folders.copies, entry.name);
+      if (entry.path !== expected) {
+        throw new ManifestError(
+          `${file}: the ${entry.name} skill must be recorded at ${expected}, not ${entry.path}`,
+        );
+      }
+    }
+    if (entry.kind === 'symlink') {
+      const inSkillsFolder = folders.links.includes(dirname(entry.path));
+      if (!inSkillsFolder && scope === 'global') continue;
+      if (!inSkillsFolder || !isSkillName(basename(entry.path))) {
+        throw new ManifestError(
+          `${file}: ${entry.path} is not a skill link in a tool skills folder`,
+        );
+      }
+    }
+  }
 }
 
 export function serializeManifest(

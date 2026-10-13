@@ -1,6 +1,7 @@
 import { requiredVariables, selectBlocks } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import {
+  checkSkillEntries,
   type Manifest,
   MANIFEST_VERSION,
   type ManifestEntry,
@@ -23,6 +24,7 @@ import {
   type PlanInput,
   type ProjectContext,
   type Selection,
+  skillFolders,
   type Target,
   targetsForPlan,
 } from './targets.ts';
@@ -217,6 +219,15 @@ export async function buildPlan({
     manifestPath,
     ...(boundary ? { boundary } : {}),
   });
+  const folders = skillFolders(input);
+  if (previous && folders) {
+    checkSkillEntries({
+      file: manifestPath,
+      entries: previous.entries,
+      folders,
+      scope,
+    });
+  }
 
   const previousEntries = new Map(
     (previous?.entries ?? []).map((entry) => [keyOf(entry), entry]),
