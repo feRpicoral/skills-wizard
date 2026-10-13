@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   realpath,
+  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -12,7 +13,8 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import type { Context } from '../context.ts';
-import { CatalogError, UsageError } from '../errors.ts';
+import { CatalogError, EnvironmentError, UsageError } from '../errors.ts';
+import { createFakeRunner } from '../evals/runners/index.ts';
 import { loadCatalog } from '../skills/catalog.ts';
 import { sourceCommit } from '../skills/sources.ts';
 import { readProjects, recordProject } from '../state/projects.ts';
@@ -26,7 +28,7 @@ import {
 import { createUpstream, isolatedGitEnv } from '../test-support/git.ts';
 import { runAdopt } from './adopt.ts';
 import { runInit } from './init.ts';
-import { runSkill } from './skill.ts';
+import { runSkill, warnUnsupportedSandbox } from './skill.ts';
 import { runUpdate } from './update.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
@@ -793,4 +795,134 @@ test('adopt refuses a skill linked to a folder with a different name', async (t)
       await lstat(join(ctx.paths.claudeHome, 'skills', 'mermaid-x', 'SKILL.md'))
     ).isFile(),
   );
+});
+
+test('skill report <name> <iteration-dir> resolves the iteration under that skill evals', async (t) => {
+  const { ctx, output } = await testContext(t);
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['report-skill'],
+    withEvals: true,
+  });
+  const evalOptions = {
+    subcommand: 'eval',
+    paths: ['report-skill'],
+    runner: 'fake',
+    baseline: false,
+  };
+  await runSkill(ctx, evalOptions);
+  await runSkill(ctx, evalOptions);
+  const skillEvals = join(ctx.paths.evalsDir, 'report-skill');
+  await rm(join(skillEvals, 'iteration-1', 'report.md'));
+  await rm(join(skillEvals, 'iteration-2', 'report.md'));
+  output.length = 0;
+
+  const code = await runSkill(ctx, {
+    subcommand: 'report',
+    paths: ['report-skill', 'iteration-1'],
+  });
+
+  assert.equal(code, 0);
+  await lstat(join(skillEvals, 'iteration-1', 'report.md'));
+  await assert.rejects(lstat(join(skillEvals, 'iteration-2', 'report.md')), {
+    code: 'ENOENT',
+  });
+  assert.match(output.join('\n'), /iteration-1\/report\.md/);
+});
+
+test('skill report validates the skill name and keeps the iteration inside its evals', async (t) => {
+  const { ctx } = await testContext(t);
+
+  await assert.rejects(
+    runSkill(ctx, { subcommand: 'report', paths: ['../x', 'iteration-1'] }),
+    /Invalid skill name/,
+  );
+  await assert.rejects(
+    runSkill(ctx, { subcommand: 'report', paths: ['Not A Skill'] }),
+    UsageError,
+  );
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'report',
+      paths: ['demo', '../other/iteration-1'],
+    }),
+    /must be inside the demo evals directory/,
+  );
+});
+
+test('skill new --with-evals asserts on the output the starter task produces', async (t) => {
+  const { ctx, repoRoot } = await testContext(t);
+
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['starter-skill'],
+    withEvals: true,
+  });
+  const suite = JSON.parse(
+    await readFile(
+      join(repoRoot, 'skills', 'starter-skill', 'evals', 'evals.json'),
+      'utf8',
+    ),
+  ) as { evals: { assertions: unknown[] }[] };
+  const triggers = await readFile(
+    join(repoRoot, 'skills', 'starter-skill', 'evals', 'trigger_queries.json'),
+    'utf8',
+  );
+
+  assert.deepEqual(suite.evals[0]?.assertions.slice(1), [
+    { type: 'file_exists', path: 'output.md' },
+  ]);
+  assert.doesNotMatch(triggers, /\[negative\]/);
+});
+
+test('--sandbox warns when the runner cannot sandbox its runs', async (t) => {
+  const { ctx, output } = await testContext(t);
+  const runner = {
+    ...createFakeRunner(),
+    name: 'claude' as const,
+    sandboxSupported: false,
+  };
+
+  warnUnsupportedSandbox({ ctx, runner, sandbox: true });
+  warnUnsupportedSandbox({ ctx, runner, sandbox: false });
+  warnUnsupportedSandbox({ ctx, runner: createFakeRunner(), sandbox: true });
+
+  assert.equal(output.length, 1);
+  assert.match(
+    output[0] ?? '',
+    /--sandbox is not supported by the claude runner/,
+  );
+});
+
+test('skill eval reads the agy settings only for the agy runner', async (t) => {
+  const { ctx } = await testContext(t);
+  let configReads = 0;
+  ctx.agy = {
+    bin: () => undefined,
+    config: () => {
+      configReads += 1;
+      throw new EnvironmentError('AGY_EXTRA_ARGS must be a JSON array');
+    },
+  };
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['agy-skill'],
+    withEvals: true,
+  });
+
+  const fakeCode = await runSkill(ctx, {
+    subcommand: 'eval',
+    paths: ['agy-skill'],
+    runner: 'fake',
+    baseline: false,
+  });
+  const readsAfterFake = configReads;
+
+  assert.equal(fakeCode, 0);
+  assert.equal(readsAfterFake, 0);
+  await assert.rejects(
+    runSkill(ctx, { subcommand: 'eval', paths: ['agy-skill'], runner: 'agy' }),
+    EnvironmentError,
+  );
+  assert.equal(configReads, 1);
 });

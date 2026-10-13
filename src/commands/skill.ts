@@ -1,5 +1,12 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 import { styleText } from 'node:util';
 
 import type { Context } from '../context.ts';
@@ -15,6 +22,8 @@ import { formatPassRateDelta, formatRate } from '../evals/report.ts';
 import {
   createEvalRunner,
   detectDefaultRunner,
+  type EvalRunner,
+  type EvalRunnerName,
   parseEvalRunnerName,
 } from '../evals/runners/index.ts';
 import { displayPath } from '../install/describe.ts';
@@ -231,6 +240,105 @@ function parseSplit(value: string | undefined): TriggerSplit {
     );
   }
   return found;
+}
+
+interface WarnUnsupportedSandboxParams {
+  ctx: Context;
+  runner: EvalRunner & { readonly sandboxSupported?: boolean };
+  sandbox: boolean;
+}
+
+/** Warns when --sandbox was requested but the runner cannot honor it. */
+export function warnUnsupportedSandbox({
+  ctx,
+  runner,
+  sandbox,
+}: WarnUnsupportedSandboxParams): void {
+  if (!sandbox || runner.sandboxSupported !== false) return;
+  ctx.print(
+    `${WARN_LABEL}  --sandbox is not supported by the ${runner.name} runner; its runs are not sandboxed and use your real home directory.`,
+  );
+}
+
+interface ResolveEvalRunnerParams {
+  ctx: Context;
+  rawRunner: string | undefined;
+  binary: string | undefined;
+  sandbox: boolean;
+}
+
+async function resolveEvalRunner({
+  ctx,
+  rawRunner,
+  binary,
+  sandbox,
+}: ResolveEvalRunnerParams): Promise<EvalRunner> {
+  let runnerName: EvalRunnerName;
+  if (rawRunner) {
+    runnerName = parseEvalRunnerName(rawRunner);
+  } else {
+    const agyBin = ctx.agy?.bin();
+    runnerName = await detectDefaultRunner({
+      searchPath: ctx.searchPath,
+      ...(agyBin ? { agyConfig: { bin: agyBin, extraArgs: [] } } : {}),
+    });
+  }
+  const agyConfig = runnerName === 'agy' ? ctx.agy?.config() : undefined;
+  const runner = createEvalRunner({
+    runner: runnerName,
+    binary,
+    agyConfig,
+    env: ctx.sources.env,
+  });
+  warnUnsupportedSandbox({ ctx, runner, sandbox });
+  return runner;
+}
+
+interface ResolveReportDirParams {
+  ctx: Context;
+  args: readonly string[];
+}
+
+interface ResolvedReportDir {
+  skillName?: string;
+  iterationDir?: string;
+}
+
+async function resolveReportDir({
+  ctx,
+  args,
+}: ResolveReportDirParams): Promise<ResolvedReportDir> {
+  const [first, second] = args;
+  if (first === undefined) return {};
+  if (second === undefined) {
+    const candidateDir = resolve(ctx.cwd, first);
+    if ((await lstatIfExists(join(candidateDir, 'benchmark.json'))) !== null) {
+      return { iterationDir: candidateDir };
+    }
+    if (!isSkillName(first)) {
+      throw new UsageError(
+        `"${first}" is neither a skill name nor a directory containing benchmark.json`,
+      );
+    }
+    return { skillName: first };
+  }
+  if (!isSkillName(first)) {
+    throw new UsageError(`Invalid skill name "${first}"`);
+  }
+  if (isAbsolute(second)) return { skillName: first, iterationDir: second };
+  const fromCwd = resolve(ctx.cwd, second);
+  if ((await lstatIfExists(fromCwd)) !== null) {
+    return { skillName: first, iterationDir: fromCwd };
+  }
+  const skillEvalsDir = join(ctx.paths.evalsDir, first);
+  const fromEvals = resolve(skillEvalsDir, second);
+  const inside = relative(skillEvalsDir, fromEvals);
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    throw new UsageError(
+      `Iteration directory "${second}" must be inside the ${first} evals directory`,
+    );
+  }
+  return { skillName: first, iterationDir: fromEvals };
 }
 
 interface RenderScaffoldSkillMdParams {
@@ -464,18 +572,7 @@ export async function runSkill(
       ctx,
       nameOrPath: paths[0],
     });
-    const runnerName = rawRunner
-      ? parseEvalRunnerName(rawRunner)
-      : await detectDefaultRunner({
-          searchPath: ctx.searchPath,
-          agyConfig: ctx.agy,
-        });
-    const runner = createEvalRunner({
-      runner: runnerName,
-      binary,
-      agyConfig: ctx.agy,
-      env: ctx.sources.env,
-    });
+    const runner = await resolveEvalRunner({ ctx, rawRunner, binary, sandbox });
     const result = await runSkillEval({
       skillName,
       skillDir,
@@ -516,18 +613,7 @@ export async function runSkill(
     if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
       throw new UsageError('--threshold must be a number between 0 and 1');
     }
-    const runnerName = rawRunner
-      ? parseEvalRunnerName(rawRunner)
-      : await detectDefaultRunner({
-          searchPath: ctx.searchPath,
-          agyConfig: ctx.agy,
-        });
-    const runner = createEvalRunner({
-      runner: runnerName,
-      binary,
-      agyConfig: ctx.agy,
-      env: ctx.sources.env,
-    });
+    const runner = await resolveEvalRunner({ ctx, rawRunner, binary, sandbox });
     const result = await runSkillTriggers({
       skillName,
       skillDir,
@@ -559,20 +645,9 @@ export async function runSkill(
         'Usage: agents-config skill report <name|run-dir> [iteration-dir]',
       );
     }
-    const firstArg = paths[0];
-    const candidateDir = resolve(ctx.cwd, firstArg);
-    const isDirectRunDir =
-      paths.length === 1 &&
-      (await lstatIfExists(join(candidateDir, 'benchmark.json'))) !== null;
-    const iterationDir = isDirectRunDir
-      ? candidateDir
-      : paths[1]
-        ? resolve(ctx.cwd, paths[1])
-        : undefined;
     const result = await regenerateSkillReport({
       evalsRootDir: ctx.paths.evalsDir,
-      ...(isDirectRunDir ? {} : { skillName: firstArg }),
-      iterationDir,
+      ...(await resolveReportDir({ ctx, args: paths })),
     });
     printBenchmarkSummary(ctx, result.benchmark);
     ctx.print(
@@ -582,6 +657,6 @@ export async function runSkill(
   }
 
   throw new UsageError(
-    'Usage: agents-config skill validate [path...] [--catalog] | new <name> | eval <name> | triggers <name> | report <name>',
+    'Usage: agents-config skill validate [path...] [--catalog] | new <name> | eval <name> | triggers <name> | report <name|run-dir> [iteration-dir]',
   );
 }

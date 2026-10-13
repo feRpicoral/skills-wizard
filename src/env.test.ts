@@ -3,7 +3,12 @@ import { execFile } from 'node:child_process';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
-import { gitEnvironment, resolveAgyConfig, resolvePaths } from './env.ts';
+import {
+  gitEnvironment,
+  resolveAgyBin,
+  resolveAgyConfig,
+  resolvePaths,
+} from './env.ts';
 import { EnvironmentError } from './errors.ts';
 import { tempDir } from './test-support/fixtures.ts';
 import { isolatedGitEnv } from './test-support/git.ts';
@@ -81,6 +86,25 @@ test('resolveAgyConfig defaults to empty extraArgs when unset', () => {
   const config = resolveAgyConfig({});
 
   assert.deepEqual(config, { extraArgs: [] });
+});
+
+test('resolveAgyBin and resolveAgyConfig reject a relative AGY_BIN', () => {
+  assert.throws(
+    () => resolveAgyBin({ AGY_BIN: 'bin/agy' }),
+    (error) =>
+      error instanceof EnvironmentError &&
+      /AGY_BIN must be an absolute path/.test(error.message),
+  );
+  assert.throws(() => resolveAgyConfig({ AGY_BIN: 'agy' }), EnvironmentError);
+  assert.equal(resolveAgyBin({ AGY_BIN: '  ' }), undefined);
+  assert.equal(resolveAgyBin({ AGY_BIN: '/opt/agy' }), '/opt/agy');
+});
+
+test('resolveAgyBin ignores AGY_EXTRA_ARGS so other runners never parse it', () => {
+  assert.equal(
+    resolveAgyBin({ AGY_BIN: '/opt/agy', AGY_EXTRA_ARGS: 'not-json' }),
+    '/opt/agy',
+  );
 });
 
 test('resolveAgyConfig rejects invalid AGY_EXTRA_ARGS JSON or non-string arrays', () => {
