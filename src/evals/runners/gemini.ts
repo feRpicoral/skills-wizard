@@ -174,13 +174,13 @@ export function parseGeminiGraderJson({
 
 export interface CreateGeminiRunnerParams {
   binary?: string;
-  env?: Environment;
+  env: Environment;
 }
 
 export function createGeminiRunner({
   binary,
   env,
-}: CreateGeminiRunnerParams = {}): EvalRunner {
+}: CreateGeminiRunnerParams): EvalRunner {
   const resolvedBin = binary ?? 'gemini';
 
   return {

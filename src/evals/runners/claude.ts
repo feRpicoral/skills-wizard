@@ -207,13 +207,13 @@ export function parseClaudeGraderJson({
 
 export interface CreateClaudeRunnerParams {
   binary?: string;
-  env?: Environment;
+  env: Environment;
 }
 
 export function createClaudeRunner({
   binary,
   env,
-}: CreateClaudeRunnerParams = {}): EvalRunner {
+}: CreateClaudeRunnerParams): EvalRunner {
   const resolvedBin = binary ?? 'claude';
 
   return {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chmod, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 import { RunnerError } from '../../errors.ts';
@@ -322,7 +322,11 @@ test('detectDefaultRunner prioritizes agy -> claude -> codex -> gemini and agy r
   await chmod(stubAgy, 0o755);
 
   const detected = await detectDefaultRunner({ searchPath: [binDir] });
-  const runner = createEvalRunner({ runner: 'agy', binary: stubAgy });
+  const runner = createEvalRunner({
+    runner: 'agy',
+    binary: stubAgy,
+    env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+  });
   const taskResult = await runner.runTask({
     prompt: 'Hello agy',
     workdir: root,

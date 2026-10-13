@@ -133,13 +133,13 @@ export function parseCodexGraderJson({
 
 export interface CreateCodexRunnerParams {
   binary?: string;
-  env?: Environment;
+  env: Environment;
 }
 
 export function createCodexRunner({
   binary,
   env,
-}: CreateCodexRunnerParams = {}): EvalRunner {
+}: CreateCodexRunnerParams): EvalRunner {
   const resolvedBin = binary ?? 'codex';
 
   return {
