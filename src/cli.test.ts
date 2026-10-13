@@ -24,10 +24,14 @@ interface Result {
   stderr: string;
 }
 
-async function cli(home: string, args: string[]): Promise<Result> {
+async function cli(
+  home: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): Promise<Result> {
   try {
     const { stdout, stderr } = await run(process.execPath, [CLI, ...args], {
-      env: { HOME: home, PATH: process.env.PATH ?? '' },
+      env: { HOME: home, PATH: process.env.PATH ?? '', ...extraEnv },
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -399,4 +403,168 @@ test('cli rejects invalid numeric flags and accepts --baseline none and --cases 
   assert.match(badThreshold.stderr, /--threshold must be a number/);
   assert.equal(evalNoBaseline.code, 0);
   assert.match(evalNoBaseline.stdout, /Evaluated skill-author with fake/);
+});
+
+test('skill subcommands reject flags that belong to another subcommand', async (t) => {
+  const home = await tempDir(t);
+
+  const results = await Promise.all([
+    cli(home, ['skill', 'validate', '--runner', 'fake']),
+    cli(home, ['skill', 'new', 'Not_A_Name', '--runs', '2']),
+    cli(home, ['skill', 'eval', 'demo', '--split', 'train']),
+    cli(home, ['skill', 'triggers', 'demo', '--compare', 'main']),
+    cli(home, ['skill', 'triggers', 'demo', '--baseline', 'none']),
+    cli(home, ['skill', 'report', 'demo', '--parallel', '2']),
+  ]);
+
+  assert.deepEqual(
+    results.map((result) => result.code),
+    [2, 2, 2, 2, 2, 2],
+  );
+  const [validate, scaffold, evaluate, triggers, triggersBaseline, report] =
+    results.map((result) => result.stderr);
+  assert.match(validate ?? '', /--runner does not apply to skill validate/);
+  assert.match(scaffold ?? '', /--runs does not apply to skill new/);
+  assert.match(evaluate ?? '', /--split does not apply to skill eval/);
+  assert.match(triggers ?? '', /--compare does not apply to skill triggers/);
+  assert.match(
+    triggersBaseline ?? '',
+    /--baseline does not apply to skill triggers/,
+  );
+  assert.match(report ?? '', /--parallel does not apply to skill report/);
+});
+
+test('numeric skill flags accept only plain decimal numbers', async (t) => {
+  const home = await tempDir(t);
+  const evalWith = (flag: string, value: string) =>
+    cli(home, ['skill', 'eval', 'skill-author', flag, value]);
+
+  const rejected = await Promise.all([
+    evalWith('--runs', ''),
+    evalWith('--runs', '0x1'),
+    evalWith('--runs', '1e1'),
+    evalWith('--runs', '1.5'),
+    evalWith('--parallel', ' 2'),
+    evalWith('--timeout', '-5'),
+    cli(home, ['skill', 'triggers', 'skill-author', '--threshold', '0x1']),
+    cli(home, ['skill', 'triggers', 'skill-author', '--threshold', '']),
+    cli(home, ['skill', 'triggers', 'skill-author', '--threshold', '5e-1']),
+  ]);
+
+  for (const result of rejected) {
+    assert.equal(result.code, 2, result.stderr);
+    assert.match(
+      result.stderr,
+      /must be a (positive integer|number)|argument is ambiguous/,
+    );
+  }
+});
+
+test('--baseline <ref> is accepted before or after the skill name', async (t) => {
+  const [homeBefore, homeAfter] = await Promise.all([tempDir(t), tempDir(t)]);
+  const common = ['--runner', 'fake', '--cases', 'casual-changelog-skill'];
+
+  const [before, after] = await Promise.all([
+    cli(homeBefore, [
+      'skill',
+      'eval',
+      '--baseline',
+      'HEAD',
+      'skill-author',
+      ...common,
+    ]),
+    cli(homeAfter, [
+      'skill',
+      'eval',
+      'skill-author',
+      ...common,
+      '--baseline',
+      'HEAD',
+    ]),
+  ]);
+
+  for (const result of [before, after]) {
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /old_skill run 1\/1/);
+    assert.doesNotMatch(result.stdout, /without_skill run/);
+  }
+});
+
+test('--baseline before the skill name without a ref keeps the name', async (t) => {
+  const home = await tempDir(t);
+
+  const [bare, missing] = await Promise.all([
+    cli(home, [
+      'skill',
+      'eval',
+      '--baseline',
+      'skill-author',
+      '--runner',
+      'fake',
+      '--cases',
+      'casual-changelog-skill',
+    ]),
+    cli(home, ['skill', 'eval', '--baseline', 'main', 'no-such-skill']),
+  ]);
+
+  assert.equal(bare.code, 0, bare.stderr);
+  assert.match(bare.stdout, /without_skill run 1\/1/);
+  assert.equal(missing.code, 2);
+  assert.match(missing.stderr, /Skill "no-such-skill" was not found/);
+});
+
+test('--baseline <ref> cannot be combined with --compare or another --baseline', async (t) => {
+  const home = await tempDir(t);
+
+  const results = await Promise.all([
+    cli(home, ['skill', 'eval', 'demo', '--baseline=main', '--compare', 'v1']),
+    cli(home, ['skill', 'eval', 'demo', '--baseline', 'main', '--compare=v1']),
+    cli(home, ['skill', 'eval', 'demo', '--baseline=main', '--no-baseline']),
+    cli(home, ['skill', 'eval', 'demo', '--baseline=main', '--baseline=v1']),
+    cli(home, ['skill', 'eval', 'demo', '--baseline=-x']),
+    cli(home, ['skill', 'eval', 'demo', '--compare=-x']),
+  ]);
+
+  assert.deepEqual(
+    results.map((result) => result.code),
+    [2, 2, 2, 2, 2, 2],
+  );
+  const messages = results.map((result) => result.stderr);
+  assert.match(messages[0] ?? '', /either --baseline <ref> or --compare/);
+  assert.match(messages[1] ?? '', /either --baseline <ref> or --compare/);
+  assert.match(messages[2] ?? '', /Use one form of --baseline/);
+  assert.match(messages[3] ?? '', /--baseline <ref> was given more than once/);
+  assert.match(messages[4] ?? '', /--baseline ref must not start with "-"/);
+  assert.match(messages[5] ?? '', /--compare ref must not start with "-"/);
+});
+
+test('a malformed AGY_EXTRA_ARGS only fails agy evals', async (t) => {
+  const home = await tempDir(t);
+  const env = { AGY_EXTRA_ARGS: 'not-json', AGY_BIN: '/nonexistent/agy' };
+
+  const [validate, fakeEval, agyEval, relativeBin] = await Promise.all([
+    cli(home, ['skill', 'validate', 'skills/skill-author'], env),
+    cli(
+      home,
+      [
+        'skill',
+        'eval',
+        'skill-author',
+        '--runner',
+        'fake',
+        '--cases',
+        'casual-changelog-skill',
+      ],
+      env,
+    ),
+    cli(home, ['skill', 'eval', 'skill-author', '--runner', 'agy'], env),
+    cli(home, ['skill', 'eval', 'skill-author'], { AGY_BIN: 'agy' }),
+  ]);
+
+  assert.equal(validate.code, 0, validate.stderr);
+  assert.equal(fakeEval.code, 0, fakeEval.stderr);
+  assert.equal(agyEval.code, 1);
+  assert.match(agyEval.stderr, /AGY_EXTRA_ARGS must be a JSON array/);
+  assert.equal(relativeBin.code, 1);
+  assert.match(relativeBin.stderr, /AGY_BIN must be an absolute path/);
 });

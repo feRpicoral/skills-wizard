@@ -57,13 +57,16 @@ Options:
   --runner <name>       skill eval/triggers: agy, claude, codex, gemini, or fake
   --binary <path>       skill eval/triggers: override runner CLI binary path
   --runs <n>            skill eval/triggers: runs per configuration or query (default: 1)
-  --baseline [none|ref] skill eval: run without_skill baseline (default; use --no-baseline or --baseline none to skip, or --baseline <ref> to compare against a git ref)
+  --baseline [none|ref] skill eval: run the without_skill baseline (default). --no-baseline or
+                        --baseline none skips it; --baseline <ref> compares against the skill at a
+                        git ref instead (cannot be combined with --compare)
   --compare <ref>       skill eval: also run old_skill snapshot from <ref>:skills/<name>
   --case <id>           skill eval: filter to a single eval case ID
   --cases <ids>         skill eval: comma-separated eval case IDs
   --parallel <n>        skill eval/triggers: concurrent runs (default: 2)
   --timeout <seconds>   skill eval/triggers: per-run timeout in seconds
   --sandbox             skill eval/triggers: pass --sandbox to runners that support it
+                        (warns when the runner cannot; runs are otherwise not confined)
   --keep-workdirs       skill eval/triggers: keep temporary workdirs for debugging
   --split <name>        skill triggers: train, validation, or all (default: all)
   --threshold <0..1>    skill triggers: pass threshold for positive queries (default: 0.5)
@@ -164,64 +167,144 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
   ],
 };
 
-function normalizeBaselineArgv(argv: readonly string[]): string[] {
-  const normalized: string[] = [];
-  let positionalCount = 0;
+const SKILL_SUBCOMMAND_OPTIONS: Readonly<
+  Record<string, readonly OptionName[]>
+> = {
+  validate: ['catalog'],
+  new: ['template', 'with-evals'],
+  eval: [
+    'runner',
+    'binary',
+    'runs',
+    'baseline',
+    'compare',
+    'case',
+    'cases',
+    'parallel',
+    'timeout',
+    'sandbox',
+    'keep-workdirs',
+  ],
+  triggers: [
+    'runner',
+    'binary',
+    'runs',
+    'split',
+    'threshold',
+    'parallel',
+    'timeout',
+    'sandbox',
+    'keep-workdirs',
+  ],
+  report: [],
+};
+
+// `skill eval <name>` has exactly three positionals: skill, eval and <name>.
+const SKILL_EVAL_POSITIONALS = 3;
+
+interface NormalizedArgv {
+  args: string[];
+  baselineRef?: string;
+}
+
+function isBaselineKeyword(value: string): boolean {
+  return value === 'none' || value === 'false' || value === 'true';
+}
+
+function isBaselineRefCandidate(value: string | undefined): value is string {
+  return (
+    value !== undefined && !value.startsWith('-') && !isBaselineKeyword(value)
+  );
+}
+
+// Counts positionals without the tokens that may be a `--baseline <ref>`
+// value, so `--baseline <ref>` is accepted in any position. The token after
+// `--baseline` is a ref only when the command already has all of its
+// positionals without it (`skill eval --baseline main my-skill`); otherwise
+// it is the skill name (`skill eval --baseline my-skill`).
+function countPositionals(argv: readonly string[]): number {
+  let count = 0;
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === undefined) continue;
+    if (token === '--') return count + argv.length - index - 1;
+    if (token === '--baseline' && isBaselineRefCandidate(argv[index + 1])) {
+      index += 1;
+      continue;
+    }
+    if (STRING_OPTIONS.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (!token.startsWith('-')) count += 1;
+  }
+  return count;
+}
+
+function baselineRefValue(ref: string, previous: string | undefined): string {
+  if (previous !== undefined) {
+    throw new UsageError('--baseline <ref> was given more than once');
+  }
+  if (ref.startsWith('-')) {
+    throw new UsageError(
+      `--baseline ref must not start with "-", got "${ref}"`,
+    );
+  }
+  return ref;
+}
+
+function normalizeBaselineArgv(argv: readonly string[]): NormalizedArgv {
+  const args: string[] = [];
+  let baselineRef: string | undefined;
+  const refsAllowed = countPositionals(argv) >= SKILL_EVAL_POSITIONALS;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === undefined) continue;
     if (token === '--') {
-      normalized.push(...argv.slice(index));
+      args.push(...argv.slice(index));
       break;
     }
     if (token.startsWith('--baseline=')) {
       const val = token.slice('--baseline='.length).trim();
       if (val === '' || val === 'true') {
-        normalized.push('--baseline');
+        args.push('--baseline');
       } else if (val === 'false' || val === 'none') {
-        normalized.push('--no-baseline');
+        args.push('--no-baseline');
       } else {
-        normalized.push('--no-baseline', '--compare', val);
+        baselineRef = baselineRefValue(val, baselineRef);
       }
       continue;
     }
     if (token === '--baseline') {
       const next = argv[index + 1];
       if (next === 'none' || next === 'false') {
-        normalized.push('--no-baseline');
+        args.push('--no-baseline');
         index += 1;
-        continue;
-      }
-      if (next === 'true') {
-        normalized.push('--baseline');
+      } else if (next === 'true') {
+        args.push('--baseline');
         index += 1;
-        continue;
-      }
-      if (next !== undefined && !next.startsWith('-') && positionalCount >= 3) {
-        normalized.push('--no-baseline', '--compare', next);
+      } else if (refsAllowed && isBaselineRefCandidate(next)) {
+        baselineRef = baselineRefValue(next, baselineRef);
         index += 1;
-        continue;
+      } else {
+        args.push('--baseline');
       }
-      normalized.push('--baseline');
       continue;
     }
     if (STRING_OPTIONS.has(token)) {
-      normalized.push(token);
+      args.push(token);
       const next = argv[index + 1];
       if (next !== undefined) {
-        normalized.push(next);
+        args.push(next);
         index += 1;
       }
       continue;
     }
-    if (!token.startsWith('-')) {
-      positionalCount += 1;
-    }
-    normalized.push(token);
+    args.push(token);
   }
 
-  return normalized;
+  return { args, ...(baselineRef !== undefined ? { baselineRef } : {}) };
 }
 
 function isCommand(value: string): value is Command {
@@ -278,13 +361,17 @@ interface ParseFlagParams {
   flagName: string;
 }
 
+// Number() accepts '', ' 1', '0x1' and '1e1'; flags only take plain decimals.
+const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
+const DECIMAL = /^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/;
+
 function parsePositiveInt({
   value,
   flagName,
 }: ParseFlagParams): number | undefined {
   if (value === undefined) return undefined;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!POSITIVE_INTEGER.test(value) || !Number.isSafeInteger(parsed)) {
     throw new UsageError(
       `--${flagName} must be a positive integer, got "${value}"`,
     );
@@ -297,11 +384,10 @@ function parseFloatFlag({
   flagName,
 }: ParseFlagParams): number | undefined {
   if (value === undefined) return undefined;
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
+  if (!DECIMAL.test(value)) {
     throw new UsageError(`--${flagName} must be a number, got "${value}"`);
   }
-  return parsed;
+  return Number(value);
 }
 
 function rejectOptions(command: Command, provided: readonly string[]): void {
@@ -309,6 +395,25 @@ function rejectOptions(command: Command, provided: readonly string[]): void {
   const extra = provided.filter((name) => !allowed.includes(name));
   if (extra.length > 0) {
     throw new UsageError(`${flags(extra)} does not apply to ${command}`);
+  }
+}
+
+function rejectSkillOptions(
+  subcommand: string | undefined,
+  provided: readonly string[],
+): void {
+  if (
+    subcommand === undefined ||
+    !Object.hasOwn(SKILL_SUBCOMMAND_OPTIONS, subcommand)
+  ) {
+    return;
+  }
+  const allowed: readonly string[] = SKILL_SUBCOMMAND_OPTIONS[subcommand] ?? [];
+  const extra = provided.filter((name) => !allowed.includes(name));
+  if (extra.length > 0) {
+    throw new UsageError(
+      `${flags(extra)} does not apply to skill ${subcommand}`,
+    );
   }
 }
 
@@ -321,15 +426,19 @@ async function version(): Promise<string> {
 
 async function main(argv: string[]): Promise<number> {
   let parsed;
+  let baselineRef: string | undefined;
   try {
+    const normalized = normalizeBaselineArgv(argv);
+    baselineRef = normalized.baselineRef;
     parsed = parseArgs({
-      args: normalizeBaselineArgv(argv),
+      args: normalized.args,
       options: OPTIONS,
       allowPositionals: true,
       allowNegative: true,
       strict: true,
     });
   } catch (error) {
+    if (error instanceof UsageError) throw error;
     throw new UsageError(
       error instanceof Error ? error.message : String(error),
     );
@@ -383,7 +492,12 @@ async function main(argv: string[]): Promise<number> {
       `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
     );
   }
-  rejectOptions(command, Object.keys(values));
+  const provided = Object.keys(values);
+  if (baselineRef !== undefined && !provided.includes('baseline')) {
+    provided.push('baseline');
+  }
+  rejectOptions(command, provided);
+  if (command === 'skill') rejectSkillOptions(positionals[1], provided);
 
   const ctx = createContext({
     repoRoot: REPO_ROOT,
@@ -463,6 +577,25 @@ async function main(argv: string[]): Promise<number> {
         flagName: 'threshold',
       });
       const cases = parseList(values.cases);
+      if (baselineRef !== undefined && values.compare !== undefined) {
+        throw new UsageError(
+          'Use either --baseline <ref> or --compare <ref>, not both.',
+        );
+      }
+      if (baselineRef !== undefined && values.baseline !== undefined) {
+        throw new UsageError(
+          'Use one form of --baseline: --baseline <ref>, --baseline none or --no-baseline.',
+        );
+      }
+      if (values.compare?.startsWith('-')) {
+        throw new UsageError(
+          `--compare ref must not start with "-", got "${values.compare}"`,
+        );
+      }
+      // `--baseline <ref>` replaces the without_skill baseline with the
+      // old_skill snapshot from <ref>.
+      const baseline = baselineRef !== undefined ? false : values.baseline;
+      const compare = baselineRef ?? values.compare;
       return runSkill(ctx, {
         subcommand: positionals[1],
         paths: positionals.slice(2),
@@ -474,8 +607,8 @@ async function main(argv: string[]): Promise<number> {
         ...(values.runner !== undefined ? { runner: values.runner } : {}),
         ...(values.binary !== undefined ? { binary: values.binary } : {}),
         ...(runs !== undefined ? { runs } : {}),
-        ...(values.baseline !== undefined ? { baseline: values.baseline } : {}),
-        ...(values.compare !== undefined ? { compare: values.compare } : {}),
+        ...(baseline !== undefined ? { baseline } : {}),
+        ...(compare !== undefined ? { compare } : {}),
         ...(values.case !== undefined ? { caseId: values.case } : {}),
         ...(cases !== undefined ? { cases } : {}),
         ...(parallel !== undefined ? { parallel } : {}),
