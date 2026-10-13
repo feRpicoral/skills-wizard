@@ -3,6 +3,7 @@ import { chmod, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { RunnerError } from '../../errors.ts';
 import { tempDir, writeFiles } from '../../test-support/fixtures.ts';
 import {
   buildAgyGraderArgs,
@@ -23,14 +24,17 @@ import {
 } from './index.ts';
 
 test('buildAgyTaskArgs and buildAgyGraderArgs keep -p=<prompt> last and omit --mode auto', () => {
+  const prompt = 'Refactor config';
+  const graderPrompt = 'Grade assertions';
+
   const taskArgs = buildAgyTaskArgs({
-    prompt: 'Refactor config',
+    prompt,
     timeoutSeconds: 600,
     sandbox: true,
     extraArgs: ['--verbose'],
   });
   const graderArgs = buildAgyGraderArgs({
-    prompt: 'Grade assertions',
+    prompt: graderPrompt,
     schemaPath: '/tmp/grader-schema.json',
     timeoutSeconds: 120,
     extraArgs: ['--verbose'],
@@ -165,6 +169,57 @@ test('parseAgyGraderJson prefers structured_output and falls back to response JS
 });
 
 test('claude, codex, and gemini builders and stream parsers detect triggers and extract responses', () => {
+  const claudeStdout = [
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            name: 'Skill',
+            input: { skill: 'demo-skill' },
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: 'result',
+      result: 'Claude output',
+      duration_ms: 1500,
+      usage: { input_tokens: 200, output_tokens: 100 },
+    }),
+  ].join('\n');
+  const codexStdout = [
+    JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: 'cat .agents/skills/demo-skill/SKILL.md',
+      },
+    }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'Codex output' },
+    }),
+    JSON.stringify({
+      type: 'turn.completed',
+      usage: { input_tokens: 150, output_tokens: 75 },
+    }),
+  ].join('\n');
+  const geminiStdout = [
+    JSON.stringify({
+      type: 'tool_use',
+      tool_name: 'activate_skill',
+      parameters: { name: 'demo-skill' },
+    }),
+    JSON.stringify({
+      type: 'result',
+      response: 'Gemini output',
+      duration_ms: 1300,
+      usage: { input_tokens: 180, output_tokens: 90, total_tokens: 270 },
+    }),
+  ].join('\n');
+
   const claudeArgs = buildClaudeTaskArgs({
     prompt: 'Hello',
     skillName: 'demo-skill',
@@ -185,63 +240,16 @@ test('claude, codex, and gemini builders and stream parsers detect triggers and 
   });
   const geminiGrader = buildGeminiGraderArgs('Grade gemini');
   const claudeParsed = parseClaudeStreamJson({
-    stdout: [
-      JSON.stringify({
-        type: 'assistant',
-        message: {
-          content: [
-            {
-              type: 'tool_use',
-              name: 'Skill',
-              input: { skill: 'demo-skill' },
-            },
-          ],
-        },
-      }),
-      JSON.stringify({
-        type: 'result',
-        result: 'Claude output',
-        duration_ms: 1500,
-        usage: { input_tokens: 200, output_tokens: 100 },
-      }),
-    ].join('\n'),
+    stdout: claudeStdout,
     skillName: 'demo-skill',
   });
   const codexParsed = parseCodexStreamJson({
-    stdout: [
-      JSON.stringify({
-        type: 'item.completed',
-        item: {
-          type: 'command_execution',
-          command: 'cat .agents/skills/demo-skill/SKILL.md',
-        },
-      }),
-      JSON.stringify({
-        type: 'item.completed',
-        item: { type: 'agent_message', text: 'Codex output' },
-      }),
-      JSON.stringify({
-        type: 'turn.completed',
-        usage: { input_tokens: 150, output_tokens: 75 },
-      }),
-    ].join('\n'),
+    stdout: codexStdout,
     skillName: 'demo-skill',
     fallbackDurationMs: 1100,
   });
   const geminiParsed = parseGeminiStreamJson({
-    stdout: [
-      JSON.stringify({
-        type: 'tool_use',
-        tool_name: 'activate_skill',
-        parameters: { name: 'demo-skill' },
-      }),
-      JSON.stringify({
-        type: 'result',
-        response: 'Gemini output',
-        duration_ms: 1300,
-        usage: { input_tokens: 180, output_tokens: 90, total_tokens: 270 },
-      }),
-    ].join('\n'),
+    stdout: geminiStdout,
     skillName: 'demo-skill',
   });
 
@@ -259,10 +267,44 @@ test('claude, codex, and gemini builders and stream parsers detect triggers and 
   assert.equal(geminiParsed.response, 'Gemini output');
 });
 
+test('stream parsers throw RunnerError when final result event is missing', () => {
+  const truncatedStream = JSON.stringify({
+    type: 'step_update',
+    tool_name: 'view_file',
+  });
+
+  const parseTruncated = () => ({
+    agy: () =>
+      parseAgyStreamJson({ stdout: truncatedStream, skillName: 'demo-skill' }),
+    claude: () =>
+      parseClaudeStreamJson({
+        stdout: truncatedStream,
+        skillName: 'demo-skill',
+      }),
+    codex: () =>
+      parseCodexStreamJson({
+        stdout: truncatedStream,
+        skillName: 'demo-skill',
+      }),
+    gemini: () =>
+      parseGeminiStreamJson({
+        stdout: truncatedStream,
+        skillName: 'demo-skill',
+      }),
+  });
+  const actions = parseTruncated();
+
+  assert.throws(actions.agy, RunnerError);
+  assert.throws(actions.claude, RunnerError);
+  assert.throws(actions.codex, RunnerError);
+  assert.throws(actions.gemini, RunnerError);
+});
+
 test('detectDefaultRunner prioritizes agy -> claude -> codex -> gemini and agy runner executes binary', async (t) => {
   const root = await tempDir(t);
   const binDir = join(root, 'bin');
   const stubAgy = join(binDir, 'agy');
+  const runDir = join(root, 'run');
   await writeFiles(binDir, {
     claude: '#!/bin/sh\nexit 0\n',
     agy: [
@@ -277,7 +319,6 @@ test('detectDefaultRunner prioritizes agy -> claude -> codex -> gemini and agy r
 
   const detected = await detectDefaultRunner({ searchPath: [binDir] });
   const runner = createEvalRunner({ runner: 'agy', binary: stubAgy });
-  const runDir = join(root, 'run');
   const taskResult = await runner.runTask({
     prompt: 'Hello agy',
     workdir: root,

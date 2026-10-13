@@ -1,8 +1,10 @@
 import type { Environment } from '../../env.ts';
+import { RunnerError } from '../../errors.ts';
 import {
   type EvalRunner,
   extractJsonFromText,
   normalizeUsage,
+  type ParsedGraderOutput,
   parseJsonDocument,
   parseJsonLines,
   type RunnerGraderRequest,
@@ -49,10 +51,15 @@ export interface ParsedGeminiStream {
   usage: RunnerUsage;
 }
 
-function isGeminiTriggerEvent(
-  event: Record<string, unknown>,
-  skillName: string,
-): boolean {
+interface GeminiTriggerEventParams {
+  event: Record<string, unknown>;
+  skillName: string;
+}
+
+function isGeminiTriggerEvent({
+  event,
+  skillName,
+}: GeminiTriggerEventParams): boolean {
   if (event.type !== 'tool_use') return false;
   const toolName =
     typeof event.tool_name === 'string'
@@ -98,9 +105,10 @@ export function parseGeminiStreamJson({
   let finalResponse = '';
   let durationMs = fallbackDurationMs;
   let usage = normalizeUsage(undefined);
+  let sawResult = false;
 
   for (const event of events) {
-    if (isGeminiTriggerEvent(event, skillName)) {
+    if (isGeminiTriggerEvent({ event, skillName })) {
       triggered = true;
     }
     if (
@@ -111,6 +119,7 @@ export function parseGeminiStreamJson({
       assistantChunks.push(event.content);
     }
     if (event.type === 'result') {
+      sawResult = true;
       if (typeof event.response === 'string') {
         finalResponse = event.response;
       }
@@ -129,6 +138,10 @@ export function parseGeminiStreamJson({
     }
   }
 
+  if (!sawResult) {
+    throw new RunnerError('gemini stream ended without a final result event');
+  }
+
   return {
     response: finalResponse || assistantChunks.join(''),
     triggered,
@@ -145,11 +158,7 @@ export interface ParseGeminiGraderParams {
 export function parseGeminiGraderJson({
   stdout,
   fallbackDurationMs = 0,
-}: ParseGeminiGraderParams): {
-  output: unknown;
-  durationMs: number;
-  usage: RunnerUsage;
-} {
+}: ParseGeminiGraderParams): ParsedGraderOutput {
   const doc = parseJsonDocument(stdout);
   const durationMs =
     typeof doc.duration_ms === 'number' ? doc.duration_ms : fallbackDurationMs;
@@ -176,22 +185,29 @@ export function createGeminiRunner({
 
   return {
     name: 'gemini',
-    async runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult> {
+    async runTask({
+      prompt,
+      workdir,
+      runDir,
+      skillName,
+      timeoutSeconds,
+      sandbox,
+    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
       const args = buildGeminiTaskArgs({
-        prompt: request.prompt,
-        sandbox: request.sandbox,
+        prompt,
+        sandbox,
       });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
       });
       const parsed = parseGeminiStreamJson({
         stdout: proc.stdout,
-        skillName: request.skillName,
+        skillName,
         fallbackDurationMs: proc.durationMs,
       });
       return {
@@ -206,14 +222,19 @@ export function createGeminiRunner({
       };
     },
 
-    async runGrader(request: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const args = buildGeminiGraderArgs(request.prompt);
+    async runGrader({
+      prompt,
+      workdir,
+      runDir,
+      timeoutSeconds,
+    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
+      const args = buildGeminiGraderArgs(prompt);
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
         logPrefix: 'grader',
       });

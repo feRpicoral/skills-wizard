@@ -4,6 +4,7 @@ import {
   type EvalRunner,
   extractJsonFromText,
   normalizeUsage,
+  type ParsedGraderOutput,
   parseJsonDocument,
   parseJsonLines,
   type RunnerGraderRequest,
@@ -73,10 +74,15 @@ export interface ParsedAgyStream {
   usage: RunnerUsage;
 }
 
-function isAgySkillTriggerStep(
-  event: Record<string, unknown>,
-  skillName: string,
-): boolean {
+interface AgySkillTriggerStepParams {
+  event: Record<string, unknown>;
+  skillName: string;
+}
+
+function isAgySkillTriggerStep({
+  event,
+  skillName,
+}: AgySkillTriggerStepParams): boolean {
   if (event.type !== 'step_update') return false;
   const toolName = event.tool_name;
   const toolInfo =
@@ -115,12 +121,14 @@ export function parseAgyStreamJson({
   let response = '';
   let durationMs = fallbackDurationMs;
   let usage = normalizeUsage(undefined);
+  let sawResult = false;
 
   for (const event of events) {
-    if (isAgySkillTriggerStep(event, skillName)) {
+    if (isAgySkillTriggerStep({ event, skillName })) {
       triggered = true;
     }
     if (event.type === 'result') {
+      sawResult = true;
       if (typeof event.response === 'string') {
         response = event.response;
       }
@@ -131,6 +139,10 @@ export function parseAgyStreamJson({
       }
       usage = normalizeUsage(event.usage);
     }
+  }
+
+  if (!sawResult) {
+    throw new RunnerError('agy stream ended without a final result event');
   }
 
   return {
@@ -146,16 +158,12 @@ export interface ParseAgyGraderParams {
   fallbackDurationMs?: number;
 }
 
-export interface ParsedAgyGrader {
-  output: unknown;
-  durationMs: number;
-  usage: RunnerUsage;
-}
+export type ParsedAgyGrader = ParsedGraderOutput;
 
 export function parseAgyGraderJson({
   stdout,
   fallbackDurationMs = 0,
-}: ParseAgyGraderParams): ParsedAgyGrader {
+}: ParseAgyGraderParams): ParsedGraderOutput {
   const doc = parseJsonDocument(stdout);
   const durationMs =
     typeof doc.duration_ms === 'number'
@@ -202,24 +210,31 @@ export function createAgyRunner({
 
   return {
     name: 'agy',
-    async runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult> {
+    async runTask({
+      prompt,
+      workdir,
+      runDir,
+      skillName,
+      timeoutSeconds,
+      sandbox,
+    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
       const args = buildAgyTaskArgs({
-        prompt: request.prompt,
-        timeoutSeconds: request.timeoutSeconds,
-        sandbox: request.sandbox,
+        prompt,
+        timeoutSeconds,
+        sandbox,
         extraArgs,
       });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
       });
       const parsed = parseAgyStreamJson({
         stdout: proc.stdout,
-        skillName: request.skillName,
+        skillName,
         fallbackDurationMs: proc.durationMs,
       });
       return {
@@ -234,19 +249,25 @@ export function createAgyRunner({
       };
     },
 
-    async runGrader(request: RunnerGraderRequest): Promise<RunnerGraderResult> {
+    async runGrader({
+      prompt,
+      schemaPath,
+      workdir,
+      runDir,
+      timeoutSeconds,
+    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
       const args = buildAgyGraderArgs({
-        prompt: request.prompt,
-        schemaPath: request.schemaPath,
-        timeoutSeconds: request.timeoutSeconds,
+        prompt,
+        schemaPath,
+        timeoutSeconds,
         extraArgs,
       });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
         logPrefix: 'grader',
       });

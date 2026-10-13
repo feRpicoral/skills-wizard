@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+import { delimiter } from 'node:path';
+
+import which from 'which';
 
 import type { AgyConfig, Environment } from '../../env.ts';
 import { UsageError } from '../../errors.ts';
@@ -38,20 +40,6 @@ export function parseEvalRunnerName(value: string): EvalRunnerName {
   return value;
 }
 
-async function isExecutableOnPath(
-  name: string,
-  searchPath: readonly string[],
-): Promise<boolean> {
-  for (const dir of searchPath) {
-    const candidate = join(dir, name);
-    const info = await lstatIfExists(candidate);
-    if (info && !info.isDirectory()) {
-      return true;
-    }
-  }
-  return false;
-}
-
 export interface DetectDefaultRunnerParams {
   searchPath: readonly string[];
   agyConfig?: AgyConfig;
@@ -67,8 +55,10 @@ export async function detectDefaultRunner({
       return 'agy';
     }
   }
+  const path = searchPath.join(delimiter);
+  if (!path) return 'agy';
   for (const candidate of AUTO_DETECT_ORDER) {
-    if (await isExecutableOnPath(candidate, searchPath)) {
+    if (await which(candidate, { path, nothrow: true })) {
       return candidate;
     }
   }
@@ -132,6 +122,7 @@ export {
 export type {
   EvalRunner,
   EvalRunnerName,
+  ParsedGraderOutput,
   RunnerGraderRequest,
   RunnerGraderResult,
   RunnerTaskRequest,

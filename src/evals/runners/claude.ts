@@ -4,6 +4,7 @@ import {
   type EvalRunner,
   extractJsonFromText,
   normalizeUsage,
+  type ParsedGraderOutput,
   parseJsonDocument,
   parseJsonLines,
   type RunnerGraderRequest,
@@ -69,10 +70,15 @@ export interface ParsedClaudeStream {
   usage: RunnerUsage;
 }
 
-function isClaudeToolUseTrigger(
-  block: Record<string, unknown>,
-  skillName: string,
-): boolean {
+interface ClaudeToolUseTriggerParams {
+  block: Record<string, unknown>;
+  skillName: string;
+}
+
+function isClaudeToolUseTrigger({
+  block,
+  skillName,
+}: ClaudeToolUseTriggerParams): boolean {
   if (block.type !== 'tool_use') return false;
   const name = block.name;
   const input =
@@ -108,6 +114,7 @@ export function parseClaudeStreamJson({
   let response = '';
   let durationMs = fallbackDurationMs;
   let usage = normalizeUsage(undefined);
+  let sawResult = false;
 
   for (const event of events) {
     if (
@@ -120,7 +127,10 @@ export function parseClaudeStreamJson({
         for (const item of msg.content) {
           if (typeof item === 'object' && item !== null) {
             if (
-              isClaudeToolUseTrigger(item as Record<string, unknown>, skillName)
+              isClaudeToolUseTrigger({
+                block: item as Record<string, unknown>,
+                skillName,
+              })
             ) {
               triggered = true;
             }
@@ -129,6 +139,7 @@ export function parseClaudeStreamJson({
       }
     }
     if (event.type === 'result') {
+      sawResult = true;
       if (typeof event.result === 'string') {
         response = event.result;
       } else if (typeof event.response === 'string') {
@@ -139,6 +150,10 @@ export function parseClaudeStreamJson({
       }
       usage = normalizeUsage(event.usage);
     }
+  }
+
+  if (!sawResult) {
+    throw new RunnerError('claude stream ended without a final result event');
   }
 
   return {
@@ -157,11 +172,7 @@ export interface ParseClaudeGraderParams {
 export function parseClaudeGraderJson({
   stdout,
   fallbackDurationMs = 0,
-}: ParseClaudeGraderParams): {
-  output: unknown;
-  durationMs: number;
-  usage: RunnerUsage;
-} {
+}: ParseClaudeGraderParams): ParsedGraderOutput {
   const doc = parseJsonDocument(stdout);
   const durationMs =
     typeof doc.duration_ms === 'number' ? doc.duration_ms : fallbackDurationMs;
@@ -207,23 +218,30 @@ export function createClaudeRunner({
 
   return {
     name: 'claude',
-    async runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult> {
+    async runTask({
+      prompt,
+      workdir,
+      runDir,
+      skillName,
+      timeoutSeconds,
+      excludeSkill,
+    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
       const args = buildClaudeTaskArgs({
-        prompt: request.prompt,
-        skillName: request.skillName,
-        excludeSkill: request.excludeSkill,
+        prompt,
+        skillName,
+        excludeSkill,
       });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
       });
       const parsed = parseClaudeStreamJson({
         stdout: proc.stdout,
-        skillName: request.skillName,
+        skillName,
         fallbackDurationMs: proc.durationMs,
       });
       return {
@@ -238,17 +256,23 @@ export function createClaudeRunner({
       };
     },
 
-    async runGrader(request: RunnerGraderRequest): Promise<RunnerGraderResult> {
+    async runGrader({
+      prompt,
+      schema,
+      workdir,
+      runDir,
+      timeoutSeconds,
+    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
       const args = buildClaudeGraderArgs({
-        prompt: request.prompt,
-        schema: request.schema,
+        prompt,
+        schema,
       });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
         logPrefix: 'grader',
       });

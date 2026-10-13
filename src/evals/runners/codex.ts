@@ -1,8 +1,10 @@
 import type { Environment } from '../../env.ts';
+import { RunnerError } from '../../errors.ts';
 import {
   type EvalRunner,
   extractJsonFromText,
   normalizeUsage,
+  type ParsedGraderOutput,
   parseJsonLines,
   type RunnerGraderRequest,
   type RunnerGraderResult,
@@ -66,6 +68,7 @@ export function parseCodexStreamJson({
   let triggered = false;
   let response = '';
   let usage = normalizeUsage(undefined);
+  let sawResult = false;
   const targetSubstr = `${skillName}/SKILL.md`;
 
   for (const event of events) {
@@ -87,8 +90,15 @@ export function parseCodexStreamJson({
       }
     }
     if (event.type === 'turn.completed') {
+      sawResult = true;
       usage = normalizeUsage(event.usage);
     }
+  }
+
+  if (!sawResult) {
+    throw new RunnerError(
+      'codex stream ended without a final turn.completed event',
+    );
   }
 
   return {
@@ -107,11 +117,7 @@ export interface ParseCodexGraderParams {
 export function parseCodexGraderJson({
   stdout,
   fallbackDurationMs = 0,
-}: ParseCodexGraderParams): {
-  output: unknown;
-  durationMs: number;
-  usage: RunnerUsage;
-} {
+}: ParseCodexGraderParams): ParsedGraderOutput {
   const stream = parseCodexStreamJson({
     stdout,
     skillName: '',
@@ -138,19 +144,25 @@ export function createCodexRunner({
 
   return {
     name: 'codex',
-    async runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const args = buildCodexTaskArgs(request.prompt);
+    async runTask({
+      prompt,
+      workdir,
+      runDir,
+      skillName,
+      timeoutSeconds,
+    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
+      const args = buildCodexTaskArgs(prompt);
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
       });
       const parsed = parseCodexStreamJson({
         stdout: proc.stdout,
-        skillName: request.skillName,
+        skillName,
         fallbackDurationMs: proc.durationMs,
       });
       return {
@@ -165,17 +177,23 @@ export function createCodexRunner({
       };
     },
 
-    async runGrader(request: RunnerGraderRequest): Promise<RunnerGraderResult> {
+    async runGrader({
+      prompt,
+      schemaPath,
+      workdir,
+      runDir,
+      timeoutSeconds,
+    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
       const args = buildCodexGraderArgs({
-        prompt: request.prompt,
-        schemaPath: request.schemaPath,
+        prompt,
+        schemaPath,
       });
       const proc = await spawnRunnerProcess({
         binary: resolvedBin,
         args,
-        cwd: request.workdir,
-        runDir: request.runDir,
-        timeoutSeconds: request.timeoutSeconds,
+        cwd: workdir,
+        runDir,
+        timeoutSeconds,
         env,
         logPrefix: 'grader',
       });
