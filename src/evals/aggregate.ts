@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { EvalError } from '../errors.ts';
 import { readTextIfExists } from '../install/fs.ts';
+import { isSkillName } from '../skills/validate.ts';
 import type { EvalCase, TriggerQuery, TriggerSplit } from './cases.ts';
 import {
   formatAssertionLabel,
@@ -349,16 +350,18 @@ function aggregateCaseAssertions({
     const withoutRate = rateFor(withoutRuns);
     const oldRate = rateFor(oldRuns);
     const comparePassRates: Record<string, number> = {};
-    let firstCompareRate: number | undefined;
     for (const name of compareSkillNames) {
       const rate = rateFor(
         caseRuns.filter((run) => run.variant === compareSkillVariant(name)),
       );
       if (rate !== undefined) {
         comparePassRates[name] = rate;
-        firstCompareRate ??= rate;
       }
     }
+    const firstCompareRate =
+      compareSkillNames[0] !== undefined
+        ? comparePassRates[compareSkillNames[0]]
+        : undefined;
 
     return {
       text: label,
@@ -728,7 +731,8 @@ const variantSchema = z.custom<EvalVariant>(
   (val) =>
     typeof val === 'string' &&
     ((VARIANTS as readonly string[]).includes(val) ||
-      (val.startsWith('compare:') && val.length > 'compare:'.length)),
+      (val.startsWith('compare:') &&
+        isSkillName(val.slice('compare:'.length)))),
   { error: 'Invalid eval variant' },
 );
 
@@ -801,7 +805,15 @@ const benchmarkSummarySchema = z.looseObject({
       case_id: z.string(),
       prompt: z.string(),
       expected_output: z.string(),
-      variants: z.record(z.string(), variantAggregateSchema),
+      variants: z
+        .record(z.string(), variantAggregateSchema)
+        .refine(
+          (obj) =>
+            Object.keys(obj).every(
+              (key) => variantSchema.safeParse(key).success,
+            ),
+          { error: 'Invalid eval variant' },
+        ),
       assertions: z.array(assertionAggregateSchema),
       runs: z.array(runRecordSchema),
     }),

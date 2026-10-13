@@ -1525,3 +1525,71 @@ test('skill eval --compare <skill-a>,<skill-b> evaluates competing skills side b
     UsageError,
   );
 });
+
+test('runAdd with --source all filters skills marked offensive in awesome index and --source awesome ignores invalid SKILLS_SH_URL', async (t) => {
+  const awesomeUpstream = await createUpstream(t, {
+    [AWESOME_INDEX_FILE]: JSON.stringify([
+      {
+        id: 'red-team-exploit',
+        path: 'skills/red-team-exploit',
+        category: 'offensive',
+        name: 'red-team-exploit',
+        description: 'Offensive security testing skill',
+        risk: 'offensive',
+      },
+      {
+        id: 'safe-defender',
+        path: 'skills/safe-defender',
+        category: 'security',
+        name: 'safe-defender',
+        description: 'Defensive security hardening skill',
+        risk: 'low',
+      },
+    ]),
+    'skills/safe-defender/SKILL.md': skillSource('safe-defender'),
+  });
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        skills: [
+          {
+            id: '1',
+            skillId: 'red-team-exploit',
+            name: 'red-team-exploit',
+            installs: 9000,
+            source: 'sickn33/agentic-awesome-skills',
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const { ctx, repoRoot } = await testContext(t, {
+    url: () => awesomeUpstream.url,
+  });
+  ctx.sources.skillsShUrl = () => {
+    throw new Error('SKILLS_SH_URL should not be read for --source awesome');
+  };
+  const awesomeDryRunCode = await runAdd(ctx, {
+    target: 'security',
+    source: 'awesome',
+    yes: false,
+    dryRun: true,
+  });
+  ctx.sources.skillsShUrl = `http://127.0.0.1:${port}`;
+  const allCode = await runAdd(ctx, {
+    target: 'security',
+    source: 'all',
+    yes: true,
+    dryRun: false,
+  });
+  const catalog = await loadCatalog(join(repoRoot, 'catalog.yaml'));
+
+  assert.equal(allCode, 0);
+  assert.equal(awesomeDryRunCode, 0);
+  assert.ok(catalog.skills.some((entry) => entry.name === 'safe-defender'));
+  assert.ok(!catalog.skills.some((entry) => entry.name === 'red-team-exploit'));
+});

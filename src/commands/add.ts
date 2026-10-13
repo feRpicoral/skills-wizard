@@ -35,6 +35,7 @@ import {
   type DiscoverSource,
   type DiscoveryCandidate,
   inspectDiscoveredSkill,
+  isOffensiveCandidate,
   locateSkillsInRepo,
   parseSkillTarget,
   type ResolvedDiscoveredSkill,
@@ -53,10 +54,13 @@ import {
   loadLibrary,
   type Location,
   notify,
+  notifyLeftGit,
   readLocationManifest,
   resolveLocation,
   resolveVariables,
   sourceCache,
+  warnLockedSkills,
+  warnTrackedFiles,
 } from './shared.ts';
 
 export interface AddOptions {
@@ -121,6 +125,31 @@ interface SearchCandidatesParams {
   includeOffensive: boolean;
 }
 
+interface MergeCandidateMetadataParams {
+  primary: DiscoveryCandidate;
+  enrichment: DiscoveryCandidate | undefined;
+}
+
+function mergeCandidateMetadata({
+  primary,
+  enrichment,
+}: MergeCandidateMetadataParams): DiscoveryCandidate {
+  if (!enrichment || primary === enrichment) return primary;
+  const path = primary.path ?? enrichment.path;
+  const description = primary.description ?? enrichment.description;
+  const category = primary.category ?? enrichment.category;
+  const risk = primary.risk ?? enrichment.risk;
+  const tags = primary.tags ?? enrichment.tags;
+  return {
+    ...primary,
+    ...(path !== undefined ? { path } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(category !== undefined ? { category } : {}),
+    ...(risk !== undefined ? { risk } : {}),
+    ...(tags !== undefined ? { tags } : {}),
+  };
+}
+
 async function searchCandidates({
   ctx,
   prompting,
@@ -130,6 +159,15 @@ async function searchCandidates({
   includeOffensive,
 }: SearchCandidatesParams): Promise<DiscoveryCandidate[]> {
   const cache = sourceCache(ctx);
+  if (source === 'awesome') {
+    return searchAwesomeIndex({
+      cache,
+      query,
+      ...(category ? { category } : {}),
+      includeOffensive,
+    });
+  }
+
   const rawBaseUrl = ctx.sources.skillsShUrl;
   const baseUrl = typeof rawBaseUrl === 'function' ? rawBaseUrl() : rawBaseUrl;
   const fetchFn = ctx.sources.fetch;
@@ -139,14 +177,6 @@ async function searchCandidates({
       query,
       ...(baseUrl ? { baseUrl } : {}),
       ...(fetchFn ? { fetchFn } : {}),
-    });
-  }
-  if (source === 'awesome') {
-    return searchAwesomeIndex({
-      cache,
-      query,
-      ...(category ? { category } : {}),
-      includeOffensive,
     });
   }
 
@@ -159,8 +189,7 @@ async function searchCandidates({
     searchAwesomeIndex({
       cache,
       query,
-      ...(category ? { category } : {}),
-      includeOffensive,
+      includeOffensive: true,
     }),
   ]);
 
@@ -181,17 +210,39 @@ async function searchCandidates({
     notify({ ctx, prompting, message: reason.message, level: 'warn' });
   }
 
+  const awesomeItems =
+    awesomeOutcome.status === 'fulfilled' ? awesomeOutcome.value : [];
+  const awesomeByKey = new Map(
+    awesomeItems.map((item) => [`${item.repo}@${item.name}`, item]),
+  );
   const combined = [
     ...(skillsShOutcome.status === 'fulfilled' ? skillsShOutcome.value : []),
-    ...(awesomeOutcome.status === 'fulfilled' ? awesomeOutcome.value : []),
+    ...awesomeItems,
   ];
+  const normalizedCategory = category?.trim().toLowerCase();
   const seen = new Set<string>();
   const deduplicated: DiscoveryCandidate[] = [];
   for (const item of combined) {
     const key = `${item.repo}@${item.name}`;
     if (seen.has(key)) continue;
+    const merged = mergeCandidateMetadata({
+      primary: item,
+      enrichment: awesomeByKey.get(key),
+    });
+    if (!includeOffensive && isOffensiveCandidate(merged)) {
+      seen.add(key);
+      continue;
+    }
+    if (
+      normalizedCategory &&
+      merged.category !== undefined &&
+      merged.category.toLowerCase() !== normalizedCategory
+    ) {
+      seen.add(key);
+      continue;
+    }
     seen.add(key);
-    deduplicated.push(item);
+    deduplicated.push(merged);
   }
   return deduplicated;
 }
@@ -474,7 +525,14 @@ async function installAddedSkill({
         scope,
       })
     : defaultBlockIds(library, scope);
-  const { ids: blocks } = withRequirements(library, baseBlocks);
+  const { ids: blocks, added } = withRequirements(library, baseBlocks);
+  if (added.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Added required blocks: ${added.join(', ')}`,
+    });
+  }
   const variables = await resolveVariables({
     ctx,
     prompting,
@@ -492,6 +550,9 @@ async function installAddedSkill({
       })
     : [];
   const skills = [...new Set([...priorSkills, entry.name])];
+  if (scope === 'global') {
+    await warnLockedSkills(ctx, prompting, skills);
+  }
   const { sources: skillSources, problems } = await resolveSkillSources({
     library: skillLibrary,
     names: priorSkills,
@@ -518,6 +579,11 @@ async function installAddedSkill({
     linkable: false,
   });
 
+  const recordedLocal = previous?.options.keepLocal ?? false;
+  const keepLocal = recordedLocal && location.project?.git !== undefined;
+  if (location.project && recordedLocal && !keepLocal) {
+    notifyLeftGit(ctx, prompting, location.project.dir);
+  }
   const preset = previous
     ? dropUnknownPreset({
         ctx,
@@ -533,9 +599,7 @@ async function installAddedSkill({
       skills,
       variables,
       linkCommand: previous?.options.linkCommand ?? false,
-      keepLocal:
-        (previous?.options.keepLocal ?? false) &&
-        location.project?.git !== undefined,
+      keepLocal,
       skillMode: previous?.options.skillMode ?? DEFAULT_SKILL_MODE,
       ...(preset !== undefined ? { preset } : {}),
       ...(previous?.options.style !== undefined
@@ -550,6 +614,14 @@ async function installAddedSkill({
     ...(location.project ? { project: location.project } : {}),
     skillSources,
   });
+  if (keepLocal) {
+    await warnTrackedFiles({
+      ctx,
+      prompting,
+      plan,
+      ...(location.project ? { project: location.project } : {}),
+    });
+  }
 
   let catalogBefore: string | null | undefined;
   const writeCatalog = async () => {

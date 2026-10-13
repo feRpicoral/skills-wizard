@@ -153,14 +153,23 @@ async function isSparse(cache: SourceCache, dir: string): Promise<boolean> {
   return value === 'true';
 }
 
-async function applyPaths(
-  cache: SourceCache,
-  dir: string,
-  spec: SourceSpec,
-): Promise<void> {
+interface ApplyPathsParams {
+  cache: SourceCache;
+  dir: string;
+  spec: SourceSpec;
+  isFreshClone?: boolean;
+}
+
+async function applyPaths({
+  cache,
+  dir,
+  spec,
+  isFreshClone = false,
+}: ApplyPathsParams): Promise<void> {
   const failure = `Could not limit the checkout of ${spec.repo}`;
+  const sparse = await isSparse(cache, dir);
   if (spec.paths.includes(WHOLE_REPOSITORY)) {
-    if (await isSparse(cache, dir)) {
+    if (sparse) {
       await git({
         cache,
         args: ['sparse-checkout', 'disable'],
@@ -170,8 +179,9 @@ async function applyPaths(
     }
     return;
   }
+  if (!isFreshClone && !sparse) return;
   const wanted = [...new Set(spec.paths)].sort();
-  if (await isSparse(cache, dir)) {
+  if (sparse) {
     if (wanted.length === 0) return;
     const current = (
       await git({
@@ -184,7 +194,15 @@ async function applyPaths(
       .split('\n')
       .filter(Boolean)
       .sort();
-    if (current.join('\n') === wanted.join('\n')) return;
+    const merged = [...new Set([...current, ...wanted])].sort();
+    if (current.join('\n') === merged.join('\n')) return;
+    await git({
+      cache,
+      args: ['sparse-checkout', 'set', '--cone', ...merged],
+      failure,
+      cwd: dir,
+    });
+    return;
   }
   // checkSpec rejects paths starting with "-"; sparse-checkout only accepts
   // --end-of-options from git 2.44, so it is not passed here.
@@ -250,7 +268,7 @@ async function clone(
       ],
       failure: `Could not clone ${spec.repo}`,
     });
-    await applyPaths(cache, staging, spec);
+    await applyPaths({ cache, dir: staging, spec, isFreshClone: true });
     if (pinnedCommit) {
       await checkoutRef(cache, staging, spec);
     } else {
@@ -280,7 +298,7 @@ export async function ensureSource(
     await clone(cache, dir, spec);
     return dir;
   }
-  await applyPaths(cache, dir, spec);
+  await applyPaths({ cache, dir, spec });
   const state = await readState(dir);
   if (state.ref !== (spec.ref ?? null)) {
     await checkoutRef(cache, dir, spec);

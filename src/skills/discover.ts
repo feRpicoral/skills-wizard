@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { DEFAULT_SKILLS_SH_URL } from '../env.ts';
 import { FrontmatterError, SourceError, UsageError } from '../errors.ts';
 import { parseFrontmatter } from '../frontmatter.ts';
-import { isDirectory, readTextIfExists } from '../install/fs.ts';
+import { isDirectory, lstatIfExists, readTextIfExists } from '../install/fs.ts';
 import {
   isGitRef,
   isRepository,
@@ -311,7 +311,16 @@ export async function searchSkillsSh({
     );
   }
 
-  const rawText = await readBoundedText(response);
+  let rawText: string;
+  try {
+    rawText = await readBoundedText(response);
+  } catch (error) {
+    if (error instanceof SourceError) throw error;
+    throw new SourceError(
+      `Could not read skills.sh response (${error instanceof Error ? error.message : String(error)})`,
+      { cause: error },
+    );
+  }
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(rawText);
@@ -381,6 +390,13 @@ function isOffensiveEntry(entry: AwesomeItem): boolean {
   );
 }
 
+export function isOffensiveCandidate(candidate: DiscoveryCandidate): boolean {
+  return (
+    candidate.category?.toLowerCase() === 'offensive' ||
+    candidate.risk?.toLowerCase() === 'offensive'
+  );
+}
+
 function resolveAwesomeSkillName(entry: AwesomeItem): string | undefined {
   if (isSkillName(entry.id)) return entry.id;
   if (isSkillName(entry.name)) return entry.name;
@@ -446,6 +462,10 @@ export async function searchAwesomeIndex({
 }: SearchAwesomeIndexParams): Promise<DiscoveryCandidate[]> {
   const root = await ensureSource(cache, { repo, paths: [] });
   const indexFile = join(root, AWESOME_INDEX_FILE);
+  const indexStat = await lstatIfExists(indexFile);
+  if (!indexStat?.isFile()) {
+    throw new SourceError(`${repo} does not contain ${AWESOME_INDEX_FILE}`);
+  }
   const rawContent = await readTextIfExists(indexFile);
   if (rawContent === null) {
     throw new SourceError(`${repo} does not contain ${AWESOME_INDEX_FILE}`);
@@ -683,12 +703,25 @@ async function assertInsideRepository({
   if (!(await isDirectory(skillDir))) {
     throw new SourceError(`${repo} does not contain skill directory "${path}"`);
   }
+  const skillStat = await lstatIfExists(skillDir);
+  if (!skillStat?.isDirectory()) {
+    throw new SourceError(
+      `${repo}: skill path "${path}" must be a directory, not a symlink`,
+    );
+  }
   const [realRoot, realSkill] = await Promise.all([
     realpath(repoRoot),
     realpath(skillDir),
   ]);
+  const expectedRealSkill =
+    path === WHOLE_REPOSITORY ? realRoot : join(realRoot, ...path.split('/'));
   const rel = relative(realRoot, realSkill);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (
+    rel === '..' ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel) ||
+    realSkill !== expectedRealSkill
+  ) {
     throw new SourceError(
       `${repo}: skill path "${path}" resolves outside the repository`,
     );

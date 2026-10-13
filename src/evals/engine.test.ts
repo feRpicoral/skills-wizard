@@ -843,3 +843,43 @@ test('runSkillEval stages competing skills for compareSkills and records side-by
     /\| `compare:alt-skill` \| 100\.0% ± 0\.0% \|/,
   );
 });
+
+test('runSkillEval rejects invalid compareSkills names or escaping links before allocating an iteration directory', async (t) => {
+  const { paths, repoRoot, skillDir, env } = await demoSkill({ t });
+  const badLinkDir = join(repoRoot, 'skills', 'bad-link');
+  await writeFiles(badLinkDir, {
+    'SKILL.md': skillSource('bad-link'),
+  });
+  await symlink('../../secret.txt', join(badLinkDir, 'leak.txt'));
+
+  await assert.rejects(
+    runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: paths.evalsDir,
+      runner: createFakeRunner(),
+      compareSkills: [{ skillName: '../escape', skillDir: badLinkDir }],
+      paths,
+      env,
+    }),
+    (error: unknown) =>
+      error instanceof EvalError &&
+      /not a valid skill name/.test(error.message),
+  );
+  await assert.rejects(
+    runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: paths.evalsDir,
+      runner: createFakeRunner(),
+      compareSkills: [{ skillName: 'bad-link', skillDir: badLinkDir }],
+      paths,
+      env,
+    }),
+    (error: unknown) =>
+      error instanceof EvalError &&
+      /links that point outside the skill folder/.test(error.message),
+  );
+
+  assert.equal(await lstatIfExists(join(paths.evalsDir, 'demo-skill')), null);
+});

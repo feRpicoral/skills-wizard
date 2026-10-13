@@ -290,3 +290,23 @@ test('a link chain that leaves the skill folder is an error', async (t) => {
     'leak does not resolve inside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
   ]);
 });
+
+test('validateSkill rejects a symlinked SKILL.md that escapes the skill folder without reading the target', async (t) => {
+  const root = await tempDir(t);
+  await writeFiles(root, {
+    'outside.md': skillSource('outside-secret'),
+  });
+  const dir = await skillDir({
+    root,
+    folder: 'escaped-skill',
+    files: { 'README.md': '# Escaped\n' },
+  });
+  await symlink('../outside.md', join(dir, 'SKILL.md'));
+
+  const report = await validateSkill(dir, { strict: false });
+
+  assert.equal(report.name, undefined);
+  assert.deepEqual(report.errors, [
+    'SKILL.md does not resolve inside the skill folder (../outside.md); links must be relative and stay inside it',
+  ]);
+});
