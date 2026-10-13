@@ -10,13 +10,13 @@
 
 ## 1. Frontmatter Specification
 
-Strict validation (`yarn agents-config skill validate skills/<name>`) enforces the Agent Skills specification:
+Strict validation (`agents-config skill validate skills/<name>`, or `yarn agents-config skill validate skills/<name>` inside the agents-config repository) enforces the Agent Skills specification. Without the CLI, check each row by hand:
 
 | Field           | Required | Constraints                                                                                                                      |
 | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `name`          | Yes      | 1-64 chars; lowercase `a-z`, `0-9`, and single `-`; cannot start/end with `-` or contain `--`; must match parent directory name. |
 | `description`   | Yes      | 1-1024 chars; non-empty string; must state what the skill does and when to use it (`Use when...`).                               |
-| `license`       | No       | Non-empty string (for example `MIT` or `Apache-2.0`).                                                                            |
+| `license`       | No       | Non-empty string (for example `MIT`); add it only when the repository ships that license, never as a default.                    |
 | `compatibility` | No       | 1-500 chars describing runtime, OS, or binary requirements.                                                                      |
 | `metadata`      | No       | Map of string keys to string values only (nested objects or numbers fail strict validation).                                     |
 | `allowed-tools` | No       | Space-delimited string of pre-approved tool names.                                                                               |
@@ -59,7 +59,7 @@ When adding scripts under `skills/<name>/scripts/`:
 - Prefer established, focused libraries over hand-rolled parsing, schema validation, or path lookup logic when writing helper scripts or recommending project dependencies.
 - Never block on interactive stdin prompts; fail fast with usage instructions when required flags are missing.
 - Support `--help` and exit `0` when printing help.
-- Keep `evals/` out of runtime dependencies: `copySkillTree` strips `evals/` when installing skills to `~/.agents/skills/<name>`.
+- Keep `evals/` out of runtime dependencies: copy-mode installs to `~/.agents/skills/<name>` leave out `evals/`, but link-mode installs expose the whole folder, `evals/files/` included.
 
 ## 5. Pre-Flight Authoring Checklist
 
@@ -67,6 +67,8 @@ When adding scripts under `skills/<name>/scripts/`:
 - [ ] `description` uses third-person voice, includes `Use when...` and `Don't use for...`, and is <=1024 characters.
 - [ ] `SKILL.md` body is under 300 lines and uses imperative steps with concrete examples.
 - [ ] No `README.md`, `CHANGELOG.md`, or nested reference chains exist inside `skills/<name>/`.
-- [ ] `evals/evals.json` has >=3 cases with fixture files under `evals/files/<case-id>/` and mixed scripted + string assertions.
-- [ ] `evals/trigger_queries.json` has 10 positive and 10 near-miss negative queries.
-- [ ] `yarn agents-config skill validate skills/<name>` exits `0` with 0 errors and 0 warnings.
+- [ ] `evals/evals.json` has >=3 cases with ids matching `^[A-Za-z0-9][A-Za-z0-9._-]*$` and fixture files under `evals/files/<case-id>/`.
+- [ ] Every case has at least one assertion; scripted ones use only `file_exists`, `file_absent`, `regex`, `json_valid`, or `command`, and check conventions the skill teaches.
+- [ ] At least one case prompt is casual and underspecified, the way a user would actually ask.
+- [ ] `evals/trigger_queries.json` has 10 positive and 10 near-miss negative queries written as plain requests, with no labels such as `[negative]`.
+- [ ] `agents-config skill validate skills/<name>` exits `0` with 0 errors and 0 warnings (or every item above was checked by hand when the CLI is unavailable).
