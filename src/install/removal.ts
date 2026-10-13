@@ -4,7 +4,7 @@ import { readSymlink, resolveIfSymlink, statIfExists } from './fs.ts';
 import { removeLine } from './import-line.ts';
 import {
   isEmptyJsonObject,
-  LEGACY_CREATED_KEYS,
+  legacyCreatedKeys,
   removeArrayValues,
 } from './json-merge.ts';
 import {
@@ -197,7 +197,12 @@ function planJsonArrayRemoval(
       keyPath: entry.key,
       values: entry.added,
       restoreString: entry.wasString,
-      createdKeys: entry.createdKeys ?? LEGACY_CREATED_KEYS,
+      createdKeys:
+        entry.createdKeys ??
+        legacyCreatedKeys({
+          keyPath: entry.key,
+          createdFile: entry.createdFile,
+        }),
     });
     if (next === file.existing) {
       return removal({ entry, change: NONE, reason: NOTHING_LEFT });

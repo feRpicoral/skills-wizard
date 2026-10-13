@@ -9,7 +9,7 @@ import {
   statIfExists,
 } from './fs.ts';
 import { ensureLine, hasLine, removeLine } from './import-line.ts';
-import { ensureArrayValues, LEGACY_CREATED_KEYS } from './json-merge.ts';
+import { ensureArrayValues } from './json-merge.ts';
 import { isBlank } from './lines.ts';
 import {
   excludeMarkers,
@@ -228,6 +228,19 @@ function planLine({
   });
 }
 
+type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
+
+function createdKeysField(
+  earlier: JsonArrayEntry | null,
+  created: number,
+): { createdKeys?: number } {
+  if (!earlier) return { createdKeys: created };
+  if (earlier.createdKeys === undefined) {
+    return created > 0 ? { createdKeys: created } : {};
+  }
+  return { createdKeys: Math.max(earlier.createdKeys, created) };
+}
+
 function planJsonArray({
   target,
   file,
@@ -258,10 +271,7 @@ function planJsonArray({
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
-        createdKeys: Math.max(
-          earlier ? (earlier.createdKeys ?? LEGACY_CREATED_KEYS) : 0,
-          result.createdKeys,
-        ),
+        ...createdKeysField(earlier, result.createdKeys),
         createdFile: file.createdFile,
       },
       previous,
