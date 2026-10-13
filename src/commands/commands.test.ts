@@ -984,3 +984,38 @@ test('skill triggers warns when a personal Claude skill shadows the staged one',
   assert.match(output.join('\n'), /warning: .*personal skill/);
   assert.equal(summary.metadata.possibly_contaminated, true);
 });
+
+test('skill triggers reports queries excluded because every run failed', async (t) => {
+  const { ctx, output } = await testContext(t);
+  await runSkill(ctx, {
+    subcommand: 'new',
+    paths: ['failing-skill'],
+    withEvals: true,
+  });
+  const binDir = await tempDir(t);
+  const binary = join(binDir, 'claude');
+  await writeFile(binary, '#!/bin/sh\necho "boom" >&2\nexit 1\n');
+  await chmod(binary, 0o755);
+
+  const code = await runSkill(ctx, {
+    subcommand: 'triggers',
+    paths: ['failing-skill'],
+    runner: 'claude',
+    binary,
+  });
+  const summary = JSON.parse(
+    await readFile(
+      join(ctx.paths.evalsDir, 'failing-skill', 'triggers-1', 'triggers.json'),
+      'utf8',
+    ),
+  ) as { metrics: { errored_queries: number; total_queries: number } };
+
+  assert.equal(code, 0);
+  assert.ok(summary.metrics.errored_queries > 0);
+  assert.match(
+    output.join('\n'),
+    new RegExp(
+      `, ${summary.metrics.errored_queries}/${summary.metrics.total_queries} queries excluded \\(failed runs\\)\\.`,
+    ),
+  );
+});
