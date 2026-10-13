@@ -1,9 +1,9 @@
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
-import { isDirectory, statIfExists } from '../install/fs.ts';
+import { isDirectory, lstatIfExists, statIfExists } from '../install/fs.ts';
 import {
   aggregateBenchmark,
   aggregateTriggerRuns,
@@ -76,6 +76,49 @@ async function runWithConcurrency<T, R>({
 }
 
 const MAX_ITERATION_ATTEMPTS = 1000;
+
+// Gives the owner write and search permission on every folder below `path`,
+// so folders the agent made read-only can be removed. Best effort.
+async function makeTreeWritable(path: string): Promise<void> {
+  const info = await lstatIfExists(path);
+  if (!info?.isDirectory()) return;
+  try {
+    await chmod(path, (info.mode & 0o7777) | 0o700);
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      if (entry.isDirectory()) await makeTreeWritable(join(path, entry.name));
+    }
+  } catch {
+    // Not ours to change; the retry below reports what is left.
+  }
+}
+
+interface RemoveWorkdirParams {
+  path: string;
+  onLog?: (line: string) => void;
+}
+
+// Agents can leave read-only folders behind. Cleanup must not turn a graded
+// run into a fatal error, so a workdir that cannot be removed is left with a
+// warning.
+async function removeWorkdir({
+  path,
+  onLog,
+}: RemoveWorkdirParams): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+    return;
+  } catch {
+    await makeTreeWritable(path);
+  }
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    onLog?.(
+      `warning: could not remove workdir ${path} (${reason}); left it in place`,
+    );
+  }
+}
 
 function isAlreadyExists(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'EEXIST';
@@ -334,7 +377,7 @@ export async function runSkillEval({
 
         onLog?.(
           timing.error === undefined
-            ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds}s)`
+            ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds.toFixed(1)}s)`
             : `${label}: agent run failed: ${timing.error}`,
         );
 
@@ -349,7 +392,7 @@ export async function runSkillEval({
         return record;
       } finally {
         if (!keepWorkdirs) {
-          await rm(prepared.workdir, { recursive: true, force: true });
+          await removeWorkdir({ path: prepared.workdir, onLog });
         }
       }
     },
@@ -513,7 +556,7 @@ export async function runSkillTriggers({
         return runResult;
       } finally {
         if (!keepWorkdirs) {
-          await rm(workdir, { recursive: true, force: true });
+          await removeWorkdir({ path: workdir, onLog });
         }
       }
     },
