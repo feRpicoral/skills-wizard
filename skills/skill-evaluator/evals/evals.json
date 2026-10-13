@@ -9,8 +9,14 @@
       "assertions": [
         "evals/evals.json covers a casually phrased request, a precise specification and an edge case for markdown-link-checker",
         "The should_trigger: false queries in evals/trigger_queries.json are near misses such as external URL uptime checks or HTML scraping rather than unrelated tasks",
-        { "type": "json_valid", "path": "evals/evals.json" },
-        { "type": "json_valid", "path": "evals/trigger_queries.json" },
+        {
+          "type": "json_valid",
+          "path": "evals/evals.json"
+        },
+        {
+          "type": "json_valid",
+          "path": "evals/trigger_queries.json"
+        },
         {
           "type": "regex",
           "path": "evals/evals.json",
@@ -35,7 +41,6 @@
       "files": ["evals/files/precise-scripted-assertions/evals/evals.json"],
       "assertions": [
         "evals/evals.json keeps a natural-language assertion about explaining why erasableSyntaxOnly is required for Node 24",
-        { "type": "json_valid", "path": "evals/evals.json" },
         {
           "type": "command",
           "run": "node -e \"const s=JSON.parse(require('fs').readFileSync('evals/evals.json','utf8'));const a=s.evals[0].assertions;const by=t=>a.filter(x=>x&&x.type===t);const types=new Set(['file_exists','file_absent','regex','json_valid','command']);process.exit(by('file_exists').some(x=>x.path==='tsconfig.json')&&by('file_absent').some(x=>x.path==='tsconfig.build.json')&&by('json_valid').some(x=>x.path==='tsconfig.json')&&by('regex').some(x=>x.path==='tsconfig.json'&&/erasableSyntaxOnly/.test(x.pattern))&&a.every(x=>typeof x==='string'||types.has(x.type))?0:1)\"",
@@ -61,7 +66,10 @@
         "diagnosis.md explains that the without_skill baseline is possibly contaminated because dockerfile-hardener is installed globally and the codex runner cannot exclude it, so the 0 pp delta is not trustworthy",
         "diagnosis.md names the 3 non-discriminating assertions and recommends replacing them with checks for conventions the skill teaches, such as a non-root USER or a digest-pinned base image",
         "diagnosis.md reads the drop from 100% train recall to 50% validation recall as a description overfitted to the train queries",
-        { "type": "file_exists", "path": "diagnosis.md" },
+        {
+          "type": "file_exists",
+          "path": "diagnosis.md"
+        },
         {
           "type": "regex",
           "path": "diagnosis.md",
