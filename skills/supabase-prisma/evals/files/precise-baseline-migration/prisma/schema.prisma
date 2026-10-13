@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Account {
-  id        String   @id @default(uuid(7))
+  id        String   @id @default(uuid(7)) @db.Uuid
   email     String   @unique
   createdAt DateTime @default(now()) @map("created_at")
 

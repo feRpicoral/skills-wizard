@@ -59,15 +59,16 @@
     },
     {
       "id": "precise-baseline-migration",
-      "prompt": "Running `yarn prisma migrate dev` against our Supabase database fails with schema drift because of Supabase's auth and storage schemas, and asks to reset the database. Write a repeatable script at scripts/baseline-supabase.sh that creates the 0_init baseline migration from prisma/schema.prisma and marks it applied, and add a `db:baseline` script to package.json.",
-      "expected_output": "Creates scripts/baseline-supabase.sh that makes prisma/migrations/0_init, runs prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > prisma/migrations/0_init/migration.sql, and runs prisma migrate resolve --applied 0_init (plus prisma migrate deploy), without ever calling prisma migrate reset. Adds db:baseline to package.json.",
+      "prompt": "Running `yarn prisma migrate dev` against our existing Supabase database (where the accounts table is already live) fails with schema drift because of Supabase's auth and storage schemas, and asks to reset the database. Write a repeatable script at scripts/baseline-supabase.sh and add a `db:baseline` script to package.json so Prisma Migrate tracks our schema safely without resetting Supabase or leaving public tables exposed without RLS.",
+      "expected_output": "Creates scripts/baseline-supabase.sh that makes prisma/migrations/0_init, runs prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > prisma/migrations/0_init/migration.sql, enables Row Level Security on public tables, and runs prisma migrate resolve --applied 0_init (for existing tables, noting that an empty database runs prisma migrate deploy without resolve first) without ever calling prisma migrate reset. Adds db:baseline to package.json.",
       "files": [
         "evals/files/precise-baseline-migration/package.json",
         "evals/files/precise-baseline-migration/prisma/schema.prisma",
         "evals/files/precise-baseline-migration/prisma.config.ts"
       ],
       "assertions": [
-        "Explains why prisma migrate reset must not be run on Supabase and why 0_init baselining with prisma migrate diff and prisma migrate resolve --applied 0_init is used instead",
+        "Explains why prisma migrate reset must not be run on Supabase and why 0_init baselining with prisma migrate diff and prisma migrate resolve --applied 0_init is used for an existing schema (whereas an empty database runs prisma migrate deploy without resolve first)",
+        "Enables or explains enabling Row Level Security (ENABLE ROW LEVEL SECURITY) on public tables created by Prisma in Supabase",
         { "type": "file_exists", "path": "scripts/baseline-supabase.sh" },
         { "type": "json_valid", "path": "package.json" },
         {
@@ -84,6 +85,11 @@
           "type": "regex",
           "path": "scripts/baseline-supabase.sh",
           "pattern": "migrate\\s+resolve\\s+--applied\\s+0_init"
+        },
+        {
+          "type": "regex",
+          "path": "scripts/baseline-supabase.sh",
+          "pattern": "ENABLE ROW LEVEL SECURITY"
         },
         {
           "type": "regex",

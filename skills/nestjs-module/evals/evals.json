@@ -38,8 +38,18 @@
           "path": "src/modules/invoices/invoices.controller.ts"
         },
         {
+          "type": "regex",
+          "path": "src/modules/invoices/invoices.controller.ts",
+          "pattern": "ZodResponse"
+        },
+        {
           "type": "file_exists",
           "path": "src/modules/invoices/invoices.module.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/app.module.ts",
+          "pattern": "InvoicesModule"
         },
         {
           "type": "file_exists",
@@ -49,8 +59,8 @@
     },
     {
       "id": "precise-webhooks-domain-module",
-      "prompt": "Scaffold a `webhooks` domain module under `src/modules/webhooks/` with `webhooks.dto.ts`, `webhooks.repository.ts`, `webhooks.service.ts`, `webhooks.controller.ts`, `webhooks.module.ts`, and `webhooks.service.spec.ts` for creating and looking up organization webhook endpoints (`organizationId` + `endpointId`).",
-      "expected_output": "All six files created under src/modules/webhooks/ following strict Controller -> Service -> Repository layering, Zod DTOs with @ZodResponse, named interface parameter objects for multi-string methods, and AAA unit tests.",
+      "prompt": "We need endpoints to register and look up organization webhook endpoints (by organizationId and endpointId) backed by the WebhookEndpoint model in prisma/schema.prisma. Add the webhooks feature to this NestJS service following our module conventions.",
+      "expected_output": "All six files created under src/modules/webhooks/ following strict Controller -> Service -> Repository layering, Zod DTOs with @ZodResponse, named interface parameter objects for multi-string methods, WebhooksModule registered in src/app.module.ts, and AAA unit tests.",
       "files": [
         "evals/files/precise-webhooks-domain-module/package.json",
         "evals/files/precise-webhooks-domain-module/prisma/schema.prisma",
@@ -78,8 +88,18 @@
           "path": "src/modules/webhooks/webhooks.controller.ts"
         },
         {
+          "type": "regex",
+          "path": "src/modules/webhooks/webhooks.controller.ts",
+          "pattern": "ZodResponse"
+        },
+        {
           "type": "file_exists",
           "path": "src/modules/webhooks/webhooks.module.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/app.module.ts",
+          "pattern": "WebhooksModule"
         },
         {
           "type": "file_exists",

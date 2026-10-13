@@ -30,7 +30,8 @@ Use this exact JSON structure when creating or updating the default-branch rules
         "dismiss_stale_reviews_on_push": false,
         "require_code_owner_review": false,
         "require_last_push_approval": false,
-        "required_review_thread_resolution": false
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["merge"]
       }
     }
   ]
@@ -47,11 +48,40 @@ Use this exact JSON structure when creating or updating the default-branch rules
 - `rules`:
   - `deletion`: blocks deleting the default branch.
   - `non_fast_forward`: blocks force-pushes to the default branch.
-  - `pull_request`: blocks direct pushes and requires changes to arrive via pull request. `required_approving_review_count` is `0` so solo repositories still enforce PR flow and CI checks without requiring a second reviewer account.
+  - `pull_request`: blocks direct pushes and requires changes to arrive via pull request. `required_approving_review_count` is `0` so solo repositories still enforce PR flow and CI checks without requiring a second reviewer account, and `allowed_merge_methods` is `["merge"]` so ruleset-level merge restrictions match the repository-level merge policy.
+
+### Status-Check Extension (`required_status_checks`)
+
+When the repository has required CI checks (or when updating an existing ruleset that already defines status checks), include a `required_status_checks` rule in `rules`:
+
+```json
+{
+  "type": "required_status_checks",
+  "parameters": {
+    "strict_required_status_checks_policy": false,
+    "do_not_enforce_on_create": false,
+    "required_status_checks": [
+      {
+        "context": "check"
+      }
+    ]
+  }
+}
+```
+
+## Creating a New Repository (`gh repo create`)
+
+When the remote repository does not exist yet, confirm visibility (`--private` vs `--public`) with the user first, then create it from the local repository before applying merge settings and the ruleset:
+
+```bash
+gh repo create "<owner>/<repo>" --private --source=. --remote=origin
+```
+
+If ruleset creation on a private repository returns HTTP 403 (`Upgrade to GitHub Pro or make this repository public to enable this feature`), stop and report that repository rulesets on private repositories require GitHub Pro/Team/Enterprise — never change the repository's visibility to public automatically.
 
 ## Idempotent Setup Script (`scripts/setup-github-repo.sh`)
 
-When a task asks for a repeatable setup script, use `gh` for read-only inspection first, then apply repository settings and create or update the ruleset:
+When a task asks for a repeatable setup script, use `gh` for read-only inspection first (with `--paginate` and `?includes_parents=false` so inherited organization rulesets are not mistaken for repository rulesets), inspect any existing repository ruleset before overwriting it, then apply repository settings and create or update the ruleset:
 
 ```bash
 #!/usr/bin/env bash
@@ -68,9 +98,10 @@ gh repo edit "$REPO" \
   --enable-rebase-merge=false \
   --delete-branch-on-merge=true
 
-EXISTING_ID="$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id' | head -n 1 || true)"
+EXISTING_ID="$(gh api --paginate "repos/$REPO/rulesets?includes_parents=false" --jq '.[] | select(.name == "main" and .target == "branch") | .id' | head -n 1 || true)"
 
 if [ -n "$EXISTING_ID" ]; then
+  gh api "repos/$REPO/rulesets/$EXISTING_ID" >/dev/null
   gh api \
     --method PUT \
     -H "Accept: application/vnd.github+json" \
@@ -85,7 +116,7 @@ else
 fi
 
 gh repo view "$REPO" --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,deleteBranchOnMerge
-gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | {id, name, enforcement, target}'
+gh api --paginate "repos/$REPO/rulesets?includes_parents=false" --jq '.[] | select(.name == "main") | {id, name, enforcement, target}'
 ```
 
 ## Verification Checklist

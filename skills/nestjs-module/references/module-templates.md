@@ -2,7 +2,7 @@
 
 ## File Layout
 
-Every domain module under `src/modules/<domain>/` (or `src/<domain>/`) follows kebab-case naming with role suffixes:
+Every domain module under `src/modules/<domain>/` (or `src/<domain>/`) follows kebab-case naming with role suffixes (match the target project's import-specifier convention—extensionless relative imports in standard NestJS builds, or `.ts` when `allowImportingTsExtensions` is enabled):
 
 - `<domain>.dto.ts` (or `<domain>.schema.ts` + `<domain>.dto.ts`)
 - `<domain>.repository.ts`
@@ -12,6 +12,8 @@ Every domain module under `src/modules/<domain>/` (or `src/<domain>/`) follows k
 - `<domain>.service.spec.ts`
 
 ## 1. `<domain>.dto.ts`
+
+Requires `zod@^4.0.0` (for `z.iso.datetime()`) and `nestjs-zod@^5.0.0`:
 
 ```ts
 import { createZodDto } from 'nestjs-zod';
@@ -29,6 +31,7 @@ export const webhookEndpointResponseSchema = z.object({
   url: z.string().url(),
   events: z.array(z.string()),
   active: z.boolean(),
+  createdAt: z.iso.datetime(),
 });
 
 export class CreateWebhookEndpointDto extends createZodDto(
@@ -124,7 +127,7 @@ export class WebhooksService {
     if (!endpoint) {
       throw new NotFoundException(`Webhook endpoint ${endpointId} not found`);
     }
-    return endpoint;
+    return this.toResponseDto(endpoint);
   }
 
   async createEndpoint(
@@ -139,7 +142,26 @@ export class WebhooksService {
         `Webhook endpoint for ${dto.url} already exists`,
       );
     }
-    return this.webhooksRepository.create(dto);
+    const created = await this.webhooksRepository.create(dto);
+    return this.toResponseDto(created);
+  }
+
+  private toResponseDto(record: {
+    id: string;
+    organizationId: string;
+    url: string;
+    events: string[];
+    active: boolean;
+    createdAt: Date;
+  }): WebhookEndpointResponseDto {
+    return {
+      id: record.id,
+      organizationId: record.organizationId,
+      url: record.url,
+      events: record.events,
+      active: record.active,
+      createdAt: record.createdAt.toISOString(),
+    };
   }
 }
 ```
@@ -184,7 +206,7 @@ export class WebhooksController {
 
 Note on NestJS controller methods: NestJS parameter decorators (`@Param`, `@Body`, `@Query`) bind to positional controller parameters at the HTTP boundary; the controller immediately packages multiple same-type values into the named parameter object passed to the service.
 
-## 5. `<domain>.module.ts`
+## 5. `<domain>.module.ts` and `app.module.ts` Registration
 
 ```ts
 import { Module } from '@nestjs/common';
@@ -203,9 +225,29 @@ import { WebhooksService } from './webhooks.service.ts';
 export class WebhooksModule {}
 ```
 
+Register `WebhooksModule`, `ZodValidationPipe` (`APP_PIPE`), and `ZodSerializerInterceptor` (`APP_INTERCEPTOR`) in `src/app.module.ts`:
+
+```ts
+import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { ZodSerializerInterceptor, ZodValidationPipe } from 'nestjs-zod';
+
+import { PrismaModule } from './modules/prisma/prisma.module.ts';
+import { WebhooksModule } from './modules/webhooks/webhooks.module.ts';
+
+@Module({
+  imports: [PrismaModule, WebhooksModule],
+  providers: [
+    { provide: APP_PIPE, useClass: ZodValidationPipe },
+    { provide: APP_INTERCEPTOR, useClass: ZodSerializerInterceptor },
+  ],
+})
+export class AppModule {}
+```
+
 ## 6. `<domain>.service.spec.ts`
 
-Arrange, act, and assert phases are separated by a single empty line with no phase comments:
+Arrange, act, and assert phases are separated by a single empty line with no phase comments. Type `jest.fn<WebhooksRepository['method']>()` explicitly when importing `jest` from `@jest/globals`:
 
 ```ts
 import { NotFoundException } from '@nestjs/common';
@@ -216,17 +258,22 @@ import { WebhooksService } from './webhooks.service.ts';
 
 describe('WebhooksService', () => {
   it('returns the endpoint when it belongs to the organization', async () => {
+    const createdAt = new Date('2026-01-15T12:00:00.000Z');
     const record = {
       id: '01950000-0000-7000-8000-000000000001',
       organizationId: '01950000-0000-7000-8000-000000000002',
       url: 'https://example.com/webhooks',
       events: ['invoice.paid'],
       active: true,
+      createdAt,
+      updatedAt: createdAt,
     };
     const repository = {
-      findById: jest.fn().mockResolvedValue(record),
-      findByUrl: jest.fn(),
-      create: jest.fn(),
+      findById: jest
+        .fn<WebhooksRepository['findById']>()
+        .mockResolvedValue(record),
+      findByUrl: jest.fn<WebhooksRepository['findByUrl']>(),
+      create: jest.fn<WebhooksRepository['create']>(),
     } as unknown as WebhooksRepository;
     const service = new WebhooksService(repository);
 
@@ -235,7 +282,14 @@ describe('WebhooksService', () => {
       endpointId: record.id,
     });
 
-    expect(result).toEqual(record);
+    expect(result).toEqual({
+      id: record.id,
+      organizationId: record.organizationId,
+      url: record.url,
+      events: record.events,
+      active: record.active,
+      createdAt: '2026-01-15T12:00:00.000Z',
+    });
     expect(repository.findById).toHaveBeenCalledWith({
       organizationId: record.organizationId,
       endpointId: record.id,
@@ -244,9 +298,11 @@ describe('WebhooksService', () => {
 
   it('throws NotFoundException when the endpoint does not exist', async () => {
     const repository = {
-      findById: jest.fn().mockResolvedValue(null),
-      findByUrl: jest.fn(),
-      create: jest.fn(),
+      findById: jest
+        .fn<WebhooksRepository['findById']>()
+        .mockResolvedValue(null),
+      findByUrl: jest.fn<WebhooksRepository['findByUrl']>(),
+      create: jest.fn<WebhooksRepository['create']>(),
     } as unknown as WebhooksRepository;
     const service = new WebhooksService(repository);
 
