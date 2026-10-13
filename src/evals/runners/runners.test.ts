@@ -1052,6 +1052,33 @@ test('the fake runner passes error and usageReported through', async (t) => {
   assert.equal(result.usageReported, false);
 });
 
+test('the fake runner sees the skill only when it is staged in .agents/skills and not excluded', async (t) => {
+  const root = await tempDir(t);
+  const runner = createFakeRunner();
+  const run = (workdir: string, excludeSkill?: boolean) =>
+    runner.runTask({
+      prompt: 'Hello',
+      workdir,
+      runDir: join(root, 'run'),
+      skillName: 'demo-skill',
+      timeoutSeconds: 10,
+      excludeSkill,
+    });
+  const staged = join(root, 'staged');
+  await writeFiles(staged, {
+    '.agents/skills/demo-skill/SKILL.md': '---\nname: demo-skill\n---\n',
+    // Nothing writes this file anymore, so it must not hide the skill.
+    '.agents/skills.json': JSON.stringify({ exclude: ['demo-skill'] }),
+  });
+  const baseline = join(root, 'baseline');
+  await writeFiles(baseline, { 'input.txt': 'hello\n' });
+
+  assert.equal((await run(staged)).triggered, true);
+  assert.equal((await run(staged, true)).triggered, false);
+  assert.equal((await run(baseline)).triggered, false);
+  assert.match((await run(baseline)).response, /without skill/);
+});
+
 test('detectDefaultRunner prioritizes agy -> claude -> codex -> gemini and agy runner executes binary', async (t) => {
   const root = await tempDir(t);
   const binDir = join(root, 'bin');
