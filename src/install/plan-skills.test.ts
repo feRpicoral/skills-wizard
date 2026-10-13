@@ -17,9 +17,11 @@ import { promisify } from 'node:util';
 import type { BlockLibrary } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import type { SkillSource } from '../skills/install.ts';
+import { hashTree } from '../skills/tree.ts';
 import {
   globalManifestPath,
   type Manifest,
+  MANIFEST_VERSION,
   projectManifestPath,
   readManifest,
   readProjectManifest,
@@ -561,4 +563,45 @@ test('keep-local excludes the project skill folders and links', async (t) => {
   const exclude = await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8');
   assert.match(exclude, /^\/\.agents\/skills\/notes$/m);
   assert.match(exclude, /^\/\.claude\/skills\/notes$/m);
+});
+
+test('a committed manifest that records a project folder as a skill is refused and deletes nothing', async (t) => {
+  const paths = await tempPaths(t);
+  const dir = await realpath(await tempDir(t));
+  await writeFiles(dir, { 'src/lib/index.ts': 'export {};\n' });
+  await writeFiles(dir, {
+    '.agents/agents-config.json': JSON.stringify({
+      version: MANIFEST_VERSION,
+      scope: 'project',
+      tools: ['claude-code'],
+      blocks: [],
+      skills: [],
+      variables: {},
+      options: {},
+      entries: [
+        {
+          kind: 'skill',
+          path: 'src/lib',
+          name: 'lib',
+          source: { type: 'local', path: 'skills/lib' },
+          install: { mode: 'copy', hash: await hashTree(join(dir, 'src/lib')) },
+        },
+      ],
+    }),
+  });
+
+  await assert.rejects(
+    installProject({
+      paths,
+      project: { dir, title: 'app' },
+      tools: ['claude-code'],
+      skills: [],
+    }),
+    /the lib skill must be recorded at/,
+  );
+
+  assert.equal(
+    await readFile(join(dir, 'src', 'lib', 'index.ts'), 'utf8'),
+    'export {};\n',
+  );
 });
