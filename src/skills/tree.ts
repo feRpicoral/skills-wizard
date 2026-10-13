@@ -12,8 +12,17 @@ import {
   rm,
   symlink,
 } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 
+import { UnsafeWriteError } from '../errors.ts';
 import { lstatIfExists } from '../install/fs.ts';
 
 const GENERATED: ReadonlySet<string> = new Set([
@@ -149,6 +158,38 @@ export async function hashInstalledCopy({
   return hashFiles(await snapshotEntries(entries));
 }
 
+interface LinkTargetParams {
+  root: string;
+  path: string;
+  target: string;
+}
+
+function linkEscapes({ root, path, target }: LinkTargetParams): boolean {
+  if (isAbsolute(target)) return true;
+  const inside = relative(
+    root,
+    resolve(root, ...path.split('/').slice(0, -1), target),
+  );
+  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside);
+}
+
+export interface EscapingLink {
+  path: string;
+  target: string;
+}
+
+export async function escapingLinks(root: string): Promise<EscapingLink[]> {
+  const links: EscapingLink[] = [];
+  for (const entry of await walk(root, notCopied)) {
+    if (!entry.link) continue;
+    const target = await readlink(entry.absolute);
+    if (linkEscapes({ root, path: entry.path, target })) {
+      links.push({ path: entry.path, target });
+    }
+  }
+  return links;
+}
+
 interface CopySkillTreeParams {
   source: string;
   destination: string;
@@ -163,7 +204,13 @@ export async function copySkillTree({
     const target = join(destination, ...entry.path.split('/'));
     await mkdir(dirname(target), { recursive: true });
     if (entry.link) {
-      await symlink(await readlink(entry.absolute), target);
+      const linked = await readlink(entry.absolute);
+      if (linkEscapes({ root: source, path: entry.path, target: linked })) {
+        throw new UnsafeWriteError(
+          `refusing to copy ${entry.path}: it links outside the skill (${linked})`,
+        );
+      }
+      await symlink(linked, target);
     } else {
       await copyFile(entry.absolute, target);
       await chmod(target, entry.mode);
