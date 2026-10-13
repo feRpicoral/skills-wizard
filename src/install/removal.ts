@@ -1,6 +1,7 @@
 import { dirname } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
+import { removeMcpJsonServers, removeMcpTomlServers } from '../mcp/install.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import { readSymlink, resolveIfSymlink, statIfExists } from './fs.ts';
 import { removeLine } from './import-line.ts';
@@ -39,6 +40,8 @@ type FileEntry = Exclude<ManifestEntry, SymlinkEntry | SkillEntry>;
 type RegionEntry = Extract<FileEntry, { kind: 'region' | 'exclude-region' }>;
 type LineEntry = Extract<FileEntry, { kind: 'line' }>;
 type JsonArrayEntry = Extract<FileEntry, { kind: 'json-array' }>;
+type McpJsonEntry = Extract<FileEntry, { kind: 'mcp-json' }>;
+type McpTomlEntry = Extract<FileEntry, { kind: 'mcp-toml' }>;
 
 interface ResolvedRemovalFile {
   writePath: string;
@@ -246,6 +249,61 @@ function planJsonArrayRemoval(
   }
 }
 
+function planMcpJsonRemoval(
+  entry: McpJsonEntry,
+  file: ResolvedRemovalFile,
+): PlannedAction {
+  try {
+    const removed = removeMcpJsonServers({
+      existing: file.existing,
+      servers: entry.servers,
+      createdMcpServers: entry.createdMcpServers ?? entry.createdFile,
+      ...(entry.original === undefined ? {} : { original: entry.original }),
+    });
+    const next =
+      entry.wasEmpty && isEmptyJsonObject(removed)
+        ? (entry.blankText ?? '')
+        : removed;
+    if (next === file.existing) {
+      return removal({ entry, change: NONE, reason: NOTHING_LEFT });
+    }
+    return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
+  } catch (error) {
+    if (error instanceof JsonMergeError) {
+      return conflict({
+        target: { path: entry.path, label: REMOVAL_LABEL },
+        previous: entry,
+        reason: error.message,
+      });
+    }
+    throw error;
+  }
+}
+
+function planMcpTomlRemoval(
+  entry: McpTomlEntry,
+  file: ResolvedRemovalFile,
+): PlannedAction {
+  try {
+    const remaining = removeMcpTomlServers(file.existing);
+    return rewriteOrDelete({
+      entry,
+      file,
+      next: remaining,
+      emptyWhen: (next) => next === '',
+    });
+  } catch (error) {
+    if (error instanceof ManagedRegionError) {
+      return conflict({
+        target: { path: entry.path, label: REMOVAL_LABEL },
+        previous: entry,
+        reason: error.message,
+      });
+    }
+    throw error;
+  }
+}
+
 export interface PlanRemovalParams {
   entry: ManifestEntry;
   staged: StagedContents;
@@ -301,5 +359,9 @@ export async function planRemoval({
       return planLineRemoval(entry, resolved);
     case 'json-array':
       return planJsonArrayRemoval(entry, resolved);
+    case 'mcp-json':
+      return planMcpJsonRemoval(entry, resolved);
+    case 'mcp-toml':
+      return planMcpTomlRemoval(entry, resolved);
   }
 }

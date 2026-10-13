@@ -19,6 +19,7 @@ import {
   statIfExists,
   writeTextAtomic,
 } from '../install/fs.ts';
+import { isMcpServerName } from '../mcp/model.ts';
 import { PROJECT_STYLES } from '../project/presets.ts';
 import { SKILL_MODES } from '../skills/install.ts';
 import { isSkillName } from '../skills/validate.ts';
@@ -29,6 +30,10 @@ export const MANIFEST_VERSION = 1;
 const pathField = z.string().min(1);
 
 const skillName = z.string().refine(isSkillName, 'must be a valid skill name');
+
+const mcpServerName = z
+  .string()
+  .refine(isMcpServerName, 'must be a valid MCP server name');
 
 const skillSourceSchema = z.discriminatedUnion('type', [
   z.object({
@@ -99,6 +104,25 @@ const entrySchema = z.discriminatedUnion('kind', [
     source: skillSourceSchema,
     install: skillInstallSchema,
   }),
+  z.object({
+    kind: z.literal('mcp-json'),
+    path: pathField,
+    servers: z.array(mcpServerName),
+    createdMcpServers: z.boolean().optional(),
+    original: z.string().optional(),
+    wasEmpty: z.boolean().optional(),
+    blankText: z
+      .string()
+      .regex(/^[\s\uFEFF]*$/, 'must hold only whitespace')
+      .optional(),
+    createdFile: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal('mcp-toml'),
+    path: pathField,
+    servers: z.array(mcpServerName),
+    createdFile: z.boolean(),
+  }),
 ]);
 
 export type ManifestEntry = z.infer<typeof entrySchema>;
@@ -109,6 +133,7 @@ const manifestSchema = z.object({
   tools: z.array(z.enum(TOOL_IDS)),
   blocks: z.array(z.string()),
   skills: z.array(skillName).default([]),
+  mcp: z.array(mcpServerName).default([]),
   variables: z.record(z.string(), z.string()),
   options: z
     .object({
@@ -195,6 +220,36 @@ export function checkSkillEntries({
           `${file}: ${entry.path} is not a skill link in a tool skills folder`,
         );
       }
+    }
+  }
+}
+
+export interface McpConfigPaths {
+  json: readonly string[];
+  toml: readonly string[];
+}
+
+interface CheckMcpEntriesParams {
+  file: string;
+  entries: readonly ManifestEntry[];
+  mcpPaths: McpConfigPaths;
+}
+
+export function checkMcpEntries({
+  file,
+  entries,
+  mcpPaths,
+}: CheckMcpEntriesParams): void {
+  for (const entry of entries) {
+    if (entry.kind === 'mcp-json' && !mcpPaths.json.includes(entry.path)) {
+      throw new ManifestError(
+        `${file}: ${entry.path} is not a tool MCP JSON config file`,
+      );
+    }
+    if (entry.kind === 'mcp-toml' && !mcpPaths.toml.includes(entry.path)) {
+      throw new ManifestError(
+        `${file}: ${entry.path} is not a tool MCP TOML config file`,
+      );
     }
   }
 }

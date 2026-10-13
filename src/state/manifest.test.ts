@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import { ManifestError } from '../errors.ts';
 import { tempDir } from '../test-support/fixtures.ts';
 import {
+  checkMcpEntries,
   checkSkillEntries,
   type Manifest,
   MANIFEST_VERSION,
@@ -29,6 +30,7 @@ function manifest(entries: Manifest['entries']): Manifest {
     tools: ['claude-code'],
     blocks: ['core/no-ai-tells'],
     skills: [],
+    mcp: [],
     variables: {},
     options: { keepLocal: false },
     entries,
@@ -323,4 +325,61 @@ test('system-wide manifests with absolute paths are read', async (t) => {
   await storeRaw(file, entries);
 
   assert.deepEqual((await readGlobalManifest(file))?.entries, entries);
+});
+
+test('checkMcpEntries rejects MCP entries outside known tool config paths', () => {
+  const mcpPaths = {
+    json: ['/work/app/.mcp.json', '/work/app/.agents/mcp_config.json'],
+    toml: ['/work/app/.codex/config.toml'],
+  };
+
+  const validCheck = () =>
+    checkMcpEntries({
+      file: 'manifest.json',
+      entries: [
+        {
+          kind: 'mcp-json',
+          path: '/work/app/.mcp.json',
+          servers: ['context7'],
+          createdFile: true,
+        },
+        {
+          kind: 'mcp-toml',
+          path: '/work/app/.codex/config.toml',
+          servers: ['context7'],
+          createdFile: true,
+        },
+      ],
+      mcpPaths,
+    });
+  const invalidJsonCheck = () =>
+    checkMcpEntries({
+      file: 'manifest.json',
+      entries: [
+        {
+          kind: 'mcp-json',
+          path: '/work/app/package.json',
+          servers: ['context7'],
+          createdFile: true,
+        },
+      ],
+      mcpPaths,
+    });
+  const invalidTomlCheck = () =>
+    checkMcpEntries({
+      file: 'manifest.json',
+      entries: [
+        {
+          kind: 'mcp-toml',
+          path: '/work/app/pyproject.toml',
+          servers: ['context7'],
+          createdFile: true,
+        },
+      ],
+      mcpPaths,
+    });
+
+  assert.doesNotThrow(validCheck);
+  assert.throws(invalidJsonCheck, /is not a tool MCP JSON config file/);
+  assert.throws(invalidTomlCheck, /is not a tool MCP TOML config file/);
 });
