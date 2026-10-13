@@ -23,9 +23,11 @@ import { failureDetail } from './process.ts';
 const run = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 5 * 60_000;
+const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const STATE_FILE = 'agents-config.json';
 const COMMIT = /^[0-9a-f]{40}$/;
+const REGULAR_MODES: ReadonlySet<string> = new Set(['100644', '100755']);
 const DEFAULT_REF = 'HEAD';
 const END_OF_OPTIONS = '--end-of-options';
 
@@ -33,6 +35,8 @@ export interface SourceSettings {
   url: (repo: string) => string;
   env: Environment;
   now: () => Date;
+  skillsShUrl?: string | (() => string);
+  fetch?: typeof globalThis.fetch;
 }
 
 export interface SourceCache extends SourceSettings {
@@ -92,7 +96,7 @@ interface GitRunParams {
   cwd?: string;
 }
 
-async function git({
+async function gitRaw({
   cache,
   args,
   failure,
@@ -103,13 +107,18 @@ async function git({
       cwd,
       env: cache.env,
       timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
     });
-    return stdout.trim();
+    return stdout;
   } catch (error) {
     throw new SourceError(`${failure}: ${failureDetail(error)}`, {
       cause: error,
     });
   }
+}
+
+async function git(params: GitRunParams): Promise<string> {
+  return (await gitRaw(params)).trim();
 }
 
 function stateFile(dir: string): string {
@@ -163,6 +172,7 @@ async function applyPaths(
   }
   const wanted = [...new Set(spec.paths)].sort();
   if (await isSparse(cache, dir)) {
+    if (wanted.length === 0) return;
     const current = (
       await git({
         cache,
@@ -383,6 +393,68 @@ export async function restoreSource({
     cache,
     args: ['checkout', '--quiet', '--detach', commit],
     failure: `Could not restore ${repo}`,
+    cwd: sourceDir(cache, repo),
+  });
+}
+
+export interface RepositoryTreeFile {
+  path: string;
+  blobSha: string;
+}
+
+export interface ListRepositoryFilesParams {
+  cache: SourceCache;
+  repo: string;
+}
+
+export async function listRepositoryFiles({
+  cache,
+  repo,
+}: ListRepositoryFilesParams): Promise<RepositoryTreeFile[]> {
+  const output = await gitRaw({
+    cache,
+    args: ['--literal-pathspecs', 'ls-tree', '-r', '-z', '--full-tree', 'HEAD'],
+    failure: `Could not list files in ${repo}`,
+    cwd: sourceDir(cache, repo),
+  });
+  const files: RepositoryTreeFile[] = [];
+  for (const record of output.split('\0')) {
+    if (!record) continue;
+    const tabIndex = record.indexOf('\t');
+    if (tabIndex === -1) continue;
+    const meta = record.slice(0, tabIndex);
+    const path = record.slice(tabIndex + 1);
+    const [mode = '', type = '', blobSha = ''] = meta.split(' ');
+    if (
+      type === 'blob' &&
+      REGULAR_MODES.has(mode) &&
+      COMMIT.test(blobSha) &&
+      path.length > 0
+    ) {
+      files.push({ path, blobSha });
+    }
+  }
+  return files;
+}
+
+export interface ReadRepositoryBlobParams {
+  cache: SourceCache;
+  repo: string;
+  blobSha: string;
+}
+
+export async function readRepositoryBlob({
+  cache,
+  repo,
+  blobSha,
+}: ReadRepositoryBlobParams): Promise<string> {
+  if (!COMMIT.test(blobSha)) {
+    throw new SourceError(`${repo}: invalid blob object id "${blobSha}"`);
+  }
+  return gitRaw({
+    cache,
+    args: ['cat-file', 'blob', blobSha],
+    failure: `Could not read blob ${blobSha} in ${repo}`,
     cwd: sourceDir(cache, repo),
   });
 }

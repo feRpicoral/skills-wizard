@@ -5,6 +5,7 @@ import {
   resolveAgyExtraArgs,
   resolvePaths,
   resolveSearchPath,
+  resolveSkillsShUrl,
 } from './env.ts';
 import { githubUrl, type SourceSettings } from './skills/sources.ts';
 
@@ -48,6 +49,7 @@ export function createContext({
       url: githubUrl,
       env: gitEnvironment(),
       now: () => new Date(),
+      skillsShUrl: () => resolveSkillsShUrl(),
     },
     agy: {
       bin: () => resolveAgyBin(),
