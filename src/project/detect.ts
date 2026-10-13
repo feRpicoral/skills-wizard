@@ -1,5 +1,8 @@
 import { basename, join } from 'node:path';
 
+import { parse as parseYaml } from 'yaml';
+
+import { isSystemError } from '../errors.ts';
 import {
   isInside,
   readDirIfExists,
@@ -9,7 +12,8 @@ import {
 } from '../install/fs.ts';
 import type { PresetId } from './presets.ts';
 
-export type DetectedPackageManager = 'yarn' | 'pnpm' | 'npm' | 'uv';
+export type DetectedPackageManager =
+  'yarn' | 'pnpm' | 'npm' | 'bun' | 'uv' | 'poetry';
 
 export interface WorkspacePackageInfo {
   relativePath: string;
@@ -17,6 +21,13 @@ export interface WorkspacePackageInfo {
   description?: string;
   scripts: Record<string, string>;
   dependencies: string[];
+}
+
+export interface PythonToolSignals {
+  hasRuff: boolean;
+  hasMypy: boolean;
+  hasPyright: boolean;
+  hasPytest: boolean;
 }
 
 export interface ProjectDetection {
@@ -28,10 +39,53 @@ export interface ProjectDetection {
   scripts: Record<string, string>;
   hasNx: boolean;
   hasPyproject: boolean;
+  pythonTools?: PythonToolSignals;
   workspaces: WorkspacePackageInfo[];
   detectedBlocks: string[];
   detectedSkills: string[];
 }
+
+export const DETECTABLE_BLOCKS = [
+  'stack/nextjs',
+  'stack/tailwind-shadcn',
+  'stack/nestjs',
+  'stack/expo-react-native',
+  'stack/tanstack-query',
+  'stack/react-vite',
+  'stack/prisma',
+  'stack/supabase-prisma',
+  'stack/llm-apps',
+  'stack/python-uv',
+] as const;
+
+export const DETECTABLE_SKILLS = [
+  'vercel-react-best-practices',
+  'vercel-composition-patterns',
+  'web-design-guidelines',
+  'nestjs-module',
+  'eas-workflows',
+  'eas-update',
+  'expo-dev-client',
+  'expo-upgrade',
+  'expo-module',
+  'react-native-best-practices',
+  'react-navigation',
+  'react-native-testing',
+  'upgrading-react-native',
+  'vercel-react-native-skills',
+  'prisma-cli',
+  'prisma-client-api',
+  'prisma-orm-setup',
+  'prisma-upgrade-v7',
+  'supabase-prisma',
+  'supabase',
+  'supabase-postgres-best-practices',
+  'tanstack-query-expert',
+  'tailwind-patterns',
+  'ai-sdk',
+  'claude-api',
+  'playwright-cli',
+] as const;
 
 interface BoundaryPathParams {
   projectDir: string;
@@ -50,19 +104,36 @@ interface ParsedPackageJson {
 interface ParsedPyproject {
   name?: string;
   description?: string;
+  hasUvSection: boolean;
+  hasPoetrySection: boolean;
+  tools: PythonToolSignals;
+}
+
+async function safeRealLocation(path: string): Promise<string | null> {
+  try {
+    return await realLocation(path);
+  } catch (error) {
+    if (isSystemError(error)) return null;
+    throw error;
+  }
 }
 
 async function resolveProjectFile({
   projectDir,
   relativePath,
 }: BoundaryPathParams): Promise<string | null> {
-  const root = (await realLocation(projectDir)) ?? projectDir;
-  const location = await realLocation(join(root, relativePath));
+  const root = (await safeRealLocation(projectDir)) ?? projectDir;
+  const location = await safeRealLocation(join(root, relativePath));
   if (location === null || !isInside({ dir: root, path: location })) {
     return null;
   }
-  if (!(await statIfExists(location))?.isFile()) return null;
-  return location;
+  try {
+    if (!(await statIfExists(location))?.isFile()) return null;
+    return location;
+  } catch (error) {
+    if (isSystemError(error)) return null;
+    throw error;
+  }
 }
 
 export async function readProjectFile({
@@ -71,7 +142,12 @@ export async function readProjectFile({
 }: BoundaryPathParams): Promise<string | null> {
   const location = await resolveProjectFile({ projectDir, relativePath });
   if (location === null) return null;
-  return readTextIfExists(location);
+  try {
+    return await readTextIfExists(location);
+  } catch (error) {
+    if (isSystemError(error)) return null;
+    throw error;
+  }
 }
 
 async function hasProjectFile({
@@ -135,7 +211,6 @@ function parsePackageJson(source: string): ParsedPackageJson | null {
       ...new Set([
         ...dependencyNames(parsed.dependencies),
         ...dependencyNames(parsed.devDependencies),
-        ...dependencyNames(parsed.peerDependencies),
       ]),
     ].sort();
     const workspaces = parseWorkspacesField(parsed.workspaces);
@@ -152,73 +227,214 @@ function parsePackageJson(source: string): ParsedPackageJson | null {
   }
 }
 
-function parsePyprojectToml(source: string): ParsedPyproject {
-  const projectSection = source.match(
-    /^\s*\[project\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m,
+function extractTomlTableBody(source: string, header: string): string | null {
+  const escaped = header.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `^\\s*\\[${escaped}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`,
+    'm',
   );
-  const body = projectSection ? (projectSection[1] ?? source) : source;
-  const nameMatch = body.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
-  const descMatch = body.match(/^\s*description\s*=\s*["']([^"']+)["']/m);
-  const name = nameMatch?.[1]?.trim();
-  const description = descMatch?.[1]?.trim();
+  const match = source.match(pattern);
+  return match?.[1] ?? null;
+}
+
+function extractTomlStringValue(
+  tableBody: string,
+  key: string,
+): string | undefined {
+  const pattern = new RegExp(`^\\s*${key}\\s*=\\s*(["'])(.*?)\\1`, 'm');
+  const value = tableBody.match(pattern)?.[2]?.trim();
+  return value ? value : undefined;
+}
+
+function parsePyprojectToml(source: string): ParsedPyproject {
+  const projectBody = extractTomlTableBody(source, 'project');
+  const poetryBody = extractTomlTableBody(source, 'tool.poetry');
+  const metadataBody = projectBody ?? poetryBody;
+  const name = metadataBody
+    ? extractTomlStringValue(metadataBody, 'name')
+    : undefined;
+  const description = metadataBody
+    ? extractTomlStringValue(metadataBody, 'description')
+    : undefined;
+
+  const hasUvSection = /^\s*\[\[?tool\.uv(?:\]|\.)/m.test(source);
+  const hasPoetrySection = /^\s*\[\[?tool\.poetry(?:\]|\.)/m.test(source);
+  const hasRuff =
+    /^\s*\[tool\.ruff(?:\]|\.)/m.test(source) || /\bruff\b/i.test(source);
+  const hasMypy =
+    /^\s*\[tool\.mypy(?:\]|\.)/m.test(source) || /\bmypy\b/i.test(source);
+  const hasPyright =
+    /^\s*\[tool\.pyright(?:\]|\.)/m.test(source) || /\bpyright\b/i.test(source);
+  const hasPytest =
+    /^\s*\[tool\.pytest(?:\]|\.)/m.test(source) || /\bpytest\b/i.test(source);
+
   return {
-    ...(name ? { name } : {}),
-    ...(description ? { description } : {}),
+    ...(name !== undefined ? { name } : {}),
+    ...(description !== undefined ? { description } : {}),
+    hasUvSection,
+    hasPoetrySection,
+    tools: {
+      hasRuff,
+      hasMypy,
+      hasPyright,
+      hasPytest,
+    },
   };
 }
 
-function workspaceRootDirs(patterns: readonly string[]): string[] {
-  const roots = new Set<string>(['apps', 'packages', 'libs']);
-  for (const pattern of patterns) {
-    const cleaned = pattern.trim().replace(/\/+\*.*$/, '');
-    if (
-      cleaned &&
-      !cleaned.includes('*') &&
-      !cleaned.includes('..') &&
-      !cleaned.startsWith('/')
-    ) {
-      roots.add(cleaned);
-    }
+function parsePnpmWorkspaceYaml(source: string): string[] {
+  try {
+    const parsed = parseYaml(source) as unknown;
+    return parseWorkspacesField(parsed);
+  } catch {
+    return [];
   }
-  return [...roots];
 }
 
-async function discoverWorkspaces(
-  projectDir: string,
-  patterns: readonly string[],
-): Promise<WorkspacePackageInfo[]> {
-  const root = (await realLocation(projectDir)) ?? projectDir;
-  const roots = workspaceRootDirs(patterns);
-  const discovered: WorkspacePackageInfo[] = [];
+function sanitizeRelativePattern(raw: string): string | null {
+  const trimmed = raw
+    .trim()
+    .replace(/^\.\/+/, '')
+    .replace(/\/+$/, '');
+  if (
+    !trimmed ||
+    trimmed.startsWith('!') ||
+    trimmed.startsWith('/') ||
+    trimmed.split('/').includes('..')
+  ) {
+    return null;
+  }
+  return trimmed;
+}
 
-  for (const rootDir of roots) {
-    const dirLocation = await realLocation(join(root, rootDir));
-    if (dirLocation === null || !isInside({ dir: root, path: dirLocation })) {
+async function readWorkspacePackage(
+  projectDir: string,
+  relPkgDir: string,
+): Promise<WorkspacePackageInfo | null> {
+  const pkgJsonSource = await readProjectFile({
+    projectDir,
+    relativePath: `${relPkgDir}/package.json`,
+  });
+  if (pkgJsonSource === null) return null;
+  const parsed = parsePackageJson(pkgJsonSource);
+  if (!parsed) return null;
+  const fallbackName = basename(relPkgDir);
+  return {
+    relativePath: relPkgDir,
+    name: parsed.name ?? fallbackName,
+    ...(parsed.description !== undefined
+      ? { description: parsed.description }
+      : {}),
+    scripts: parsed.scripts,
+    dependencies: parsed.dependencies,
+  };
+}
+
+async function scanWorkspaceChildren(
+  projectDir: string,
+  root: string,
+  baseDir: string,
+  recursive: boolean,
+  seen: Set<string>,
+  discovered: WorkspacePackageInfo[],
+  depth = 0,
+): Promise<void> {
+  if (depth > 3) return;
+  const dirLocation = await safeRealLocation(join(root, baseDir));
+  if (dirLocation === null || !isInside({ dir: root, path: dirLocation })) {
+    return;
+  }
+  let entries;
+  try {
+    entries = await readDirIfExists(dirLocation);
+  } catch (error) {
+    if (isSystemError(error)) return;
+    throw error;
+  }
+  if (!entries) return;
+  const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of sorted) {
+    if (
+      !entry.isDirectory() ||
+      entry.name === 'node_modules' ||
+      entry.name.startsWith('.')
+    ) {
       continue;
     }
-    const entries = await readDirIfExists(dirLocation);
-    if (!entries) continue;
-    const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of sorted) {
-      if (!entry.isDirectory()) continue;
-      const relPkgDir = `${rootDir}/${entry.name}`;
-      const pkgJsonSource = await readProjectFile({
-        projectDir,
-        relativePath: `${relPkgDir}/package.json`,
-      });
-      if (pkgJsonSource === null) continue;
-      const parsed = parsePackageJson(pkgJsonSource);
-      if (!parsed) continue;
-      discovered.push({
-        relativePath: relPkgDir,
-        name: parsed.name ?? entry.name,
-        ...(parsed.description !== undefined
-          ? { description: parsed.description }
-          : {}),
-        scripts: parsed.scripts,
-        dependencies: parsed.dependencies,
-      });
+    const relPkgDir = `${baseDir}/${entry.name}`;
+    if (!seen.has(relPkgDir)) {
+      const info = await readWorkspacePackage(projectDir, relPkgDir);
+      if (info) {
+        seen.add(relPkgDir);
+        discovered.push(info);
+      }
     }
+    if (recursive) {
+      await scanWorkspaceChildren(
+        projectDir,
+        root,
+        relPkgDir,
+        true,
+        seen,
+        discovered,
+        depth + 1,
+      );
+    }
+  }
+}
+
+interface DiscoverWorkspacesParams {
+  projectDir: string;
+  patterns: readonly string[];
+  hasNx: boolean;
+}
+
+async function discoverWorkspaces({
+  projectDir,
+  patterns,
+  hasNx,
+}: DiscoverWorkspacesParams): Promise<WorkspacePackageInfo[]> {
+  const effectivePatterns =
+    patterns.length > 0
+      ? patterns
+      : hasNx
+        ? ['apps/*', 'packages/*', 'libs/*']
+        : [];
+  if (effectivePatterns.length === 0) return [];
+
+  const root = (await safeRealLocation(projectDir)) ?? projectDir;
+  const seen = new Set<string>();
+  const discovered: WorkspacePackageInfo[] = [];
+
+  for (const rawPattern of effectivePatterns) {
+    const cleaned = sanitizeRelativePattern(rawPattern);
+    if (!cleaned) continue;
+
+    if (!cleaned.includes('*')) {
+      if (seen.has(cleaned)) continue;
+      const dirLocation = await safeRealLocation(join(root, cleaned));
+      if (dirLocation === null || !isInside({ dir: root, path: dirLocation })) {
+        continue;
+      }
+      const info = await readWorkspacePackage(projectDir, cleaned);
+      if (info) {
+        seen.add(cleaned);
+        discovered.push(info);
+      }
+      continue;
+    }
+
+    const recursive = cleaned.includes('**');
+    const parentDir = cleaned.replace(/\/+\*.*$/, '');
+    if (!parentDir || parentDir.includes('*')) continue;
+    await scanWorkspaceChildren(
+      projectDir,
+      root,
+      parentDir,
+      recursive,
+      seen,
+      discovered,
+    );
   }
 
   return discovered;
@@ -227,39 +443,63 @@ async function discoverWorkspaces(
 interface DetectPackageManagerParams {
   projectDir: string;
   pkg: ParsedPackageJson | null;
-  hasPyproject: boolean;
+  pyproject: ParsedPyproject | null;
 }
 
 async function detectPackageManager({
   projectDir,
   pkg,
-  hasPyproject,
+  pyproject,
 }: DetectPackageManagerParams): Promise<DetectedPackageManager | undefined> {
   const declared = pkg?.packageManager?.toLowerCase() ?? '';
   if (declared.startsWith('yarn@')) return 'yarn';
   if (declared.startsWith('pnpm@')) return 'pnpm';
   if (declared.startsWith('npm@')) return 'npm';
+  if (declared.startsWith('bun@')) return 'bun';
 
   if (await hasProjectFile({ projectDir, relativePath: 'yarn.lock' })) {
-    return 'yarn';
-  }
-  if (await hasProjectFile({ projectDir, relativePath: '.yarnrc.yml' })) {
     return 'yarn';
   }
   if (await hasProjectFile({ projectDir, relativePath: 'pnpm-lock.yaml' })) {
     return 'pnpm';
   }
-  if (await hasProjectFile({ projectDir, relativePath: 'package-lock.json' })) {
+  if (
+    (await hasProjectFile({ projectDir, relativePath: 'package-lock.json' })) ||
+    (await hasProjectFile({ projectDir, relativePath: 'npm-shrinkwrap.json' }))
+  ) {
     return 'npm';
   }
-  if (pkg !== null) return 'yarn';
   if (
-    hasPyproject ||
+    (await hasProjectFile({ projectDir, relativePath: 'bun.lock' })) ||
+    (await hasProjectFile({ projectDir, relativePath: 'bun.lockb' }))
+  ) {
+    return 'bun';
+  }
+  if (await hasProjectFile({ projectDir, relativePath: '.yarnrc.yml' })) {
+    return 'yarn';
+  }
+  if (pkg !== null) return 'yarn';
+
+  if (
+    pyproject?.hasUvSection ||
     (await hasProjectFile({ projectDir, relativePath: 'uv.lock' }))
   ) {
     return 'uv';
   }
+  if (
+    pyproject?.hasPoetrySection ||
+    (await hasProjectFile({ projectDir, relativePath: 'poetry.lock' }))
+  ) {
+    return 'poetry';
+  }
   return undefined;
+}
+
+function isViteSsrFramework(deps: ReadonlySet<string>): boolean {
+  if (deps.has('@react-router/dev') || deps.has('@tanstack/react-start')) {
+    return true;
+  }
+  return [...deps].some((dep) => dep.startsWith('@remix-run/'));
 }
 
 interface ChoosePresetParams {
@@ -278,7 +518,7 @@ function choosePreset({
   if (hasNx || rootDeps.has('nx') || rootDeps.has('@nx/workspace')) {
     return 'nx-monorepo';
   }
-  if (rootDeps.has('expo') || rootDeps.has('react-native')) {
+  if (rootDeps.has('expo')) {
     return 'expo-app';
   }
   if (rootDeps.has('next')) {
@@ -289,7 +529,8 @@ function choosePreset({
   }
   if (
     rootDeps.has('vite') &&
-    (rootDeps.has('react') || rootDeps.has('@vitejs/plugin-react'))
+    (rootDeps.has('react') || rootDeps.has('@vitejs/plugin-react')) &&
+    !isViteSsrFramework(rootDeps)
   ) {
     return 'vite-spa';
   }
@@ -306,26 +547,26 @@ function choosePreset({
 }
 
 interface CollectAdditiveParams {
-  preset: PresetId | undefined;
+  hasWorkspacePackages: boolean;
   allDeps: ReadonlySet<string>;
   hasPrismaFiles: boolean;
   hasSupabaseFiles: boolean;
   hasComponentsJson: boolean;
-  hasPyproject: boolean;
+  isUvProject: boolean;
 }
 
 function collectAdditiveSelections({
-  preset,
+  hasWorkspacePackages,
   allDeps,
   hasPrismaFiles,
   hasSupabaseFiles,
   hasComponentsJson,
-  hasPyproject,
+  isUvProject,
 }: CollectAdditiveParams): { blocks: string[]; skills: string[] } {
   const blocks = new Set<string>();
   const skills = new Set<string>();
 
-  if (preset === 'nx-monorepo') {
+  if (hasWorkspacePackages) {
     if (allDeps.has('next')) {
       blocks.add('stack/nextjs');
       blocks.add('stack/tailwind-shadcn');
@@ -337,7 +578,7 @@ function collectAdditiveSelections({
       blocks.add('stack/nestjs');
       skills.add('nestjs-module');
     }
-    if (allDeps.has('expo') || allDeps.has('react-native')) {
+    if (allDeps.has('expo')) {
       blocks.add('stack/expo-react-native');
       blocks.add('stack/tanstack-query');
       skills.add('eas-workflows');
@@ -353,7 +594,8 @@ function collectAdditiveSelections({
     }
     if (
       allDeps.has('vite') &&
-      (allDeps.has('react') || allDeps.has('@vitejs/plugin-react'))
+      (allDeps.has('react') || allDeps.has('@vitejs/plugin-react')) &&
+      !isViteSsrFramework(allDeps)
     ) {
       blocks.add('stack/react-vite');
       blocks.add('stack/tailwind-shadcn');
@@ -378,8 +620,10 @@ function collectAdditiveSelections({
     allDeps.has('@supabase/supabase-js') ||
     allDeps.has('@supabase/ssr');
   if (hasSupabase) {
-    blocks.add('stack/supabase-prisma');
-    skills.add('supabase-prisma');
+    if (hasPrisma) {
+      blocks.add('stack/supabase-prisma');
+      skills.add('supabase-prisma');
+    }
     skills.add('supabase');
     skills.add('supabase-postgres-best-practices');
   }
@@ -421,7 +665,7 @@ function collectAdditiveSelections({
     skills.add('playwright-cli');
   }
 
-  if (hasPyproject) {
+  if (isUvProject) {
     blocks.add('stack/python-uv');
   }
 
@@ -458,6 +702,15 @@ export async function detectProject(
   const pyproject =
     pyprojectSource !== null ? parsePyprojectToml(pyprojectSource) : null;
 
+  const pnpmWorkspaceSource = await readProjectFile({
+    projectDir,
+    relativePath: 'pnpm-workspace.yaml',
+  });
+  const pnpmWorkspacePatterns =
+    pnpmWorkspaceSource !== null
+      ? parsePnpmWorkspaceYaml(pnpmWorkspaceSource)
+      : [];
+
   const hasNx = await hasProjectFile({ projectDir, relativePath: 'nx.json' });
   const nvmrcRaw = await readProjectFile({
     projectDir,
@@ -465,10 +718,15 @@ export async function detectProject(
   });
   const nvmrc = nvmrcRaw?.trim() || undefined;
 
-  const workspaces = await discoverWorkspaces(
+  const workspacePatterns = [
+    ...(pkg?.workspaces ?? []),
+    ...pnpmWorkspacePatterns,
+  ];
+  const workspaces = await discoverWorkspaces({
     projectDir,
-    pkg?.workspaces ?? [],
-  );
+    patterns: workspacePatterns,
+    hasNx,
+  });
   const rootDeps = new Set(pkg?.dependencies ?? []);
   const allDeps = new Set<string>([
     ...rootDeps,
@@ -510,15 +768,16 @@ export async function detectProject(
   const packageManager = await detectPackageManager({
     projectDir,
     pkg,
-    hasPyproject: pyproject !== null,
+    pyproject,
   });
   const additive = collectAdditiveSelections({
-    preset,
+    hasWorkspacePackages:
+      hasNx || workspacePatterns.length > 0 || workspaces.length > 0,
     allDeps,
     hasPrismaFiles,
     hasSupabaseFiles,
     hasComponentsJson,
-    hasPyproject: pyproject !== null,
+    isUvProject: packageManager === 'uv',
   });
 
   const name = pkg?.name ?? pyproject?.name ?? basename(projectDir);
@@ -533,6 +792,7 @@ export async function detectProject(
     scripts: pkg?.scripts ?? {},
     hasNx,
     hasPyproject: pyproject !== null,
+    ...(pyproject !== null ? { pythonTools: pyproject.tools } : {}),
     workspaces,
     detectedBlocks: additive.blocks,
     detectedSkills: additive.skills,
