@@ -72,6 +72,8 @@ export interface AssertionAggregate {
   classification: AssertionClassification;
   /** Compared with `old_skill`; present only with `--compare`. */
   old_skill_classification?: AssertionClassification;
+  /** Compared with each competing skill; present only with `--compare <skill>`. */
+  compare_classifications?: Record<string, AssertionClassification>;
 }
 
 export interface AssertionAnalysis {
@@ -83,6 +85,8 @@ export interface AssertionAnalysis {
   regressing: string[];
   /** Assertions that pass less often with the skill than with `old_skill`. */
   regressing_vs_old: string[];
+  /** Assertions that pass less often with the skill than with each compared skill. */
+  regressing_vs_compare?: Record<string, string[]>;
 }
 
 export interface EvalRunRecord {
@@ -350,12 +354,17 @@ function aggregateCaseAssertions({
     const withoutRate = rateFor(withoutRuns);
     const oldRate = rateFor(oldRuns);
     const comparePassRates: Record<string, number> = {};
+    const compareClassifications: Record<string, AssertionClassification> = {};
     for (const name of compareSkillNames) {
       const rate = rateFor(
         caseRuns.filter((run) => run.variant === compareSkillVariant(name)),
       );
       if (rate !== undefined) {
         comparePassRates[name] = rate;
+        compareClassifications[name] = classifyAssertion({
+          withSkillRate: withRate,
+          referenceRate: rate,
+        });
       }
     }
     const firstCompareRate =
@@ -383,6 +392,9 @@ function aggregateCaseAssertions({
               referenceRate: oldRate,
             }),
           }
+        : {}),
+      ...(Object.keys(compareClassifications).length > 0
+        ? { compare_classifications: compareClassifications }
         : {}),
     };
   });
@@ -497,6 +509,9 @@ export function aggregateBenchmark({
   const flaky: string[] = [];
   const regressing: string[] = [];
   const regressingVsOld: string[] = [];
+  const regressingVsCompare: Record<string, string[]> = Object.fromEntries(
+    compareSkillNames.map((name) => [name, []]),
+  );
 
   for (const caseSummary of caseSummaries) {
     for (const assertion of caseSummary.assertions) {
@@ -512,13 +527,20 @@ export function aggregateBenchmark({
         flaky.push(entry);
       }
       if (
-        assertion.baseline_pass_rate !== undefined &&
+        (assertion.baseline_pass_rate !== undefined ||
+          (assertion.old_skill_pass_rate === undefined &&
+            compareSkillNames.length > 0)) &&
         assertion.classification === 'regressing'
       ) {
         regressing.push(entry);
       }
       if (assertion.old_skill_classification === 'regressing') {
         regressingVsOld.push(entry);
+      }
+      for (const name of compareSkillNames) {
+        if (assertion.compare_classifications?.[name] === 'regressing') {
+          regressingVsCompare[name]?.push(entry);
+        }
       }
     }
   }
@@ -581,6 +603,9 @@ export function aggregateBenchmark({
       flaky,
       regressing,
       regressing_vs_old: regressingVsOld,
+      ...(compareSkillNames.length > 0
+        ? { regressing_vs_compare: regressingVsCompare }
+        : {}),
     },
   };
 }
@@ -775,6 +800,9 @@ const assertionAggregateSchema = z.looseObject({
   compare_pass_rates: z.record(z.string(), z.number()).optional(),
   classification: z.enum(CLASSIFICATIONS),
   old_skill_classification: z.enum(CLASSIFICATIONS).optional(),
+  compare_classifications: z
+    .record(z.string(), z.enum(CLASSIFICATIONS))
+    .optional(),
 });
 
 const benchmarkSummarySchema = z.looseObject({
@@ -826,6 +854,7 @@ const benchmarkSummarySchema = z.looseObject({
     flaky: z.array(z.string()),
     regressing: z.array(z.string()),
     regressing_vs_old: z.array(z.string()),
+    regressing_vs_compare: z.record(z.string(), z.array(z.string())).optional(),
   }),
 });
 

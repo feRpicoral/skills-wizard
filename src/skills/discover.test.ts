@@ -18,10 +18,11 @@ import {
   isDiscoverSource,
   locateSkillsInRepo,
   parseSkillTarget,
+  resolveGithubPathTarget,
   searchAwesomeIndex,
   searchSkillsSh,
 } from './discover.ts';
-import type { SourceCache } from './sources.ts';
+import { ensureSource, type SourceCache, sourceCommit } from './sources.ts';
 
 async function cacheFor(
   t: TestContext,
@@ -74,20 +75,52 @@ test('parseSkillTarget parses GitHub tree and blob URLs, owner/repo shorthands, 
     repo: 'anthropics/skills',
     ref: 'main',
     path: 'skills/frontend-design',
+    rawSegments: ['main', 'skills', 'frontend-design'],
   });
   assert.deepEqual(blobTarget, {
     kind: 'github-path',
     repo: 'anthropics/skills',
     ref: 'v1.2.0',
     path: 'skills/frontend-design',
+    rawSegments: ['v1.2.0', 'skills', 'frontend-design'],
   });
   assert.deepEqual(rootBlobTarget, {
     kind: 'github-path',
     repo: 'owner/single-skill',
     ref: 'main',
     path: '.',
+    rawSegments: ['main'],
   });
+  assert.deepEqual(
+    parseSkillTarget(
+      'https://github.com/anthropics/skills/tree/main/skills/frontend-design/SKILL.md',
+    ),
+    {
+      kind: 'github-path',
+      repo: 'anthropics/skills',
+      ref: 'main',
+      path: 'skills/frontend-design',
+      rawSegments: ['main', 'skills', 'frontend-design'],
+    },
+  );
   assert.deepEqual(repoUrlTarget, { kind: 'repo', repo: 'owner/repo' });
+  assert.deepEqual(parseSkillTarget('git@github.com:owner/repo.git'), {
+    kind: 'repo',
+    repo: 'owner/repo',
+  });
+  assert.deepEqual(parseSkillTarget('ssh://git@github.com/owner/repo.git'), {
+    kind: 'repo',
+    repo: 'owner/repo',
+  });
+  assert.deepEqual(parseSkillTarget('owner/repo.git'), {
+    kind: 'repo',
+    repo: 'owner/repo',
+  });
+  assert.deepEqual(parseSkillTarget('owner/repo.git@my-skill'), {
+    kind: 'repo-skill',
+    repo: 'owner/repo',
+    skillName: 'my-skill',
+  });
   assert.deepEqual(repoShorthand, {
     kind: 'repo',
     repo: 'vercel-labs/agent-skills',
@@ -367,4 +400,107 @@ test('searchSkillsSh converts response stream errors into SourceError', async ()
   );
 
   assert.ok(true);
+});
+
+test('searchSkillsSh and searchAwesomeIndex skip malformed items and return valid skills', async (t) => {
+  const { baseUrl } = await startMockServer(t, (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        skills: [
+          {
+            id: 'missing-source',
+            skillId: 'bad-one',
+            name: 'bad-one',
+            installs: 'not-a-number',
+          },
+          {
+            id: 'valid',
+            skillId: 'good-skill',
+            name: 'good-skill',
+            installs: 50,
+            source: 'owner/repo',
+          },
+        ],
+      }),
+    );
+  });
+  const upstream = await createUpstream(t, {
+    [AWESOME_INDEX_FILE]: JSON.stringify([
+      {
+        id: 'missing-description',
+        path: 'skills/bad',
+        name: 'bad',
+      },
+      {
+        id: 'good-awesome',
+        path: 'skills/good-awesome',
+        category: 'workflow',
+        name: 'good-awesome',
+        description: 'Valid awesome skill entry',
+        risk: 'low',
+      },
+    ]),
+  });
+  const cache = await cacheFor(t, () => upstream.url);
+
+  const [skillsShResults, awesomeResults] = await Promise.all([
+    searchSkillsSh({ query: 'good', baseUrl }),
+    searchAwesomeIndex({ cache, query: 'good' }),
+  ]);
+
+  assert.deepEqual(
+    skillsShResults.map((item) => item.name),
+    ['good-skill'],
+  );
+  assert.deepEqual(
+    awesomeResults.map((item) => item.name),
+    ['good-awesome'],
+  );
+});
+
+test('resolveGithubPathTarget resolves slash-containing refs and locateSkillsInRepo preserves cached pinned refs', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/pinned-skill/SKILL.md': skillSource('pinned-skill'),
+  });
+  const pinnedSha = upstream.head;
+  await upstream.commit(
+    {
+      'skills/pinned-skill/SKILL.md': skillSource('renamed-on-branch'),
+      'skills/branch-skill/SKILL.md': skillSource('branch-skill'),
+    },
+    'feat/skills',
+  );
+  const cache = await cacheFor(t, () => upstream.url);
+  await ensureSource(cache, {
+    repo: 'owner/pinned-repo',
+    ref: pinnedSha,
+    paths: ['skills/pinned-skill'],
+  });
+  const parsed = parseSkillTarget(
+    'https://github.com/owner/pinned-repo/tree/feat/skills/skills/branch-skill',
+  );
+  assert.equal(parsed.kind, 'github-path');
+
+  const resolvedUrl = await resolveGithubPathTarget({
+    cache,
+    repo: parsed.repo,
+    ref: parsed.ref,
+    path: parsed.path,
+    rawSegments: parsed.rawSegments,
+  });
+  const located = await locateSkillsInRepo({
+    cache,
+    repo: 'owner/pinned-repo',
+  });
+  const commitAfter = await sourceCommit(cache, 'owner/pinned-repo');
+
+  assert.equal(resolvedUrl.ref, 'feat/skills');
+  assert.equal(resolvedUrl.path, 'skills/branch-skill');
+  assert.equal(resolvedUrl.isDefaultBranch, false);
+  assert.deepEqual(
+    located.map((item) => item.name),
+    ['pinned-skill'],
+  );
+  assert.equal(commitAfter, pinnedSha);
 });

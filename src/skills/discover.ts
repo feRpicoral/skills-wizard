@@ -15,9 +15,14 @@ import {
 } from './catalog.ts';
 import { type RiskFlag, scanSkillRisks } from './risk.ts';
 import {
+  cachedSourceRef,
   ensureSource,
+  inspectRemoteRefs,
   listRepositoryFiles,
   readRepositoryBlob,
+  type RemoteRefsInfo,
+  restoreSourceCheckout,
+  snapshotSourceCheckout,
   type SourceCache,
   sourceCommit,
 } from './sources.ts';
@@ -58,6 +63,7 @@ export type ParsedSkillTarget =
       repo: string;
       ref?: string;
       path: string;
+      rawSegments?: readonly string[];
     }
   | {
       kind: 'repo-skill';
@@ -121,6 +127,11 @@ function decodeSegment({ segment, input }: DecodeSegmentParams): string {
   }
 }
 
+function stripGitSuffix(value: string): string {
+  const trimmed = value.replace(/\/+$/, '');
+  return trimmed.endsWith('.git') ? trimmed.slice(0, -4) : trimmed;
+}
+
 function parseGithubUrl(input: string): ParsedSkillTarget {
   const normalized = /^github\.com\//i.test(input) ? `https://${input}` : input;
   let url: URL;
@@ -129,7 +140,11 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
   } catch (error) {
     throw new UsageError(`Invalid URL "${input}"`, { cause: error });
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+  if (
+    url.protocol !== 'https:' &&
+    url.protocol !== 'http:' &&
+    url.protocol !== 'ssh:'
+  ) {
     throw new UsageError(`Unsupported URL protocol in "${input}"`);
   }
   if (url.host.toLowerCase() !== 'github.com') {
@@ -137,7 +152,10 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
       `Only https://github.com/<owner>/<repo> URLs are supported, got "${input}"`,
     );
   }
-  if (url.username || url.password) {
+  if (
+    url.password ||
+    (url.username && !(url.protocol === 'ssh:' && url.username === 'git'))
+  ) {
     throw new UsageError(`GitHub URL must not include credentials: "${input}"`);
   }
 
@@ -151,7 +169,7 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
       `GitHub URL must include owner and repository: "${input}"`,
     );
   }
-  const repoName = rawRepo.endsWith('.git') ? rawRepo.slice(0, -4) : rawRepo;
+  const repoName = stripGitSuffix(rawRepo);
   const repo = `${owner}/${repoName}`;
   if (!isRepository(repo)) {
     throw new UsageError(
@@ -160,6 +178,11 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
   }
   if (rest.length === 0) {
     return { kind: 'repo', repo };
+  }
+  if (url.protocol === 'ssh:') {
+    throw new UsageError(
+      `GitHub SSH URL must point to a repository root: "${input}"`,
+    );
   }
 
   const [route, ref, ...tail] = rest;
@@ -174,13 +197,20 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
     );
   }
   if (route === 'tree') {
-    const path = tail.length === 0 ? WHOLE_REPOSITORY : tail.join('/');
+    const pathTail = tail.at(-1) === SKILL_FILE ? tail.slice(0, -1) : tail;
+    const path = pathTail.length === 0 ? WHOLE_REPOSITORY : pathTail.join('/');
     if (!isRepositoryPath(path)) {
       throw new UsageError(
         `Invalid repository path "${path}" in GitHub URL "${input}"`,
       );
     }
-    return { kind: 'github-path', repo, ref, path };
+    return {
+      kind: 'github-path',
+      repo,
+      ref,
+      path,
+      rawSegments: [ref, ...pathTail],
+    };
   }
 
   if (tail.length === 0 || tail.at(-1) !== SKILL_FILE) {
@@ -195,7 +225,13 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
       `Invalid repository path "${path}" in GitHub URL "${input}"`,
     );
   }
-  return { kind: 'github-path', repo, ref, path };
+  return {
+    kind: 'github-path',
+    repo,
+    ref,
+    path,
+    rawSegments: [ref, ...dirParts],
+  };
 }
 
 export function parseSkillTarget(rawInput: string): ParsedSkillTarget {
@@ -203,17 +239,18 @@ export function parseSkillTarget(rawInput: string): ParsedSkillTarget {
   if (input === '') {
     throw new UsageError('Skill query, repository, or URL must not be empty');
   }
-  if (
-    /^[a-z][a-z0-9+.-]*:\/\//i.test(input) ||
-    /^github\.com(?:\/|$)/i.test(input)
-  ) {
-    return parseGithubUrl(input);
-  }
-  if (!/\s/.test(input) && input.includes('/')) {
-    const atIndex = input.indexOf('@');
+  const scpMatch = /^git@([^:]+):(.+)$/i.exec(input);
+  if (scpMatch) {
+    const [, host = '', rawSpec = ''] = scpMatch;
+    if (host.toLowerCase() !== 'github.com') {
+      throw new UsageError(
+        `Only https://github.com/<owner>/<repo> URLs are supported, got "${input}"`,
+      );
+    }
+    const atIndex = rawSpec.indexOf('@');
     if (atIndex !== -1) {
-      const repo = input.slice(0, atIndex);
-      const skillName = input.slice(atIndex + 1);
+      const repo = stripGitSuffix(rawSpec.slice(0, atIndex));
+      const skillName = rawSpec.slice(atIndex + 1);
       if (!isRepository(repo)) {
         throw new UsageError(
           `Invalid repository "${repo}" in "${input}"; expected owner/repo@skill-name`,
@@ -226,14 +263,142 @@ export function parseSkillTarget(rawInput: string): ParsedSkillTarget {
       }
       return { kind: 'repo-skill', repo, skillName };
     }
-    if (!isRepository(input)) {
+    const repo = stripGitSuffix(rawSpec);
+    if (!isRepository(repo)) {
+      throw new UsageError(
+        `Invalid GitHub repository "${repo}" in URL "${input}"`,
+      );
+    }
+    return { kind: 'repo', repo };
+  }
+  if (
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(input) ||
+    /^github\.com(?:\/|$)/i.test(input)
+  ) {
+    return parseGithubUrl(input);
+  }
+  if (!/\s/.test(input) && input.includes('/')) {
+    const atIndex = input.indexOf('@');
+    if (atIndex !== -1) {
+      const rawRepo = input.slice(0, atIndex);
+      const repo = stripGitSuffix(rawRepo);
+      const skillName = input.slice(atIndex + 1);
+      if (!isRepository(repo)) {
+        throw new UsageError(
+          `Invalid repository "${rawRepo}" in "${input}"; expected owner/repo@skill-name`,
+        );
+      }
+      if (!isSkillName(skillName)) {
+        throw new UsageError(
+          `Invalid skill name "${skillName}" in "${input}"; skill names must be lowercase letters, digits, and hyphens`,
+        );
+      }
+      return { kind: 'repo-skill', repo, skillName };
+    }
+    const repo = stripGitSuffix(input);
+    if (!isRepository(repo)) {
       throw new UsageError(
         `Invalid repository "${input}"; expected owner/repo`,
       );
     }
-    return { kind: 'repo', repo: input };
+    return { kind: 'repo', repo };
   }
   return { kind: 'query', query: input };
+}
+
+export interface ResolveGithubPathTargetParams {
+  cache: SourceCache;
+  repo: string;
+  ref?: string;
+  path: string;
+  rawSegments?: readonly string[];
+  explicitRef?: string;
+}
+
+export interface ResolvedGithubPathTarget {
+  ref?: string;
+  path: string;
+  isDefaultBranch?: boolean;
+}
+
+export async function resolveGithubPathTarget({
+  cache,
+  repo,
+  ref,
+  path,
+  rawSegments,
+  explicitRef,
+}: ResolveGithubPathTargetParams): Promise<ResolvedGithubPathTarget> {
+  const segments =
+    rawSegments ??
+    (ref ? [ref, ...(path === WHOLE_REPOSITORY ? [] : path.split('/'))] : []);
+
+  let remote: RemoteRefsInfo | undefined;
+  try {
+    remote = await inspectRemoteRefs(cache, repo);
+  } catch {
+    remote = undefined;
+  }
+
+  if (explicitRef !== undefined && isGitRef(explicitRef)) {
+    const refParts = explicitRef.split('/');
+    if (
+      segments.length >= refParts.length &&
+      refParts.every((part, idx) => segments[idx] === part)
+    ) {
+      const rest = segments.slice(refParts.length);
+      const resolvedPath =
+        rest.length === 0 ? WHOLE_REPOSITORY : rest.join('/');
+      if (!isRepositoryPath(resolvedPath)) {
+        throw new UsageError(
+          `Invalid repository path "${resolvedPath}" in GitHub URL for ${repo}`,
+        );
+      }
+      const commit = remote?.refCommits.get(explicitRef);
+      return {
+        ref: explicitRef,
+        path: resolvedPath,
+        ...(remote?.defaultBranch !== undefined
+          ? { isDefaultBranch: explicitRef === remote.defaultBranch }
+          : remote?.headCommit !== undefined && commit !== undefined
+            ? { isDefaultBranch: commit === remote.headCommit }
+            : {}),
+      };
+    }
+  }
+
+  if (remote && segments.length >= 1) {
+    for (let len = segments.length; len >= 1; len -= 1) {
+      const candidateRef = segments.slice(0, len).join('/');
+      if (!isGitRef(candidateRef)) continue;
+      const commit = remote.refCommits.get(candidateRef);
+      if (!commit) continue;
+      const rest = segments.slice(len);
+      const candidatePath =
+        rest.length === 0 ? WHOLE_REPOSITORY : rest.join('/');
+      if (!isRepositoryPath(candidatePath)) continue;
+      return {
+        ref: candidateRef,
+        path: candidatePath,
+        ...(remote.defaultBranch !== undefined
+          ? { isDefaultBranch: candidateRef === remote.defaultBranch }
+          : remote.headCommit !== undefined
+            ? { isDefaultBranch: commit === remote.headCommit }
+            : {}),
+      };
+    }
+    if (ref && /^[0-9a-f]{40}$/.test(ref)) {
+      return {
+        ref,
+        path,
+        ...(remote.headCommit !== undefined
+          ? { isDefaultBranch: ref === remote.headCommit }
+          : {}),
+      };
+    }
+  }
+
+  return { ...(ref ? { ref } : {}), path };
 }
 
 const skillsShItemSchema = z.looseObject({
@@ -245,7 +410,7 @@ const skillsShItemSchema = z.looseObject({
 });
 
 const skillsShResponseSchema = z.looseObject({
-  skills: z.array(skillsShItemSchema),
+  skills: z.array(z.unknown()),
 });
 
 export interface SearchSkillsShParams {
@@ -336,7 +501,10 @@ export async function searchSkillsSh({
 
   const seen = new Set<string>();
   const candidates: DiscoveryCandidate[] = [];
-  for (const item of validated.data.skills) {
+  for (const rawItem of validated.data.skills) {
+    const parsedItem = skillsShItemSchema.safeParse(rawItem);
+    if (!parsedItem.success) continue;
+    const item = parsedItem.data;
     if (!isRepository(item.source)) continue;
     const candidateName =
       item.skillId && isSkillName(item.skillId)
@@ -375,9 +543,9 @@ const awesomeItemSchema = z.looseObject({
 });
 
 const awesomeIndexSchema = z.union([
-  z.array(awesomeItemSchema),
+  z.array(z.unknown()),
   z
-    .looseObject({ skills: z.array(awesomeItemSchema) })
+    .looseObject({ skills: z.array(z.unknown()) })
     .transform((obj) => obj.skills),
 ]);
 
@@ -451,6 +619,8 @@ export interface SearchAwesomeIndexParams {
   category?: string;
   includeOffensive?: boolean;
   repo?: string;
+  ref?: string;
+  existingPaths?: readonly string[];
 }
 
 export async function searchAwesomeIndex({
@@ -459,8 +629,15 @@ export async function searchAwesomeIndex({
   category,
   includeOffensive = false,
   repo = AWESOME_SKILLS_REPO,
+  ref,
+  existingPaths = [],
 }: SearchAwesomeIndexParams): Promise<DiscoveryCandidate[]> {
-  const root = await ensureSource(cache, { repo, paths: [] });
+  const effectiveRef = ref ?? (await cachedSourceRef(cache, repo));
+  const root = await ensureSource(cache, {
+    repo,
+    ...(effectiveRef ? { ref: effectiveRef } : {}),
+    paths: existingPaths,
+  });
   const indexFile = join(root, AWESOME_INDEX_FILE);
   const indexStat = await lstatIfExists(indexFile);
   if (!indexStat?.isFile()) {
@@ -490,7 +667,10 @@ export async function searchAwesomeIndex({
   const normalizedCategory = category?.trim().toLowerCase();
 
   const candidates: DiscoveryCandidate[] = [];
-  for (const entry of validated.data) {
+  for (const rawEntry of validated.data) {
+    const parsedEntry = awesomeItemSchema.safeParse(rawEntry);
+    if (!parsedEntry.success) continue;
+    const entry = parsedEntry.data;
     if (!isRepositoryPath(entry.path)) continue;
     const skillName = resolveAwesomeSkillName(entry);
     if (!skillName) continue;
@@ -594,9 +774,10 @@ export async function locateSkillsInRepo({
   expectedSkillName,
   existingPaths = [],
 }: LocateSkillsInRepoParams): Promise<RepoSkillLocation[]> {
+  const effectiveRef = ref ?? (await cachedSourceRef(cache, repo));
   await ensureSource(cache, {
     repo,
-    ...(ref ? { ref } : {}),
+    ...(effectiveRef ? { ref: effectiveRef } : {}),
     paths: existingPaths,
   });
   const treeFiles = await listRepositoryFiles({ cache, repo });
@@ -750,25 +931,35 @@ export async function inspectDiscoveredSkill({
   if (!isRepositoryPath(path)) {
     throw new SourceError(`${repo}: "${path}" is not a valid repository path`);
   }
+  const effectiveRef = ref ?? (await cachedSourceRef(cache, repo));
   const wantedPaths = existingPaths.includes(WHOLE_REPOSITORY)
     ? [WHOLE_REPOSITORY]
     : [...new Set([...existingPaths, path])];
-  const root = await ensureSource(cache, {
-    repo,
-    ...(ref ? { ref } : {}),
-    paths: wantedPaths,
-  });
-  const dir = path === WHOLE_REPOSITORY ? root : join(root, ...path.split('/'));
-  await assertInsideRepository({ repoRoot: root, skillDir: dir, repo, path });
+  const snapshot = await snapshotSourceCheckout(cache, repo);
+  let root: string;
+  let dir: string;
+  let report: SkillReport;
+  try {
+    root = await ensureSource(cache, {
+      repo,
+      ...(effectiveRef ? { ref: effectiveRef } : {}),
+      paths: wantedPaths,
+    });
+    dir = path === WHOLE_REPOSITORY ? root : join(root, ...path.split('/'));
+    await assertInsideRepository({ repoRoot: root, skillDir: dir, repo, path });
 
-  const report = await validateSkill(dir, {
-    strict: false,
-    ...(expectedName !== undefined ? { expectedName } : {}),
-  });
-  if (report.errors.length > 0 || !report.name) {
-    throw new SourceError(
-      `Invalid skill in ${repo} (${path}): ${report.errors.join('; ')}`,
-    );
+    report = await validateSkill(dir, {
+      strict: false,
+      ...(expectedName !== undefined ? { expectedName } : {}),
+    });
+    if (report.errors.length > 0 || !report.name) {
+      throw new SourceError(
+        `Invalid skill in ${repo} (${path}): ${report.errors.join('; ')}`,
+      );
+    }
+  } catch (error) {
+    await restoreSourceCheckout(cache, snapshot);
+    throw error;
   }
 
   const rawSkill = await readTextIfExists(join(dir, SKILL_FILE));
@@ -783,7 +974,7 @@ export async function inspectDiscoveredSkill({
     ...(meta?.license ? { license: meta.license } : {}),
     repo,
     path,
-    ...(ref ? { ref } : {}),
+    ...(effectiveRef ? { ref: effectiveRef } : {}),
     commit,
     dir,
     ...(category ? { category } : {}),

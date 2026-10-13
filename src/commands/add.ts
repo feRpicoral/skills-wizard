@@ -1,6 +1,6 @@
 import { styleText } from 'node:util';
 
-import { defaultBlockIds, withRequirements } from '../blocks/compose.ts';
+import { withRequirements } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import {
@@ -9,6 +9,7 @@ import {
   SourceError,
   UsageError,
 } from '../errors.ts';
+import { displayPath } from '../install/describe.ts';
 import {
   fsErrorReason,
   readTextIfExists,
@@ -32,6 +33,7 @@ import {
   repositoryPaths,
 } from '../skills/catalog.ts';
 import {
+  AWESOME_SKILLS_REPO,
   type DiscoverSource,
   type DiscoveryCandidate,
   inspectDiscoveredSkill,
@@ -39,12 +41,17 @@ import {
   locateSkillsInRepo,
   parseSkillTarget,
   type ResolvedDiscoveredSkill,
+  resolveGithubPathTarget,
   searchAwesomeIndex,
   searchSkillsSh,
 } from '../skills/discover.ts';
 import { DEFAULT_SKILL_MODE, resolveSkillSources } from '../skills/install.ts';
 import { loadSkillLibrary, type SkillLibrary } from '../skills/library.ts';
-import { detectTools } from '../tools/detect.ts';
+import {
+  restoreSourceCheckout,
+  snapshotSourceCheckout,
+  type SourceCheckoutSnapshot,
+} from '../skills/sources.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
@@ -86,6 +93,7 @@ interface ResolveEffectiveRefParams {
   repo: string;
   requestedRef?: string;
   urlRef?: string;
+  urlIsDefaultBranch?: boolean;
 }
 
 function resolveEffectiveRef({
@@ -93,6 +101,7 @@ function resolveEffectiveRef({
   repo,
   requestedRef,
   urlRef,
+  urlIsDefaultBranch = false,
 }: ResolveEffectiveRefParams): string | undefined {
   if (
     requestedRef !== undefined &&
@@ -106,6 +115,13 @@ function resolveEffectiveRef({
   const explicitRef = requestedRef ?? urlRef;
   const existing = catalog.skills.find((entry) => entry.repo === repo);
   if (existing !== undefined) {
+    if (
+      existing.ref === undefined &&
+      requestedRef === undefined &&
+      urlIsDefaultBranch
+    ) {
+      return undefined;
+    }
     if (explicitRef !== undefined && explicitRef !== existing.ref) {
       throw new CatalogError(
         `Every skill from ${repo} in catalog.yaml must use the same ref (${existing.ref ?? 'default branch'})`,
@@ -119,6 +135,7 @@ function resolveEffectiveRef({
 interface SearchCandidatesParams {
   ctx: Context;
   prompting: boolean;
+  catalog: Catalog;
   query: string;
   source: DiscoverSource;
   category?: string;
@@ -153,18 +170,25 @@ function mergeCandidateMetadata({
 async function searchCandidates({
   ctx,
   prompting,
+  catalog,
   query,
   source,
   category,
   includeOffensive,
 }: SearchCandidatesParams): Promise<DiscoveryCandidate[]> {
   const cache = sourceCache(ctx);
+  const awesomeExisting = catalog.skills.find(
+    (entry) => entry.repo === AWESOME_SKILLS_REPO,
+  );
+  const awesomePaths = repositoryPaths(catalog, AWESOME_SKILLS_REPO);
   if (source === 'awesome') {
     return searchAwesomeIndex({
       cache,
       query,
       ...(category ? { category } : {}),
       includeOffensive,
+      ...(awesomeExisting?.ref ? { ref: awesomeExisting.ref } : {}),
+      existingPaths: awesomePaths,
     });
   }
 
@@ -190,6 +214,8 @@ async function searchCandidates({
       cache,
       query,
       includeOffensive: true,
+      ...(awesomeExisting?.ref ? { ref: awesomeExisting.ref } : {}),
+      existingPaths: awesomePaths,
     }),
   ]);
 
@@ -258,6 +284,11 @@ interface ResolveTargetCandidateParams {
   includeOffensive: boolean;
 }
 
+interface ResolvedTargetOutcome {
+  inspected: ResolvedDiscoveredSkill;
+  checkoutSnapshot: SourceCheckoutSnapshot;
+}
+
 async function resolveTargetSkill({
   ctx,
   prompting,
@@ -267,26 +298,41 @@ async function resolveTargetSkill({
   requestedCategory,
   requestedRef,
   includeOffensive,
-}: ResolveTargetCandidateParams): Promise<ResolvedDiscoveredSkill> {
+}: ResolveTargetCandidateParams): Promise<ResolvedTargetOutcome> {
   const cache = sourceCache(ctx);
   const { catalog } = skillLibrary;
   const parsed = parseSkillTarget(rawTarget);
 
   if (parsed.kind === 'github-path') {
+    const existing = catalog.skills.find((entry) => entry.repo === parsed.repo);
+    const explicitRef = requestedRef ?? existing?.ref;
+    const resolvedUrl = await resolveGithubPathTarget({
+      cache,
+      repo: parsed.repo,
+      ...(parsed.ref ? { ref: parsed.ref } : {}),
+      path: parsed.path,
+      ...(parsed.rawSegments ? { rawSegments: parsed.rawSegments } : {}),
+      ...(explicitRef ? { explicitRef } : {}),
+    });
     const ref = resolveEffectiveRef({
       catalog,
       repo: parsed.repo,
       ...(requestedRef ? { requestedRef } : {}),
-      ...(parsed.ref ? { urlRef: parsed.ref } : {}),
+      ...(resolvedUrl.ref ? { urlRef: resolvedUrl.ref } : {}),
+      ...(resolvedUrl.isDefaultBranch !== undefined
+        ? { urlIsDefaultBranch: resolvedUrl.isDefaultBranch }
+        : {}),
     });
-    return inspectDiscoveredSkill({
+    const checkoutSnapshot = await snapshotSourceCheckout(cache, parsed.repo);
+    const inspected = await inspectDiscoveredSkill({
       cache,
       repo: parsed.repo,
-      path: parsed.path,
+      path: resolvedUrl.path,
       ...(ref ? { ref } : {}),
       ...(requestedCategory ? { category: requestedCategory } : {}),
       existingPaths: repositoryPaths(catalog, parsed.repo),
     });
+    return { inspected, checkoutSnapshot };
   }
 
   if (parsed.kind === 'repo-skill') {
@@ -296,27 +342,34 @@ async function resolveTargetSkill({
       ...(requestedRef ? { requestedRef } : {}),
     });
     const existingPaths = repositoryPaths(catalog, parsed.repo);
-    const [located] = await locateSkillsInRepo({
-      cache,
-      repo: parsed.repo,
-      ...(ref ? { ref } : {}),
-      expectedSkillName: parsed.skillName,
-      existingPaths,
-    });
-    if (!located) {
-      throw new SourceError(
-        `Skill "${parsed.skillName}" was not found in ${parsed.repo}`,
-      );
+    const checkoutSnapshot = await snapshotSourceCheckout(cache, parsed.repo);
+    try {
+      const [located] = await locateSkillsInRepo({
+        cache,
+        repo: parsed.repo,
+        ...(ref ? { ref } : {}),
+        expectedSkillName: parsed.skillName,
+        existingPaths,
+      });
+      if (!located) {
+        throw new SourceError(
+          `Skill "${parsed.skillName}" was not found in ${parsed.repo}`,
+        );
+      }
+      const inspected = await inspectDiscoveredSkill({
+        cache,
+        repo: parsed.repo,
+        path: located.path,
+        ...(ref ? { ref } : {}),
+        expectedName: parsed.skillName,
+        ...(requestedCategory ? { category: requestedCategory } : {}),
+        existingPaths,
+      });
+      return { inspected, checkoutSnapshot };
+    } catch (error) {
+      await restoreSourceCheckout(cache, checkoutSnapshot);
+      throw error;
     }
-    return inspectDiscoveredSkill({
-      cache,
-      repo: parsed.repo,
-      path: located.path,
-      ...(ref ? { ref } : {}),
-      expectedName: parsed.skillName,
-      ...(requestedCategory ? { category: requestedCategory } : {}),
-      existingPaths,
-    });
   }
 
   if (parsed.kind === 'repo') {
@@ -326,41 +379,49 @@ async function resolveTargetSkill({
       ...(requestedRef ? { requestedRef } : {}),
     });
     const existingPaths = repositoryPaths(catalog, parsed.repo);
-    const locations = await locateSkillsInRepo({
-      cache,
-      repo: parsed.repo,
-      ...(ref ? { ref } : {}),
-      existingPaths,
-    });
-    let chosen = locations[0];
-    if (locations.length > 1) {
-      if (!prompting) {
-        throw new UsageError(
-          `Repository ${parsed.repo} contains multiple skills (${locations.map((item) => item.name).join(', ')}); specify ${parsed.repo}@<skill-name>`,
-        );
-      }
-      chosen = await promptRepoSkillLocation({
+    const checkoutSnapshot = await snapshotSourceCheckout(cache, parsed.repo);
+    try {
+      const locations = await locateSkillsInRepo({
+        cache,
         repo: parsed.repo,
-        locations,
+        ...(ref ? { ref } : {}),
+        existingPaths,
       });
+      let chosen = locations[0];
+      if (locations.length > 1) {
+        if (!prompting) {
+          throw new UsageError(
+            `Repository ${parsed.repo} contains multiple skills (${locations.map((item) => item.name).join(', ')}); specify ${parsed.repo}@<skill-name>`,
+          );
+        }
+        chosen = await promptRepoSkillLocation({
+          repo: parsed.repo,
+          locations,
+        });
+      }
+      if (!chosen) {
+        throw new SourceError(`No valid SKILL.md found in ${parsed.repo}`);
+      }
+      const inspected = await inspectDiscoveredSkill({
+        cache,
+        repo: parsed.repo,
+        path: chosen.path,
+        ...(ref ? { ref } : {}),
+        expectedName: chosen.name,
+        ...(requestedCategory ? { category: requestedCategory } : {}),
+        existingPaths,
+      });
+      return { inspected, checkoutSnapshot };
+    } catch (error) {
+      await restoreSourceCheckout(cache, checkoutSnapshot);
+      throw error;
     }
-    if (!chosen) {
-      throw new SourceError(`No valid SKILL.md found in ${parsed.repo}`);
-    }
-    return inspectDiscoveredSkill({
-      cache,
-      repo: parsed.repo,
-      path: chosen.path,
-      ...(ref ? { ref } : {}),
-      expectedName: chosen.name,
-      ...(requestedCategory ? { category: requestedCategory } : {}),
-      existingPaths,
-    });
   }
 
   const candidates = await searchCandidates({
     ctx,
     prompting,
+    catalog,
     query: parsed.query,
     source,
     ...(requestedCategory ? { category: requestedCategory } : {}),
@@ -382,32 +443,42 @@ async function resolveTargetSkill({
     ...(requestedRef ? { requestedRef } : {}),
   });
   const existingPaths = repositoryPaths(catalog, chosenCandidate.repo);
-  let resolvedPath = chosenCandidate.path;
-  if (resolvedPath === undefined) {
-    const [located] = await locateSkillsInRepo({
+  const checkoutSnapshot = await snapshotSourceCheckout(
+    cache,
+    chosenCandidate.repo,
+  );
+  try {
+    let resolvedPath = chosenCandidate.path;
+    if (resolvedPath === undefined) {
+      const [located] = await locateSkillsInRepo({
+        cache,
+        repo: chosenCandidate.repo,
+        ...(ref ? { ref } : {}),
+        expectedSkillName: chosenCandidate.name,
+        existingPaths,
+      });
+      if (!located) {
+        throw new SourceError(
+          `Skill "${chosenCandidate.name}" was not found in ${chosenCandidate.repo}`,
+        );
+      }
+      resolvedPath = located.path;
+    }
+    const effectiveCategory = requestedCategory ?? chosenCandidate.category;
+    const inspected = await inspectDiscoveredSkill({
       cache,
       repo: chosenCandidate.repo,
+      path: resolvedPath,
       ...(ref ? { ref } : {}),
-      expectedSkillName: chosenCandidate.name,
+      expectedName: chosenCandidate.name,
+      ...(effectiveCategory ? { category: effectiveCategory } : {}),
       existingPaths,
     });
-    if (!located) {
-      throw new SourceError(
-        `Skill "${chosenCandidate.name}" was not found in ${chosenCandidate.repo}`,
-      );
-    }
-    resolvedPath = located.path;
+    return { inspected, checkoutSnapshot };
+  } catch (error) {
+    await restoreSourceCheckout(cache, checkoutSnapshot);
+    throw error;
   }
-  const effectiveCategory = requestedCategory ?? chosenCandidate.category;
-  return inspectDiscoveredSkill({
-    cache,
-    repo: chosenCandidate.repo,
-    path: resolvedPath,
-    ...(ref ? { ref } : {}),
-    expectedName: chosenCandidate.name,
-    ...(effectiveCategory ? { category: effectiveCategory } : {}),
-    existingPaths,
-  });
 }
 
 function printInspectedSkill(
@@ -460,17 +531,18 @@ async function restoreAddedCatalog({
   original,
   entry,
   location,
-}: RestoreAddedCatalogParams): Promise<void> {
-  let recorded: ReadonlySet<string>;
-  try {
-    const manifest = await readLocationManifest(ctx, false, location);
-    recorded = new Set(manifest?.skills ?? []);
-  } catch {
-    return;
-  }
-  if (recorded.has(entry.name)) return;
+}: RestoreAddedCatalogParams): Promise<boolean> {
+  const manifest = await readLocationManifest(ctx, false, location).catch(
+    () => null,
+  );
+  const isRecorded =
+    manifest?.entries.some(
+      (item) => item.kind === 'skill' && item.name === entry.name,
+    ) ?? false;
+  if (isRecorded) return false;
   if (original === null) await removePath(file);
   else await writeTextAtomic({ path: file, content: original });
+  return true;
 }
 
 interface InstallAddedSkillParams {
@@ -487,6 +559,11 @@ interface InstallAddedSkillParams {
   dryRun: boolean;
 }
 
+interface InstallAddedSkillOutcome {
+  code: number;
+  catalogCommitted: boolean;
+}
+
 async function installAddedSkill({
   ctx,
   prompting,
@@ -499,7 +576,7 @@ async function installAddedSkill({
   requestedTools,
   yes,
   dryRun,
-}: InstallAddedSkillParams): Promise<number> {
+}: InstallAddedSkillParams): Promise<InstallAddedSkillOutcome> {
   const scope = requestedScope ?? (prompting ? await promptScope() : 'global');
   const location = await resolveLocation({
     ctx,
@@ -507,24 +584,24 @@ async function installAddedSkill({
     ...(projectDir !== undefined ? { projectDir } : {}),
   });
   const previous = await readLocationManifest(ctx, prompting, location);
+  if (!previous) {
+    throw new UsageError(
+      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init ${scope === 'project' ? '--project' : '--global'} first.`,
+    );
+  }
   const library = await loadLibrary(ctx);
-  const tools =
-    requestedTools ??
-    previous?.tools ??
-    (await detectTools(ctx.paths, ctx.searchPath));
+  const tools = requestedTools ?? previous.tools;
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
 
-  const baseBlocks = previous
-    ? dropUnavailableBlocks({
-        ctx,
-        prompting,
-        library,
-        ids: previous.blocks,
-        scope,
-      })
-    : defaultBlockIds(library, scope);
+  const baseBlocks = dropUnavailableBlocks({
+    ctx,
+    prompting,
+    library,
+    ids: previous.blocks,
+    scope,
+  });
   const { ids: blocks, added } = withRequirements(library, baseBlocks);
   if (added.length > 0) {
     notify({
@@ -539,16 +616,14 @@ async function installAddedSkill({
     library,
     blocks,
     location,
-    recorded: previous?.variables ?? {},
+    recorded: previous.variables,
   });
-  const priorSkills = previous
-    ? dropUnknownSkills({
-        ctx,
-        prompting,
-        library: skillLibrary,
-        names: previous.skills,
-      })
-    : [];
+  const priorSkills = dropUnknownSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: previous.skills,
+  });
   const skills = [...new Set([...priorSkills, entry.name])];
   if (scope === 'global') {
     await warnLockedSkills(ctx, prompting, skills);
@@ -577,20 +652,19 @@ async function installAddedSkill({
       commit: inspected.commit,
     },
     linkable: false,
+    ...(entry.setup ? { setup: entry.setup } : {}),
   });
 
-  const recordedLocal = previous?.options.keepLocal ?? false;
+  const recordedLocal = previous.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   if (location.project && recordedLocal && !keepLocal) {
     notifyLeftGit(ctx, prompting, location.project.dir);
   }
-  const preset = previous
-    ? dropUnknownPreset({
-        ctx,
-        prompting,
-        preset: previous.options.preset,
-      })
-    : undefined;
+  const preset = dropUnknownPreset({
+    ctx,
+    prompting,
+    preset: previous.options.preset,
+  });
   const plan = await buildPlan({
     scope,
     selection: {
@@ -598,11 +672,11 @@ async function installAddedSkill({
       blocks,
       skills,
       variables,
-      linkCommand: previous?.options.linkCommand ?? false,
+      linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
-      skillMode: previous?.options.skillMode ?? DEFAULT_SKILL_MODE,
+      skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
       ...(preset !== undefined ? { preset } : {}),
-      ...(previous?.options.style !== undefined
+      ...(previous.options.style !== undefined
         ? { style: previous.options.style }
         : {}),
     },
@@ -631,6 +705,7 @@ async function installAddedSkill({
   };
 
   let result;
+  let catalogRestored = false;
   try {
     result = await confirmAndApply(ctx, plan, {
       yes,
@@ -649,14 +724,24 @@ async function installAddedSkill({
     }
     throw error;
   }
-  if (result.applied) {
+  if (catalogBefore !== undefined) {
+    catalogRestored = await restoreAddedCatalog({
+      ctx,
+      file: catalogFile,
+      original: catalogBefore,
+      entry,
+      location,
+    });
+  }
+  const catalogCommitted = result.applied && !catalogRestored;
+  if (catalogCommitted) {
     notify({
       ctx,
       prompting,
       message: `Added to catalog.yaml: ${entry.name}`,
     });
   }
-  return result.code;
+  return { code: result.code, catalogCommitted };
 }
 
 export async function runAdd(
@@ -689,7 +774,7 @@ export async function runAdd(
   }
 
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
-  const inspected = await resolveTargetSkill({
+  const { inspected, checkoutSnapshot } = await resolveTargetSkill({
     ctx,
     prompting,
     skillLibrary,
@@ -700,85 +785,95 @@ export async function runAdd(
     includeOffensive,
   });
 
-  const existingLocal = skillLibrary.skills.find(
-    (skill) => skill.name === inspected.name && skill.origin.type === 'local',
-  );
-  if (existingLocal && existingLocal.origin.type === 'local') {
-    throw new CatalogError(
-      `${inspected.name} already exists as a first-party skill in ${existingLocal.origin.path}`,
+  let catalogCommitted = false;
+  try {
+    const existingLocal = skillLibrary.skills.find(
+      (skill) => skill.name === inspected.name && skill.origin.type === 'local',
     );
-  }
+    if (existingLocal && existingLocal.origin.type === 'local') {
+      throw new CatalogError(
+        `${inspected.name} already exists as a first-party skill in ${existingLocal.origin.path}`,
+      );
+    }
 
-  const entry: CatalogEntry = {
-    name: inspected.name,
-    repo: inspected.repo,
-    path: inspected.path,
-    ...(inspected.ref ? { ref: inspected.ref } : {}),
-    category: inspected.category ?? DEFAULT_ADD_CATEGORY,
-    scopes: ['global', 'project'],
-    defaults: [],
-  };
-  const file = catalogPath(ctx.repoRoot);
-  const updatedCatalog = extendCatalog({
-    catalog: skillLibrary.catalog,
-    entries: [entry],
-    file,
-  });
-  const extendedLibrary: SkillLibrary = {
-    catalog: updatedCatalog,
-    skills: [
-      ...skillLibrary.skills,
-      {
-        name: entry.name,
-        group: updatedCatalog.categories[entry.category] ?? entry.category,
-        scopes: entry.scopes,
-        defaults: entry.defaults,
-        origin: { type: 'catalog', entry },
-      },
-    ],
-  };
+    const entry: CatalogEntry = {
+      name: inspected.name,
+      repo: inspected.repo,
+      path: inspected.path,
+      ...(inspected.ref ? { ref: inspected.ref } : {}),
+      category: inspected.category ?? DEFAULT_ADD_CATEGORY,
+      scopes: ['global', 'project'],
+      defaults: [],
+    };
+    const file = catalogPath(ctx.repoRoot);
+    const updatedCatalog = extendCatalog({
+      catalog: skillLibrary.catalog,
+      entries: [entry],
+      file,
+    });
+    const extendedLibrary: SkillLibrary = {
+      catalog: updatedCatalog,
+      skills: [
+        ...skillLibrary.skills,
+        {
+          name: entry.name,
+          group: updatedCatalog.categories[entry.category] ?? entry.category,
+          scopes: entry.scopes,
+          defaults: entry.defaults,
+          origin: { type: 'catalog', entry },
+        },
+      ],
+    };
 
-  printInspectedSkill(ctx, inspected);
+    printInspectedSkill(ctx, inspected);
 
-  const shouldInstall =
-    install || requestedScope !== undefined || requestedTools !== undefined;
-  if (shouldInstall) {
-    return installAddedSkill({
+    const shouldInstall =
+      install || requestedScope !== undefined || requestedTools !== undefined;
+    if (shouldInstall) {
+      const outcome = await installAddedSkill({
+        ctx,
+        prompting,
+        skillLibrary: extendedLibrary,
+        entry,
+        inspected,
+        catalogFile: file,
+        ...(requestedScope ? { requestedScope } : {}),
+        ...(projectDir !== undefined ? { projectDir } : {}),
+        ...(requestedTools ? { requestedTools } : {}),
+        yes,
+        dryRun,
+      });
+      catalogCommitted = outcome.catalogCommitted;
+      return outcome.code;
+    }
+
+    ctx.print(`update  catalog.yaml (+${entry.name})`);
+    if (dryRun) {
+      notify({ ctx, prompting, message: 'Dry run: nothing was written.' });
+      return 0;
+    }
+    if (!ctx.interactive && !yes) {
+      ctx.print(
+        'Re-run with --yes to apply these changes, or --dry-run to preview them.',
+      );
+      return 1;
+    }
+    if (prompting && !(await confirmApply())) {
+      notify({ ctx, prompting: true, message: 'Nothing was written.' });
+      return 1;
+    }
+
+    await writeCatalogEntry(file, entry);
+    catalogCommitted = true;
+    notify({
       ctx,
       prompting,
-      skillLibrary: extendedLibrary,
-      entry,
-      inspected,
-      catalogFile: file,
-      ...(requestedScope ? { requestedScope } : {}),
-      ...(projectDir !== undefined ? { projectDir } : {}),
-      ...(requestedTools ? { requestedTools } : {}),
-      yes,
-      dryRun,
+      message: `Added to catalog.yaml: ${entry.name}`,
     });
-  }
-
-  ctx.print(`update  catalog.yaml (+${entry.name})`);
-  if (dryRun) {
-    notify({ ctx, prompting, message: 'Dry run: nothing was written.' });
     return 0;
+  } finally {
+    if (!catalogCommitted) {
+      await restoreSourceCheckout(sourceCache(ctx), checkoutSnapshot);
+    }
   }
-  if (!ctx.interactive && !yes) {
-    ctx.print(
-      'Re-run with --yes to apply these changes, or --dry-run to preview them.',
-    );
-    return 1;
-  }
-  if (prompting && !(await confirmApply())) {
-    notify({ ctx, prompting: true, message: 'Nothing was written.' });
-    return 1;
-  }
-
-  await writeCatalogEntry(file, entry);
-  notify({
-    ctx,
-    prompting,
-    message: `Added to catalog.yaml: ${entry.name}`,
-  });
-  return 0;
 }

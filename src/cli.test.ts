@@ -928,12 +928,18 @@ test('--baseline <ref> cannot be combined with --compare or another --baseline',
     [2, 2, 2, 2, 2, 2],
   );
   const messages = results.map((result) => result.stderr);
-  assert.match(messages[0] ?? '', /either --baseline <ref> or --compare/);
-  assert.match(messages[1] ?? '', /either --baseline <ref> or --compare/);
+  assert.match(
+    messages[0] ?? '',
+    /Use either --baseline <ref> or --compare <ref>\|<skill-a>,<skill-b>, not both/,
+  );
+  assert.match(
+    messages[1] ?? '',
+    /Use either --baseline <ref> or --compare <ref>\|<skill-a>,<skill-b>, not both/,
+  );
   assert.match(messages[2] ?? '', /Use one form of --baseline/);
   assert.match(messages[3] ?? '', /--baseline <ref> was given more than once/);
   assert.match(messages[4] ?? '', /--baseline ref must not start with "-"/);
-  assert.match(messages[5] ?? '', /--compare ref must not start with "-"/);
+  assert.match(messages[5] ?? '', /--compare value must not start with "-"/);
 });
 
 test('a malformed AGY_EXTRA_ARGS only fails agy evals', async (t) => {

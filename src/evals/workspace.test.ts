@@ -767,3 +767,111 @@ test('a Claude plugin skill with the same name marks the claude baseline possibl
     undefined,
   );
 });
+
+test('prepareEvalWorkspace excludes competing skills across variants and propagates contamination and shadowing for compare workspaces', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const env = isolatedGitEnv(root);
+  const skillDir = join(root, 'skills', 'demo-skill');
+  const skillBDir = join(root, 'skills', 'skill-b');
+  const skillCDir = join(root, 'skills', 'skill-c');
+  await writeFiles(skillDir, { 'SKILL.md': skillSource('demo-skill') });
+  await writeFiles(skillBDir, { 'SKILL.md': skillSource('skill-b') });
+  await writeFiles(skillCDir, { 'SKILL.md': skillSource('skill-c') });
+  await writeFiles(join(paths.claudeHome, 'skills', 'skill-b'), {
+    'SKILL.md': skillSource('skill-b'),
+  });
+  await writeFiles(join(paths.skillsDir, 'demo-skill'), {
+    'SKILL.md': skillSource('demo-skill'),
+  });
+  const compareSkills = [
+    { skillName: 'skill-b', skillDir: skillBDir },
+    { skillName: 'skill-c', skillDir: skillCDir },
+  ];
+
+  const [withoutClaude, withClaude, compareBClaude, compareBAgy] =
+    await Promise.all([
+      prepareEvalWorkspace({
+        runDir: join(root, 'run-without-claude'),
+        skillDir,
+        skillName: 'demo-skill',
+        evalCase: plainCase,
+        variant: 'without_skill',
+        runner: 'claude',
+        compareSkills,
+        paths,
+        env,
+      }),
+      prepareEvalWorkspace({
+        runDir: join(root, 'run-with-claude'),
+        skillDir,
+        skillName: 'demo-skill',
+        evalCase: plainCase,
+        variant: 'with_skill',
+        runner: 'claude',
+        compareSkills,
+        paths,
+        env,
+      }),
+      prepareEvalWorkspace({
+        runDir: join(root, 'run-compare-b-claude'),
+        skillDir,
+        skillName: 'demo-skill',
+        evalCase: plainCase,
+        variant: 'compare:skill-b',
+        runner: 'claude',
+        compareSkill: { skillName: 'skill-b', skillDir: skillBDir },
+        compareSkills,
+        paths,
+        env,
+      }),
+      prepareEvalWorkspace({
+        runDir: join(root, 'run-compare-b-agy'),
+        skillDir,
+        skillName: 'demo-skill',
+        evalCase: plainCase,
+        variant: 'compare:skill-b',
+        runner: 'agy',
+        compareSkill: { skillName: 'skill-b', skillDir: skillBDir },
+        compareSkills,
+        paths,
+        env,
+      }),
+    ]);
+  const withoutSettings = JSON.parse(
+    await readFile(
+      join(withoutClaude.workdir, '.claude', 'settings.local.json'),
+      'utf8',
+    ),
+  ) as { skillOverrides: Record<string, string> };
+  const withSettings = JSON.parse(
+    await readFile(
+      join(withClaude.workdir, '.claude', 'settings.local.json'),
+      'utf8',
+    ),
+  ) as { skillOverrides: Record<string, string> };
+  const compareBSettings = JSON.parse(
+    await readFile(
+      join(compareBClaude.workdir, '.claude', 'settings.local.json'),
+      'utf8',
+    ),
+  ) as { skillOverrides: Record<string, string> };
+
+  assert.deepEqual(withoutSettings.skillOverrides, {
+    'demo-skill': 'off',
+    'skill-b': 'off',
+    'skill-c': 'off',
+  });
+  assert.deepEqual(withSettings.skillOverrides, {
+    'skill-b': 'off',
+    'skill-c': 'off',
+  });
+  assert.deepEqual(compareBSettings.skillOverrides, {
+    'demo-skill': 'off',
+    'skill-c': 'off',
+  });
+  assert.equal(compareBClaude.skillShadowed, true);
+  assert.match(compareBClaude.warning ?? '', /staged project skill "skill-b"/);
+  assert.equal(compareBAgy.possiblyContaminated, true);
+  assert.match(compareBAgy.warning ?? '', /"demo-skill" is installed globally/);
+});

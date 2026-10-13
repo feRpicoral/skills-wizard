@@ -15,11 +15,18 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import type { Context } from '../context.ts';
-import { CatalogError, EnvironmentError, UsageError } from '../errors.ts';
+import {
+  CatalogError,
+  EnvironmentError,
+  EvalError,
+  UsageError,
+} from '../errors.ts';
 import { createFakeRunner } from '../evals/runners/index.ts';
+import { lstatIfExists } from '../install/fs.ts';
 import { loadCatalog } from '../skills/catalog.ts';
 import { AWESOME_INDEX_FILE } from '../skills/discover.ts';
-import { sourceCommit } from '../skills/sources.ts';
+import { ensureSource, sourceCommit } from '../skills/sources.ts';
+import { globalManifestPath, readManifest } from '../state/manifest.ts';
 import { readProjects, recordProject } from '../state/projects.ts';
 import {
   blockSource,
@@ -1480,7 +1487,29 @@ test('runAdd searches skills.sh and awesome index and installs the skill when --
 });
 
 test('skill eval --compare <skill-a>,<skill-b> evaluates competing skills side by side and prints deltas', async (t) => {
-  const { ctx, repoRoot, output } = await testContext(t);
+  const setupUpstream = await createUpstream(t, {
+    'skills/catalog-rival/SKILL.md': skillSource('catalog-rival'),
+    'skills/catalog-rival/setup.sh': '#!/bin/sh\necho ready > built.txt\n',
+  });
+  const { ctx, repoRoot, output } = await testContext(t, {
+    url: () => setupUpstream.url,
+  });
+  await writeFile(
+    join(repoRoot, 'catalog.yaml'),
+    [
+      'categories:',
+      '  workflow: Workflow',
+      'skills:',
+      '  - name: catalog-rival',
+      '    repo: owner/catalog-rival',
+      '    path: skills/catalog-rival',
+      '    category: workflow',
+      '    scopes: [global, project]',
+      '    defaults: []',
+      '    setup: sh setup.sh',
+      '',
+    ].join('\n'),
+  );
   await writeFiles(join(repoRoot, 'skills', 'primary-skill'), {
     'SKILL.md': skillSource('primary-skill'),
     'evals/evals.json': JSON.stringify({
@@ -1503,16 +1532,35 @@ test('skill eval --compare <skill-a>,<skill-b> evaluates competing skills side b
     subcommand: 'eval',
     paths: ['primary-skill'],
     runner: 'fake',
-    compare: 'primary-skill,rival-skill',
+    compare: 'rival-skill,catalog-rival',
+    keepWorkdirs: true,
   });
+  const catalogBuilt = await readFile(
+    join(
+      ctx.paths.evalsDir,
+      'primary-skill',
+      'iteration-1',
+      'eval-case-1',
+      'compare-catalog-rival',
+      'run-1',
+      'workdir',
+      '.agents',
+      'skills',
+      'catalog-rival',
+      'built.txt',
+    ),
+    'utf8',
+  );
 
   assert.equal(code, 0);
+  assert.equal(catalogBuilt.trim(), 'ready');
   assert.ok(
     output.some(
       (line) =>
         line.includes('Evaluated primary-skill with fake') &&
         line.includes('vs baseline') &&
-        line.includes('vs rival-skill'),
+        line.includes('vs rival-skill') &&
+        line.includes('vs catalog-rival'),
     ),
   );
   await assert.rejects(
@@ -1523,6 +1571,54 @@ test('skill eval --compare <skill-a>,<skill-b> evaluates competing skills side b
       compare: 'primary-skill,',
     }),
     UsageError,
+  );
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'eval',
+      paths: ['primary-skill'],
+      runner: 'fake',
+      compare: 'primary-skill',
+    }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /Cannot compare skill "primary-skill" against itself/.test(error.message),
+  );
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'eval',
+      paths: ['primary-skill'],
+      runner: 'fake',
+      compare: 'rival-skill,rival-skill',
+    }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /Duplicate compared skill "rival-skill"/.test(error.message),
+  );
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'eval',
+      paths: ['primary-skill'],
+      runner: 'fake',
+      compare: './missing-skill-dir',
+    }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /Compared skill "\.\/missing-skill-dir" was not found in skills\/, catalog\.yaml, or on disk/.test(
+        error.message,
+      ),
+  );
+  await assert.rejects(
+    runSkill(ctx, {
+      subcommand: 'eval',
+      paths: [join(REPO_ROOT, 'skills', 'skill-author')],
+      runner: 'fake',
+      compare: 'mistyped-skill-name',
+    }),
+    (error: unknown) =>
+      error instanceof EvalError &&
+      /was not found as a skill in skills\/, catalog\.yaml, or on disk, and git ref "mistyped-skill-name" does not name a commit/.test(
+        error.message,
+      ),
   );
 });
 
@@ -1592,4 +1688,110 @@ test('runAdd with --source all filters skills marked offensive in awesome index 
   assert.equal(awesomeDryRunCode, 0);
   assert.ok(catalog.skills.some((entry) => entry.name === 'safe-defender'));
   assert.ok(!catalog.skills.some((entry) => entry.name === 'red-team-exploit'));
+});
+
+test('runAdd --install requires an existing install and rolls back catalog.yaml when the skill install conflicts', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/conflict-skill/SKILL.md': skillSource('conflict-skill'),
+  });
+  const { ctx, repoRoot } = await testContext(t, {
+    url: () => upstream.url,
+  });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+  await assert.rejects(
+    runAdd(ctx, {
+      target: 'owner/conflict-repo@conflict-skill',
+      install: true,
+      yes: true,
+      dryRun: false,
+    }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /Nothing recorded at .* run agents-config init --global first/.test(
+        error.message,
+      ),
+  );
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['claude-code'],
+    blocks: ['core/identity'],
+    skills: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  await writeFiles(join(ctx.paths.skillsDir, 'conflict-skill'), {
+    'SKILL.md': skillSource('conflict-skill'),
+  });
+
+  const conflictCode = await runAdd(ctx, {
+    target: 'owner/conflict-repo@conflict-skill',
+    install: true,
+    yes: true,
+    dryRun: false,
+  });
+  const catalogAfter = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+  const manifest = await readManifest(globalManifestPath(ctx.paths));
+
+  assert.equal(conflictCode, 1);
+  assert.equal(catalogAfter, catalogBefore);
+  assert.deepEqual(manifest?.skills, []);
+});
+
+test('runAdd --dry-run restores the sparse-checkout cone and GitHub default-branch URLs match unpinned catalog repos', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/first-skill/SKILL.md': skillSource('first-skill'),
+    'skills/second-skill/SKILL.md': skillSource('second-skill'),
+  });
+  const { ctx, repoRoot } = await testContext(t, {
+    url: () => upstream.url,
+  });
+  await writeFile(
+    join(repoRoot, 'catalog.yaml'),
+    [
+      'categories:',
+      '  workflow: Workflow',
+      'skills:',
+      '  - name: first-skill',
+      '    repo: owner/multi-skills',
+      '    path: skills/first-skill',
+      '    category: workflow',
+      '    scopes: [global, project]',
+      '    defaults: []',
+      '',
+    ].join('\n'),
+  );
+  const cachedRoot = await ensureSource(
+    { root: ctx.paths.sourcesDir, ...ctx.sources },
+    {
+      repo: 'owner/multi-skills',
+      paths: ['skills/first-skill'],
+    },
+  );
+
+  const dryRunCode = await runAdd(ctx, {
+    target:
+      'https://github.com/owner/multi-skills/tree/main/skills/second-skill',
+    yes: false,
+    dryRun: true,
+  });
+  const secondAfterDryRun = await lstatIfExists(
+    join(cachedRoot, 'skills', 'second-skill'),
+  );
+  const addCode = await runAdd(ctx, {
+    target:
+      'https://github.com/owner/multi-skills/tree/main/skills/second-skill',
+    yes: true,
+    dryRun: false,
+  });
+  const catalog = await loadCatalog(join(repoRoot, 'catalog.yaml'));
+  const addedEntry = catalog.skills.find(
+    (entry) => entry.name === 'second-skill',
+  );
+
+  assert.equal(dryRunCode, 0);
+  assert.equal(secondAfterDryRun, null);
+  assert.equal(addCode, 0);
+  assert.equal(addedEntry?.repo, 'owner/multi-skills');
+  assert.equal(addedEntry?.ref, undefined);
 });
