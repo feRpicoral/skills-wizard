@@ -317,6 +317,11 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
     '| Metric | Value |',
     '| --- | --- |',
     `| Accuracy | ${formatRate(metrics.accuracy)} |`,
+    ...(metrics.errored_queries > 0
+      ? [
+          `| Queries with only failed runs (excluded) | ${metrics.errored_queries}/${metrics.total_queries} |`,
+        ]
+      : []),
     `| Recall (Sensitivity) | ${formatRateWithCount({ value: metrics.recall, numerator: metrics.true_positives, denominator: metrics.positive_queries })} |`,
     `| Precision | ${formatRateWithCount({ value: metrics.precision, numerator: metrics.true_positives, denominator: metrics.true_positives + metrics.false_positives })} |`,
     `| Specificity | ${formatRateWithCount({ value: metrics.specificity, numerator: metrics.true_negatives, denominator: metrics.negative_queries })} |`,
@@ -329,9 +334,13 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
   ];
 
   for (const item of queries) {
-    const status = item.passed ? 'PASS' : 'FAIL';
+    const status =
+      item.trigger_rate === null ? 'ERROR' : item.passed ? 'PASS' : 'FAIL';
     const expected = item.should_trigger ? 'trigger' : 'no-trigger';
-    const rate = `${item.trigger_count}/${item.runs} (${formatRate(item.trigger_rate)})`;
+    const okRuns = item.runs - item.errored_runs;
+    const errored =
+      item.errored_runs > 0 ? `, ${item.errored_runs} failed` : '';
+    const rate = `${item.trigger_count}/${okRuns} (${formatRate(item.trigger_rate)}${errored})`;
     lines.push(
       `| **${status}** | \`${expected}\` | ${rate} | ${escapeTableCell(item.query)} |`,
     );

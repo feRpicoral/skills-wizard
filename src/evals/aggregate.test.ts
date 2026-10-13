@@ -635,3 +635,70 @@ test('loadTriggerSummary validates triggers.json with EvalError', async (t) => {
     message: /Missing triggers\.json/,
   });
 });
+
+test('aggregateTriggerRuns leaves failed runs out of trigger rates and metrics', () => {
+  const summary = aggregateTriggerRuns({
+    skillName: 'demo-skill',
+    skillPath: '/repo/skills/demo-skill',
+    runner: 'fake',
+    split: 'all',
+    runsPerQuery: 2,
+    threshold: 0.5,
+    timestamp: '2026-04-12T00:00:00.000Z',
+    queries: [
+      { query: 'positive', should_trigger: true },
+      { query: 'broken', should_trigger: false },
+    ],
+    results: [
+      {
+        query: 'positive',
+        should_trigger: true,
+        triggered: true,
+        duration_ms: 1,
+      },
+      {
+        query: 'positive',
+        should_trigger: true,
+        triggered: false,
+        duration_ms: 1,
+        error: 'Timed out',
+      },
+      {
+        query: 'broken',
+        should_trigger: false,
+        triggered: false,
+        duration_ms: 1,
+        error: 'Runner exited with code 1',
+      },
+      {
+        query: 'broken',
+        should_trigger: false,
+        triggered: false,
+        duration_ms: 1,
+        error: 'Runner exited with code 1',
+      },
+    ],
+  });
+  const [positive, broken] = summary.queries;
+  const markdown = renderTriggerReport(summary);
+
+  assert.equal(positive?.trigger_rate, 1);
+  assert.equal(positive?.errored_runs, 1);
+  assert.equal(positive?.passed, true);
+  assert.equal(broken?.trigger_rate, null);
+  assert.equal(broken?.passed, false);
+  assert.equal(summary.metrics.errored_queries, 1);
+  assert.equal(summary.metrics.negative_queries, 0);
+  assert.equal(summary.metrics.false_positives, 0);
+  assert.equal(summary.metrics.specificity, null);
+  assert.equal(summary.metrics.accuracy, 1);
+  assert.match(
+    markdown,
+    /\| \*\*PASS\*\* \| `trigger` \| 1\/1 \(100\.0%, 1 failed\) \| positive \|/,
+  );
+  assert.match(
+    markdown,
+    /\| \*\*ERROR\*\* \| `no-trigger` \| 0\/0 \(n\/a, 2 failed\) \| broken \|/,
+  );
+  assert.match(markdown, /Queries with only failed runs \(excluded\) \| 1\/2/);
+});
