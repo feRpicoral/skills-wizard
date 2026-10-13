@@ -4,6 +4,7 @@ summary: Small commits, inspect diffs before pushing
 group: git
 scopes: [global, project]
 defaults: [global, project]
+requires: [engineering/comments]
 ---
 
 ## Git behavior

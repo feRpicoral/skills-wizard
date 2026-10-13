@@ -1,5 +1,12 @@
 import { ManagedRegionError } from '../errors.ts';
-import { joinLines, type Line, lineEnding, splitLines } from './lines.ts';
+import {
+  isBlank,
+  joinLines,
+  keepBom,
+  type Line,
+  lineEnding,
+  splitLines,
+} from './lines.ts';
 
 interface Markers {
   begin: string;
@@ -69,6 +76,14 @@ interface UpsertRegionParams {
 
 export function upsertRegion({
   existing,
+  ...rest
+}: UpsertRegionParams): string {
+  if (existing === null) return upsertText({ existing, ...rest });
+  return keepBom(existing, (text) => upsertText({ existing: text, ...rest }));
+}
+
+function upsertText({
+  existing,
   body,
   markers = MARKDOWN_MARKERS,
   preamble,
@@ -76,7 +91,7 @@ export function upsertRegion({
   const eol = lineEnding(existing);
   const region = regionText({ body, markers, eol });
 
-  if (existing === null || existing.trim() === '') {
+  if (existing === null || isBlank(existing)) {
     const prefix = preamble ? `${preamble}${eol}${eol}` : '';
     return `${prefix}${region}${eol}`;
   }
@@ -97,6 +112,10 @@ export function removeRegion(
   existing: string,
   markers: Markers = MARKDOWN_MARKERS,
 ): string {
+  return keepBom(existing, (text) => removeText(text, markers));
+}
+
+function removeText(existing: string, markers: Markers): string {
   const lines = splitLines(existing);
   const bounds = locate(lines, markers);
   if (!bounds) return existing;

@@ -3,20 +3,36 @@ import { execFile } from 'node:child_process';
 import {
   cp,
   lstat,
+  mkdtemp,
   readFile,
   realpath,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { basename, join } from 'node:path';
-import { test } from 'node:test';
+import { tmpdir } from 'node:os';
+import { basename, delimiter, join } from 'node:path';
+import { after, before, test } from 'node:test';
 import { promisify } from 'node:util';
 
-import { tempDir } from './test-support/fixtures.ts';
+import which from 'which';
+
+import { tempDir, writeFiles } from './test-support/fixtures.ts';
 
 const run = promisify(execFile);
 const CLI = join(import.meta.dirname, 'cli.ts');
+
+let searchPath = '';
+
+// The CLI only sees node and git, so variable lookups and tool detection
+// cannot reach other executables (such as gh) or the network.
+before(async () => {
+  searchPath = await mkdtemp(join(tmpdir(), 'agents-config-bin-'));
+  await symlink(process.execPath, join(searchPath, 'node'));
+  await symlink(await which('git'), join(searchPath, 'git'));
+});
+
+after(() => rm(searchPath, { recursive: true, force: true }));
 
 interface Result {
   code: number;
@@ -24,10 +40,19 @@ interface Result {
   stderr: string;
 }
 
-async function cli(home: string, args: string[]): Promise<Result> {
+interface CliOptions {
+  extraPath?: string;
+}
+
+async function cli(
+  home: string,
+  args: string[],
+  { extraPath }: CliOptions = {},
+): Promise<Result> {
+  const path = extraPath ? `${extraPath}${delimiter}${searchPath}` : searchPath;
   try {
     const { stdout, stderr } = await run(process.execPath, [CLI, ...args], {
-      env: { HOME: home, PATH: process.env.PATH ?? '' },
+      env: { HOME: home, PATH: path, GIT_CONFIG_NOSYSTEM: '1' },
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -60,20 +85,24 @@ function projectsPath(home: string): string {
   return join(home, '.agents', 'agents-config', 'projects.json');
 }
 
+function projectManifestPath(project: string): string {
+  return join(project, '.agents', 'agents-config.json');
+}
+
 interface RecordedBlockParams {
-  home: string;
+  file: string;
   id: string;
 }
 
 async function addRecordedBlock({
-  home,
+  file,
   id,
 }: RecordedBlockParams): Promise<void> {
-  const manifest = JSON.parse(await readFile(manifestPath(home), 'utf8')) as {
+  const manifest = JSON.parse(await readFile(file, 'utf8')) as {
     blocks: string[];
   };
   manifest.blocks.push(id);
-  await writeFile(manifestPath(home), JSON.stringify(manifest));
+  await writeFile(file, JSON.stringify(manifest));
 }
 
 test('init --dry-run prints the plan and writes nothing', async (t) => {
@@ -123,6 +152,26 @@ test('sync reapplies a recorded install after a file was edited', async (t) => {
   assert.match(sync.stdout, /update\s+~\/\.codex\/AGENTS\.md/);
 });
 
+test('init warns when ~/.local/bin is not on PATH after linking the command', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, [...INSTALL, '--link-command']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /\.local\/bin is not on your PATH/);
+});
+
+test('init accepts ~/.local/bin on PATH written with a trailing slash', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, [...INSTALL, '--link-command'], {
+    extraPath: `${join(home, '.local', 'bin')}/`,
+  });
+
+  assert.equal(result.code, 0);
+  assert.doesNotMatch(result.stdout, /not on your PATH/);
+});
+
 test('an empty tool list removes everything that was installed', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
@@ -139,7 +188,7 @@ test('an empty tool list removes everything that was installed', async (t) => {
 test('init drops recorded blocks that left the library and still installs', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock({ home, id: 'core/removed' });
+  await addRecordedBlock({ file: manifestPath(home), id: 'core/removed' });
 
   const result = await cli(home, ['init', '--global', '--yes']);
 
@@ -150,7 +199,7 @@ test('init drops recorded blocks that left the library and still installs', asyn
 test('sync drops recorded blocks that left the library and still applies', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock({ home, id: 'core/removed' });
+  await addRecordedBlock({ file: manifestPath(home), id: 'core/removed' });
 
   const result = await cli(home, ['sync', '--yes']);
 
@@ -165,13 +214,163 @@ test('sync drops recorded blocks that left the library and still applies', async
 test('doctor warns that sync will drop blocks that left the library', async (t) => {
   const home = await tempDir(t);
   await cli(home, INSTALL);
-  await addRecordedBlock({ home, id: 'core/removed' });
+  await addRecordedBlock({ file: manifestPath(home), id: 'core/removed' });
 
   const result = await cli(home, ['doctor']);
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /core\/removed; agents-config sync will drop/);
   assert.match(await readFile(manifestPath(home), 'utf8'), /core\/removed/);
+});
+
+async function clearRecordedVariables(file: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(file, 'utf8')) as {
+    variables: Record<string, string>;
+  };
+  manifest.variables = {};
+  await writeFile(file, JSON.stringify(manifest));
+}
+
+test('sync stops with the init command when a block gains a variable it cannot look up', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+
+  const result = await cli(home, ['sync', '--yes']);
+
+  assert.equal(result.code, 2);
+  assert.match(
+    result.stderr,
+    /githubUsername.*agents-config init --global --var githubUsername=<value>/,
+  );
+});
+
+test('sync looks up a variable a block gained and records it', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+  await writeFile(join(home, '.gitconfig'), '[github]\n\tuser = hubot\n');
+
+  const result = await cli(home, ['sync', '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /githubUsername=hubot/);
+  assert.match(
+    await readFile(manifestPath(home), 'utf8'),
+    /"githubUsername": "hubot"/,
+  );
+});
+
+test('doctor reports a variable a block gained without crashing', async (t) => {
+  const home = await tempDir(t);
+  await cli(home, INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+
+  const result = await cli(home, ['doctor']);
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stdout,
+    /^error\s+.*githubUsername.*agents-config init --global --var githubUsername=<value>/m,
+  );
+  assert.equal(result.stderr, '');
+});
+
+async function doctorWithGeminiExtras(
+  home: string,
+  tools: string,
+): Promise<Result> {
+  await cli(
+    home,
+    INSTALL.map((arg) => (arg === 'codex' ? tools : arg)),
+  );
+  await writeFiles(join(home, '.gemini'), {
+    'GEMINI.md': 'extra\n',
+    'config/AGENTS.md': 'extra\n',
+    'config/GEMINI.md': 'extra\n',
+  });
+  return cli(home, ['doctor']);
+}
+
+test('doctor warns about every extra Gemini file Antigravity loads', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await doctorWithGeminiExtras(home, 'antigravity');
+
+  for (const file of ['GEMINI.md', 'config/AGENTS.md', 'config/GEMINI.md']) {
+    assert.match(
+      result.stdout,
+      new RegExp(
+        `~/\\.gemini/${file.replace('.', '\\.')} is loaded in addition`,
+      ),
+    );
+  }
+});
+
+test('doctor warns Gemini CLI users only about ~/.gemini/GEMINI.md', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await doctorWithGeminiExtras(home, 'gemini-cli');
+
+  assert.match(result.stdout, /~\/\.gemini\/GEMINI\.md is loaded in addition/);
+  assert.doesNotMatch(result.stdout, /\.gemini\/config\//);
+});
+
+const PROJECT_INSTALL = ['--yes', '--tools', 'codex'];
+
+test('sync drops recorded blocks that are no longer available for the scope', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, ...PROJECT_INSTALL]);
+  await addRecordedBlock({
+    file: projectManifestPath(project),
+    id: 'core/identity',
+  });
+
+  const result = await cli(home, ['sync', '--project', project, '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /no longer available for project scope.*core\/identity/,
+  );
+  assert.doesNotMatch(
+    await readFile(projectManifestPath(project), 'utf8'),
+    /core\/identity/,
+  );
+});
+
+test('init drops recorded blocks that are no longer available for the scope', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, ...PROJECT_INSTALL]);
+  await addRecordedBlock({
+    file: projectManifestPath(project),
+    id: 'core/identity',
+  });
+
+  const result = await cli(home, ['init', '--project', project, '--yes']);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /no longer available for project scope.*core\/identity/,
+  );
+});
+
+test('doctor warns that sync will drop blocks no longer available for the scope', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await cli(home, ['init', '--project', project, ...PROJECT_INSTALL]);
+  await addRecordedBlock({
+    file: projectManifestPath(project),
+    id: 'core/identity',
+  });
+
+  const result = await cli(home, ['doctor', '--project', project]);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /core\/identity; agents-config sync will drop/);
 });
 
 test('rejects unknown tools with a usage error', async (t) => {
@@ -207,11 +406,13 @@ test('sync without a recorded install is a usage error', async (t) => {
   assert.match(result.stderr, /run agents-config init first/);
 });
 
-test('a keep-local project copied out of its repository still syncs', async (t) => {
+test('a keep-local project copied into another repository still syncs', async (t) => {
   const home = await tempDir(t);
   const repo = await tempDir(t);
-  const copy = await tempDir(t);
+  const other = await tempDir(t);
+  const copy = join(other, 'app');
   await run('git', ['init', '-q'], { cwd: repo });
+  await run('git', ['init', '-q'], { cwd: other });
   await cli(home, [
     'init',
     '--project',
@@ -227,6 +428,25 @@ test('a keep-local project copied out of its repository still syncs', async (t) 
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /belong to another repository/);
+});
+
+test('without a terminal, no arguments print the help', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, []);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /^Usage: agents-config/);
+});
+
+test('without a terminal, flags without a command are a usage error', async (t) => {
+  const home = await tempDir(t);
+
+  const result = await cli(home, ['--global', '--tools', 'codex']);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--global, --tools must follow a command/);
+  assert.equal(result.stdout, '');
 });
 
 test('names of built-in object properties are unknown commands', async (t) => {
@@ -287,6 +507,7 @@ test('sync and init drop keep-local with a notice once the project leaves git', 
 
   assert.equal(sync.code, 0);
   assert.match(sync.stdout, /no longer in a git repository/);
+  assert.doesNotMatch(sync.stdout, /another repository/);
   assert.equal(init.code, 0);
   assert.match(
     await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
@@ -372,4 +593,27 @@ test('rejects disallowed flags on update, adopt and skill validate', async (t) =
     skillResult.stderr,
     /Usage: agents-config skill validate \[path\.\.\.\] \[--catalog\]/,
   );
+});
+
+test('doctor warns that sync will stop keeping files local once the project leaves git', async (t) => {
+  const home = await tempDir(t);
+  const project = await tempDir(t);
+  await run('git', ['init', '-q'], { cwd: project });
+  await cli(home, [
+    'init',
+    '--project',
+    project,
+    ...PROJECT_INSTALL,
+    '--local',
+  ]);
+  await rm(join(project, '.git'), { recursive: true, force: true });
+
+  const result = await cli(home, ['doctor', '--project', project]);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /^warn\s+.*no longer in a git repository; agents-config sync will stop keeping its files local/m,
+  );
+  assert.doesNotMatch(result.stdout, /another repository/);
 });

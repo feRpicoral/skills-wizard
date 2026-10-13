@@ -20,6 +20,27 @@ test('loads the repository block library starting with the identity block', asyn
   assert.deepEqual(library.blocks[0]?.variables, ['githubUsername']);
 });
 
+test('repository blocks require every section they refer to', async () => {
+  const library = await loadBlockLibrary(repoBlocks);
+  const headings = new Map(
+    library.blocks.map((block) => [block.body.match(/^## (.+)$/m)?.[1], block.id]),
+  );
+
+  for (const block of library.blocks) {
+    for (const [, heading] of block.body.matchAll(/see "([^"]+)"/g)) {
+      const referenced = headings.get(heading);
+      assert.ok(referenced, `${block.id} refers to an unknown section ${heading}`);
+      assert.ok(
+        block.requires.includes(referenced),
+        `${block.id} refers to "${heading}" without requiring ${referenced}`,
+      );
+    }
+  }
+  const gitBehavior = library.blocks.find((block) => block.id === 'git/git-behavior');
+  assert.match(gitBehavior?.body ?? '', /the comment policy/);
+  assert.deepEqual(gitBehavior?.requires, ['engineering/comments']);
+});
+
 test('loads blocks with their frontmatter and trimmed body', async (t) => {
   const dir = await tempDir(t);
   await writeFiles(dir, {
@@ -39,6 +60,17 @@ test('loads blocks with their frontmatter and trimmed body', async (t) => {
     variables: [],
     requires: [],
     body: '## One\n\nText.',
+  });
+});
+
+test('rejects an index that is not valid YAML, naming the index file', async (t) => {
+  const dir = await tempDir(t);
+  await writeFiles(dir, { 'index.yaml': 'order: [core/one\n' });
+
+  await assert.rejects(loadBlockLibrary(dir), (error) => {
+    assert.ok(error instanceof BlockLibraryError);
+    assert.match(error.message, /index\.yaml: invalid YAML/);
+    return true;
   });
 });
 

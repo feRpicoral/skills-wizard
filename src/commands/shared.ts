@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 import * as clack from '@clack/prompts';
 
+import { outOfScopeBlockIds, unknownBlockIds } from '../blocks/compose.ts';
 import {
   type BlockLibrary,
   loadBlockLibrary,
@@ -40,14 +41,14 @@ import {
   globalManifestPath,
   type Manifest,
   projectManifestPath,
-  readManifest,
+  readGlobalManifest,
   readProjectManifest,
 } from '../state/manifest.ts';
 import { forgetProject, recordProject } from '../state/projects.ts';
 
 const run = promisify(execFile);
 
-interface Location {
+export interface Location {
   scope: Scope;
   manifestPath: string;
   project?: ProjectContext;
@@ -182,7 +183,7 @@ async function readRecordedManifest(
   prompting: boolean,
   { manifestPath, project }: Location,
 ): Promise<Manifest | null> {
-  if (!project) return readManifest(manifestPath);
+  if (!project) return readGlobalManifest(manifestPath);
 
   const result = await readProjectManifest(manifestPath, {
     dir: project.dir,
@@ -192,11 +193,31 @@ async function readRecordedManifest(
     notify({
       ctx,
       prompting,
-      message: `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`,
+      message: project.git
+        ? `The recorded git exclude entries (${path}) belong to another repository, so they were ignored and left untouched.`
+        : `The recorded git exclude entries (${path}) were left untouched because the project is no longer in a git repository.`,
       level: 'warn',
     });
   }
   return result?.manifest ?? null;
+}
+
+interface SetVariablesCommandParams {
+  ctx: Context;
+  location: Location;
+  names: readonly string[];
+}
+
+export function setVariablesCommand({
+  ctx,
+  location,
+  names,
+}: SetVariablesCommandParams): string {
+  const target = location.project
+    ? `--project ${displayPath({ path: location.project.dir, home: ctx.paths.home })}`
+    : '--global';
+  const variables = names.map((name) => `--var ${name}=<value>`).join(' ');
+  return `agents-config init ${target} ${variables}`;
 }
 
 export function notifyLeftGit(
@@ -212,30 +233,40 @@ export function notifyLeftGit(
   });
 }
 
-interface DropUnknownBlocksParams {
+interface DropUnavailableBlocksParams {
   ctx: Context;
   prompting: boolean;
   library: BlockLibrary;
   ids: readonly string[];
+  scope: Scope;
 }
 
-export function dropUnknownBlocks({
+export function dropUnavailableBlocks({
   ctx,
   prompting,
   library,
   ids,
-}: DropUnknownBlocksParams): string[] {
-  const known = new Set(library.blocks.map((block) => block.id));
-  const dropped = ids.filter((id) => !known.has(id));
-  if (dropped.length > 0) {
+  scope,
+}: DropUnavailableBlocksParams): string[] {
+  const unknown = unknownBlockIds(library, ids);
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
+  if (unknown.length > 0) {
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer in the library were dropped: ${dropped.join(', ')}`,
+      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}`,
       level: 'warn',
     });
   }
-  return ids.filter((id) => known.has(id));
+  if (outOfScope.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
 }
 
 interface DropUnknownSkillsParams {

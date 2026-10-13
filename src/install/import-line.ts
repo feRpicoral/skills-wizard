@@ -1,4 +1,11 @@
-import { joinLines, type Line, lineEnding, splitLines } from './lines.ts';
+import {
+  isBlank,
+  joinLines,
+  keepBom,
+  type Line,
+  lineEnding,
+  splitLines,
+} from './lines.ts';
 
 function lineIndex(lines: readonly Line[], line: string): number {
   return lines.findIndex((candidate) => candidate.text.trim() === line);
@@ -19,10 +26,10 @@ interface EnsureLineParams {
 }
 
 export function ensureLine({ existing, line }: EnsureLineParams): string {
-  if (existing === null || existing.trim() === '') return `${line}\n`;
+  if (existing === null || isBlank(existing)) return `${line}\n`;
   if (hasLine({ content: existing, line })) return existing;
   const eol = lineEnding(existing);
-  return `${line}${eol}${eol}${existing}`;
+  return keepBom(existing, (text) => `${line}${eol}${eol}${text}`);
 }
 
 interface RemoveLineParams {
@@ -31,6 +38,10 @@ interface RemoveLineParams {
 }
 
 export function removeLine({ existing, line }: RemoveLineParams): string {
+  return keepBom(existing, (text) => removeLineFrom({ existing: text, line }));
+}
+
+function removeLineFrom({ existing, line }: RemoveLineParams): string {
   const lines = splitLines(existing);
   const index = lineIndex(lines, line);
   if (index === -1) return existing;

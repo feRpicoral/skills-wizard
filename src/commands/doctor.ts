@@ -1,8 +1,13 @@
-import { join } from 'node:path';
 import { styleText } from 'node:util';
 
-import { unknownBlockIds, withRequirements } from '../blocks/compose.ts';
-import type { Scope } from '../blocks/library.ts';
+import {
+  outOfScopeBlockIds,
+  requiredVariables,
+  selectBlocks,
+  unknownBlockIds,
+  withRequirements,
+} from '../blocks/compose.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath, planPath } from '../install/describe.ts';
 import {
@@ -13,14 +18,20 @@ import {
 } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
 import { scanInstalledSkills } from '../skills/collisions.ts';
-import { DEFAULT_SKILL_MODE, resolveSkillSources } from '../skills/install.ts';
+import {
+  DEFAULT_SKILL_MODE,
+  resolveSkillSources,
+  type SkillSource,
+} from '../skills/install.ts';
 import { loadSkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import type { Manifest } from '../state/manifest.ts';
-import { orderedTools, TOOLS } from '../tools/registry.ts';
+import { orderedTools } from '../tools/registry.ts';
 import {
   loadLibrary,
+  type Location,
   readLocationManifest,
   resolveLocation,
+  setVariablesCommand,
   sourceCache,
 } from './shared.ts';
 
@@ -106,23 +117,79 @@ async function globalFindings(
     }
   }
 
-  const shared = join(ctx.paths.geminiHome, 'AGENTS.md');
-  const usesShared = manifest.tools.some(
-    (id) => TOOLS[id].global.instructions(ctx.paths) === shared,
-  );
-  if (usesShared) {
-    const extras = [
-      join(ctx.paths.geminiHome, 'GEMINI.md'),
-      join(ctx.paths.geminiHome, 'config', 'AGENTS.md'),
-      join(ctx.paths.geminiHome, 'config', 'GEMINI.md'),
-    ];
-    for (const extra of extras) {
-      if (await lstatIfExists(extra)) {
-        findings.push({
-          level: 'warn',
-          message: `${show(extra)} is loaded in addition to ${show(shared)}`,
-        });
-      }
+  const reported = new Set<string>();
+  for (const tool of orderedTools(manifest.tools)) {
+    const instructions = tool.global.instructions(ctx.paths);
+    for (const extra of tool.global.alsoLoads?.(ctx.paths) ?? []) {
+      if (reported.has(extra) || !(await lstatIfExists(extra))) continue;
+      reported.add(extra);
+      findings.push({
+        level: 'warn',
+        message: `${show(extra)} is loaded in addition to ${show(instructions)}`,
+      });
+    }
+  }
+  return findings;
+}
+
+interface PlanFindingsParams {
+  ctx: Context;
+  location: Location;
+  manifest: Manifest;
+  library: BlockLibrary;
+  blocks: string[];
+  skills: string[];
+  skillSources: ReadonlyMap<string, SkillSource>;
+  keepLocal: boolean;
+}
+
+async function planFindings({
+  ctx,
+  location,
+  manifest,
+  library,
+  blocks,
+  skills,
+  skillSources,
+  keepLocal,
+}: PlanFindingsParams): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  const home = ctx.paths.home;
+  const plan = await buildPlan({
+    scope: location.scope,
+    selection: {
+      tools: manifest.tools,
+      blocks,
+      skills,
+      variables: manifest.variables,
+      linkCommand: manifest.options.linkCommand ?? false,
+      keepLocal,
+      skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
+    },
+    library,
+    paths: ctx.paths,
+    repoRoot: ctx.repoRoot,
+    previous: manifest,
+    manifestPath: location.manifestPath,
+    ...(location.project ? { project: location.project } : {}),
+    skillSources,
+  });
+
+  for (const action of plan.actions) {
+    const where = planPath({ plan, path: action.path, home });
+    if (action.status === 'conflict') {
+      findings.push({
+        level:
+          action.previous && action.previous.kind !== 'symlink'
+            ? 'error'
+            : 'warn',
+        message: `${where}: ${action.reason ?? 'conflict'}`,
+      });
+    } else if (action.change.type !== 'none') {
+      findings.push({
+        level: 'warn',
+        message: `${where} is out of date; run agents-config sync`,
+      });
     }
   }
   return findings;
@@ -197,9 +264,18 @@ export async function runDoctor(
       message: `Blocks no longer in the library: ${unknown.join(', ')}; agents-config sync will drop them`,
     });
   }
+  const outOfScope = outOfScopeBlockIds(library, manifest.blocks, scope);
+  if (outOfScope.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `Blocks no longer available for ${scope} scope: ${outOfScope.join(', ')}; agents-config sync will drop them`,
+    });
+  }
   const { ids: blocks, added } = withRequirements(
     library,
-    manifest.blocks.filter((id) => !unknown.includes(id)),
+    manifest.blocks.filter(
+      (id) => !unknown.includes(id) && !outOfScope.includes(id),
+    ),
   );
   if (added.length > 0) {
     findings.push({
@@ -230,42 +306,34 @@ export async function runDoctor(
       message: `Skipped checking the ${name} skill: ${problem}`,
     });
   }
-  const plan = await buildPlan({
-    scope,
-    selection: {
-      tools: manifest.tools,
-      blocks,
-      skills,
-      variables: manifest.variables,
-      linkCommand: manifest.options.linkCommand ?? false,
-      keepLocal: manifest.options.keepLocal ?? false,
-      skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
-    },
-    library,
-    paths: ctx.paths,
-    repoRoot: ctx.repoRoot,
-    previous: manifest,
-    manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
-    skillSources: resolution.sources,
-  });
-
-  for (const action of plan.actions) {
-    const where = planPath({ plan, path: action.path, home });
-    if (action.status === 'conflict') {
-      findings.push({
-        level:
-          action.previous && action.previous.kind !== 'symlink'
-            ? 'error'
-            : 'warn',
-        message: `${where}: ${action.reason ?? 'conflict'}`,
-      });
-    } else if (action.change.type !== 'none') {
-      findings.push({
-        level: 'warn',
-        message: `${where} is out of date; run agents-config sync`,
-      });
-    }
+  const recordedLocal = manifest.options.keepLocal ?? false;
+  const keepLocal = recordedLocal && location.project?.git !== undefined;
+  if (location.project && recordedLocal && !keepLocal) {
+    findings.push({
+      level: 'warn',
+      message: `${displayPath({ path: location.project.dir, home })} is no longer in a git repository; agents-config sync will stop keeping its files local`,
+    });
+  }
+  const needed = requiredVariables(selectBlocks(library, blocks, scope));
+  const missing = needed.filter((name) => !manifest.variables[name]?.trim());
+  if (missing.length > 0) {
+    findings.push({
+      level: 'error',
+      message: `The blocks now use variables with no recorded value: ${missing.join(', ')}; set them with ${setVariablesCommand({ ctx, location, names: missing })}`,
+    });
+  } else {
+    findings.push(
+      ...(await planFindings({
+        ctx,
+        location,
+        manifest,
+        library,
+        blocks,
+        skills,
+        skillSources: resolution.sources,
+        keepLocal,
+      })),
+    );
   }
   findings.push(...(await symlinkFindings(ctx, manifest)));
   if (scope === 'global') {

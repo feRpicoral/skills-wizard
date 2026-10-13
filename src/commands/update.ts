@@ -46,7 +46,7 @@ import {
 import { type Manifest, projectManifestPath } from '../state/manifest.ts';
 import { forgetProject, readProjects } from '../state/projects.ts';
 import {
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   dropUnknownSkills,
   loadLibrary,
   notify,
@@ -294,11 +294,12 @@ async function planUpdateTarget({
   location,
   previous,
 }: PlanUpdateTargetParams): Promise<Plan> {
-  const knownBlocks = dropUnknownBlocks({
+  const knownBlocks = dropUnavailableBlocks({
     ctx,
     prompting,
     library,
     ids: previous.blocks,
+    scope: location.scope,
   });
   const { ids: blocks, added } = withRequirements(library, knownBlocks);
   if (added.length > 0) {

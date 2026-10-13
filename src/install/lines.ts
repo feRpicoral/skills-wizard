@@ -5,6 +5,25 @@ export interface Line {
   eol: string;
 }
 
+const BOM = '\uFEFF';
+
+export function withoutBom(content: string): string {
+  return content.startsWith(BOM) ? content.slice(BOM.length) : content;
+}
+
+export function keepBom(
+  content: string,
+  edit: (text: string) => string,
+): string {
+  const text = withoutBom(content);
+  const next = edit(text);
+  return next === '' || text === content ? next : `${BOM}${next}`;
+}
+
+export function isBlank(content: string | null): boolean {
+  return content === null || content.trim() === '';
+}
+
 export function lineEnding(content: string | null): string {
   return content ? detectNewlineGraceful(content) : '\n';
 }
