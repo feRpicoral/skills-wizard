@@ -1,6 +1,6 @@
 ---
 title: Next.js App Router
-summary: React Server Components, server-only secrets and Zod boundary validation
+summary: Next.js 16 App Router, Server Components, typed Server Actions and proxy.ts
 group: stack
 scopes: [project]
 defaults: []
@@ -8,7 +8,7 @@ defaults: []
 
 ## Next.js App Router
 
-- Default to the App Router (`app/` or `src/app/`) and React Server Components; add `'use client'` only at leaf interactive components that require browser APIs, state hooks, or event listeners.
-- Keep secrets, database clients, and privileged API keys strictly on the server (using `server-only` where appropriate), and never expose non-`NEXT_PUBLIC_*` environment variables to client bundles.
-- Validate route `params`, `searchParams`, Server Action inputs, and Route Handler request payloads with `zod` schemas before executing domain logic.
-- Prefer Server Components for initial data reads and use either Server Actions or typed API routes with TanStack Query for client mutations and refetches according to the repository's data layer.
+- Target Next.js 16 App Router (`app/` or `src/app/`) and consult `node_modules/next/dist/docs` when installed for version-accurate API details.
+- Default to React Server Components and place `'use client'` only at interactive leaf components that require browser APIs, state hooks, or event handlers. Organize routes with route groups (`(marketing)`, `(app)`, `(auth)`) and use `proxy.ts` (rather than legacy middleware conventions) where Next.js 16 request proxying applies.
+- Validate route `params`, `searchParams`, Route Handler payloads, and Server Action inputs with `zod` schemas, and have Server Actions return a typed discriminated union (`{ ok: true, data } | { ok: false, error }`).
+- Keep secrets, database clients, and privileged keys strictly on the server (`server-only`), never exposing non-`NEXT_PUBLIC_*` variables to client bundles.

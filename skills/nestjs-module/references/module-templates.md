@@ -130,6 +130,15 @@ export class WebhooksService {
   async createEndpoint(
     dto: CreateWebhookEndpointDto,
   ): Promise<WebhookEndpointResponseDto> {
+    const existing = await this.webhooksRepository.findByUrl({
+      organizationId: dto.organizationId,
+      url: dto.url,
+    });
+    if (existing) {
+      throw new ConflictException(
+        `Webhook endpoint for ${dto.url} already exists`,
+      );
+    }
     return this.webhooksRepository.create(dto);
   }
 }
@@ -216,6 +225,7 @@ describe('WebhooksService', () => {
     };
     const repository = {
       findById: jest.fn().mockResolvedValue(record),
+      findByUrl: jest.fn(),
       create: jest.fn(),
     } as unknown as WebhooksRepository;
     const service = new WebhooksService(repository);
@@ -235,6 +245,7 @@ describe('WebhooksService', () => {
   it('throws NotFoundException when the endpoint does not exist', async () => {
     const repository = {
       findById: jest.fn().mockResolvedValue(null),
+      findByUrl: jest.fn(),
       create: jest.fn(),
     } as unknown as WebhooksRepository;
     const service = new WebhooksService(repository);

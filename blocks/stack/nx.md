@@ -1,6 +1,6 @@
 ---
 title: Nx Monorepo
-summary: Module boundary enforcement, workspace package entry points and Nx task targets
+summary: Yarn workspaces with apps/ and libs/, package.json targets, nx affected and tag boundaries
 group: stack
 scopes: [project]
 defaults: []
@@ -8,6 +8,6 @@ defaults: []
 
 ## Nx Monorepo
 
-- Enforce workspace module boundaries (`@nx/enforce-module-boundaries`) and import across workspace projects only through their public package entry points (`@scope/<pkg>`), never via relative paths that cross `apps/*`, `packages/*`, or `libs/*` roots.
-- Run tasks through Nx (`yarn nx run <project>:<target>`, `yarn nx run-many -t lint,test,build`, or `yarn nx affected -t lint,test,build`) so `dependsOn` pipelines and task caching are respected.
-- Place shared schemas, API contracts, and utilities in workspace libraries (`packages/*` or `libs/*`) rather than importing code from one application into another.
+- Structure the monorepo with Yarn workspaces under `apps/*` and `libs/*` (or `packages/*`), defining targets via `package.json` scripts and workspaces rather than adding unnecessary `project.json` files.
+- Enforce module boundaries with tags (`@nx/enforce-module-boundaries`) and import across workspace packages only through their public entry points (`@scope/<pkg>`), never via relative paths across workspace roots.
+- Run tasks locally with `yarn nx` (`yarn nx run <project>:<target>` or `yarn nx run-many -t lint,test,build`) and use `yarn nx affected -t lint,test,build` in CI so task pipelines and caching are respected.

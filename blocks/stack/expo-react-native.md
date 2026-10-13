@@ -1,6 +1,6 @@
 ---
 title: Expo and React Native
-summary: Expo Router typed routes, expo install compatibility and list virtualization
+summary: Expo New Architecture, app.config.ts, EAS Build/Update, native-stack and Zustand
 group: stack
 scopes: [project]
 defaults: []
@@ -8,6 +8,6 @@ defaults: []
 
 ## Expo and React Native
 
-- Use Expo Router (`app/`) for file-based navigation with typed routes (`experiments.typedRoutes`) enabled.
-- Install SDK-coupled dependencies with `npx expo install <package>` so native module versions remain compatible with the active Expo SDK, and prefer development builds (`expo-dev-client`) over prebuild bare native edits unless native customization requires it.
-- Respect safe areas (`react-native-safe-area-context`) and keyboard avoidance, and render collections with `FlatList` or `FlashList` rather than nesting virtualized lists inside a `ScrollView` on the same axis.
+- Run Expo on the New Architecture configured via `app.config.ts`, using `expo-dev-client` development builds, EAS Build, and EAS Update rather than bare native directory edits unless required.
+- Use React Navigation `native-stack` (`@react-navigation/native-stack`, or Expo Router built on `native-stack`) and wrap screens in shared screen/layout wrapper components that handle safe areas (`react-native-safe-area-context`) and keyboard avoidance.
+- Install SDK-compatible packages via `npx expo install <package>`, render lists with `FlatList` or `FlashList`, and use Zustand strictly for client-only UI state (keeping server data in TanStack Query).
