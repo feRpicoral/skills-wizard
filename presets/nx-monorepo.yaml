@@ -1,0 +1,11 @@
+id: nx-monorepo
+name: Nx Monorepo
+description: Nx monorepo workspace with TypeScript, Yarn, ESLint, and Prettier
+blocks:
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+  - stack/nx
+skills:
+  - eslint-configuration
+  - prettier-configuration

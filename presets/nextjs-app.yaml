@@ -1,0 +1,16 @@
+id: nextjs-app
+name: Next.js App
+description: Next.js App Router application with TypeScript, Tailwind CSS, shadcn/ui, and TanStack Query
+blocks:
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+  - stack/nextjs
+  - stack/tailwind-shadcn
+  - stack/tanstack-query
+skills:
+  - vercel-react-best-practices
+  - shadcn
+  - frontend-design
+  - eslint-configuration
+  - prettier-configuration
