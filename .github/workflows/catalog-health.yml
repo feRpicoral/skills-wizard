@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - catalog.yaml
+      - src/skills/**
+      - package.json
+      - yarn.lock
       - .github/workflows/catalog-health.yml
   schedule:
     - cron: '0 8 * * 1'
