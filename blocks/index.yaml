@@ -22,7 +22,6 @@ order:
   - engineering/environment-variables
   - tooling/shell-commands
   - tooling/external-clis
-  - git/github-repo-setup
   - git/branching-and-prs
   - git/pr-reviews
   - git/pr-descriptions
@@ -31,4 +30,17 @@ order:
   - core/security-and-secrets
   - tooling/web-research
   - tooling/mcp-and-tools
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+  - stack/nextjs
+  - stack/nestjs
+  - stack/react-vite
+  - stack/tailwind-shadcn
+  - stack/tanstack-query
+  - stack/expo-react-native
+  - stack/prisma
   - stack/supabase-prisma
+  - stack/nx
+  - stack/llm-apps
+  - stack/python-uv
