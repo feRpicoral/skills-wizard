@@ -5,7 +5,7 @@
       "id": "casual-add-eval-suite",
       "prompt": "we wrote this markdown-link-checker skill (SKILL.md is right here) but it doesn't have any evals yet. can you set some up?",
       "expected_output": "evals/evals.json for markdown-link-checker with at least 3 cases (casual, precise, edge case) that mix scripted assertions with blind-grader strings, and evals/trigger_queries.json with at least 10 should_trigger and 10 near-miss should_not_trigger queries.",
-      "files": ["evals/files/casual-add-eval-suite/SKILL.md"],
+      "files": ["evals/files/casual-add-eval-suite/SKILL.fixture.md"],
       "assertions": [
         "evals/evals.json covers a casually phrased request, a precise specification and an edge case for markdown-link-checker",
         "The should_trigger: false queries in evals/trigger_queries.json are near misses such as external URL uptime checks or HTML scraping rather than unrelated tasks",

@@ -13,6 +13,7 @@
     "total_queries": 8,
     "positive_queries": 4,
     "negative_queries": 4,
+    "errored_queries": 0,
     "true_positives": 2,
     "false_positives": 1,
     "true_negatives": 3,
@@ -29,6 +30,7 @@
       "should_trigger": true,
       "trigger_count": 2,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0.6667,
       "passed": true
     },
@@ -37,6 +39,7 @@
       "should_trigger": true,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": false
     },
@@ -45,6 +48,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -53,6 +57,7 @@
       "should_trigger": true,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": false
     },
@@ -61,6 +66,7 @@
       "should_trigger": false,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": false
     },
@@ -69,6 +75,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     },
@@ -77,6 +84,7 @@
       "should_trigger": false,
       "trigger_count": 1,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0.3333,
       "passed": true
     },
@@ -85,6 +93,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     }

@@ -63,7 +63,7 @@ Author spec-compliant, progressive-disclosure Agent Skills under `skills/<name>/
    - Populate `evals/evals.json` with at least 3 realistic test cases spanning:
      - **Casual phrasing**: a short, underspecified request written the way a user actually types it ("can you make a skill out of what we just did?"), not a restatement of the skill's own rules.
      - **Precise specification**: detailed technical requirements and constraints.
-     - **Edge case / migration**: broken, legacy, or conflicting input files under `evals/files/<case-id>/`.
+     - **Edge case / migration**: broken, legacy, or conflicting input files under `evals/files/<case-id>/`. Name a fixture skill file `SKILL.fixture.md`; the eval harness stages it as `SKILL.md`, and agents never load it as a real skill.
    - Give every case at least one assertion, and use only the scripted types `file_exists`, `file_absent`, `regex`, `json_valid`, and `command`, plus natural-language strings for the blind grader.
    - Point scripted assertions at the conventions the skill teaches (a specific file layout, a required field, a command that must succeed) rather than at things any agent does anyway, such as a file the fixture already contains.
    - Populate `evals/trigger_queries.json` with 10 positive (`should_trigger: true`) and 10 near-miss negative (`should_trigger: false`) queries. Write each query as a plain user request: no labels such as `[negative]`, and negatives that share vocabulary with the skill but need a different tool.

@@ -90,7 +90,7 @@
       "prompt": "this SKILL.md and README.md are from an old draft of our http-error-catalog skill and the skill validator hates them. can you clean it up?",
       "expected_output": "SKILL.md refactored in place: name http-error-catalog, no author key, a description with Use when and Don't use for clauses, the status code list moved to a reference file linked directly from SKILL.md, and README.md removed.",
       "files": [
-        "evals/files/edge-bloated-skill-refactor/SKILL.md",
+        "evals/files/edge-bloated-skill-refactor/SKILL.fixture.md",
         "evals/files/edge-bloated-skill-refactor/README.md"
       ],
       "assertions": [
