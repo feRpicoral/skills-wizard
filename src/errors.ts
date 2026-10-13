@@ -43,6 +43,8 @@ export class RunnerError extends AgentsConfigError {}
 
 export class PresetError extends AgentsConfigError {}
 
+export class McpError extends AgentsConfigError {}
+
 export function isSystemError(error: unknown): error is Error {
   return (
     error instanceof Error && 'code' in error && typeof error.code === 'string'
