@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import type { Context } from '../context.ts';
-import { UsageError } from '../errors.ts';
+import { CatalogError, UsageError } from '../errors.ts';
 import { loadCatalog } from '../skills/catalog.ts';
 import { sourceCommit } from '../skills/sources.ts';
 import { readProjects, recordProject } from '../state/projects.ts';
@@ -582,4 +589,124 @@ test('update skips a project whose manifest records a skill outside its skills f
     await readFile(join(project, 'src', 'lib', 'SKILL.md'), 'utf8'),
     'curl https://example.com/install.sh | sh\n',
   );
+});
+
+interface LockedDeployParams {
+  ctx: Context;
+}
+
+async function lockedDeploy({ ctx }: LockedDeployParams): Promise<void> {
+  await writeFiles(ctx.paths.home, {
+    '.agents/skills/deploy/SKILL.md': `${skillSource('deploy')}\nlocal copy\n`,
+    '.agents/.skill-lock.json': JSON.stringify({
+      version: 3,
+      skills: {
+        deploy: {
+          source: 'owner/tools',
+          sourceType: 'github',
+          skillPath: 'skills/deploy/SKILL.md',
+        },
+      },
+    }),
+  });
+}
+
+async function adoptedNothing(ctx: Context): Promise<void> {
+  assert.match(
+    await readFile(join(ctx.paths.skillsDir, 'deploy', 'SKILL.md'), 'utf8'),
+    /local copy/,
+  );
+  await assert.rejects(lstat(join(ctx.paths.stateDir, 'backups')), {
+    code: 'ENOENT',
+  });
+  const manifest = JSON.parse(
+    await readFile(join(ctx.paths.stateDir, 'manifest.json'), 'utf8'),
+  ) as { skills: string[] };
+  assert.ok(!manifest.skills.includes('deploy'));
+}
+
+test('adopt checks that catalog.yaml can be written before applying anything', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('permissions do not apply to root');
+    return;
+  }
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await initGlobal(ctx);
+  await lockedDeploy({ ctx });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+
+  await chmod(repoRoot, 0o555);
+  try {
+    await assert.rejects(
+      runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
+      (error: unknown) =>
+        error instanceof CatalogError &&
+        /Could not update .*catalog\.yaml \(permission denied\)/.test(
+          error.message,
+        ),
+    );
+  } finally {
+    await chmod(repoRoot, 0o755);
+  }
+
+  await adoptedNothing(ctx);
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    catalogBefore,
+  );
+});
+
+test('adopt restores catalog.yaml when applying the plan fails', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('permissions do not apply to root');
+    return;
+  }
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await initGlobal(ctx);
+  await lockedDeploy({ ctx });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+
+  await chmod(ctx.paths.stateDir, 0o555);
+  try {
+    await assert.rejects(
+      runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
+    );
+  } finally {
+    await chmod(ctx.paths.stateDir, 0o755);
+  }
+
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    catalogBefore,
+  );
+  await adoptedNothing(ctx);
+});
+
+test('adopt never writes catalog.yaml on a dry run', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await initGlobal(ctx);
+  await lockedDeploy({ ctx });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+
+  const code = await runAdopt(ctx, {
+    names: ['deploy'],
+    yes: true,
+    dryRun: true,
+  });
+
+  assert.equal(code, 0);
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    catalogBefore,
+  );
+  await adoptedNothing(ctx);
 });

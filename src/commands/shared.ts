@@ -352,6 +352,7 @@ export async function warnTrackedFiles({
 export interface ConfirmOptions {
   yes: boolean;
   dryRun: boolean;
+  beforeApply?: () => Promise<void>;
 }
 
 async function trackProject(
@@ -382,7 +383,7 @@ async function trackProject(
 export async function confirmAndApply(
   ctx: Context,
   plan: Plan,
-  { yes, dryRun }: ConfirmOptions,
+  { yes, dryRun, beforeApply }: ConfirmOptions,
 ): Promise<{ code: number; applied: boolean }> {
   const prompting = ctx.interactive && !yes;
   const lines = describePlan(plan, ctx.paths.home);
@@ -412,6 +413,7 @@ export async function confirmAndApply(
     return { code: 1, applied: false };
   }
 
+  await beforeApply?.();
   const outcome = await applyPlan(plan);
   await trackProject(ctx, prompting, plan);
   const changed = outcome.applied.filter(
