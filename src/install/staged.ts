@@ -36,6 +36,10 @@ export async function stageAction({
 }: StageActionParams): Promise<void> {
   const { change } = action;
   if (change.type !== 'write' && change.type !== 'delete') return;
+  // Deleting a link or a skill folder leaves the file a link points to alone,
+  // so only text file entries change what later actions read.
+  const kind = (action.entry ?? action.previous)?.kind;
+  if (kind === 'symlink' || kind === 'skill') return;
   const location = await realLocation(action.writePath ?? action.path);
   if (location === null) return;
   staged.set(location, change.type === 'write' ? change.content : null);
