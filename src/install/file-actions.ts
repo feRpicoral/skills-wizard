@@ -158,11 +158,14 @@ function planRegion({
   previous,
 }: FileActionParams<RegionTarget>): PlannedAction {
   try {
+    // A heading is only written into a file the CLI may own, never through a
+    // link, so install and removal agree on who owns it.
+    const ownsHeading = file.writePath === target.path;
     const next = upsertRegion({
       existing: file.existing,
       body: target.body,
       markers: MARKDOWN_MARKERS,
-      ...(target.preamble ? { preamble: target.preamble } : {}),
+      ...(target.preamble && ownsHeading ? { preamble: target.preamble } : {}),
     });
     const preamble = regionPreamble({ target, file, previous });
     const entry: ManifestEntry = {

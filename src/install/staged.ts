@@ -16,8 +16,9 @@ interface StagedText {
 }
 
 // Looks the path up by its real location, resolving links that are still on
-// disk. Callers pass the resolved write path, so a link deleted earlier in the
-// plan is never read through; deletions are staged under the deleted path.
+// disk; deletions are staged under the deleted path itself. A link deleted in
+// the plan is never read through afterwards because deletions only happen in
+// the removal phase, after every target action has been planned.
 export async function readStaged({
   staged,
   path,
