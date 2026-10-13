@@ -2,7 +2,7 @@ Source: the user's repository desvia (root and project eslint.config.mjs files, 
 
 # House style for Nx and Expo (ESLint)
 
-Companion to house-style.md, which has the shared core, the ordering rule and where the repos differ. Use this for Nx workspaces and Expo or React Native apps.
+Use this for Nx workspaces and Expo or React Native apps. Shared core rules: `eslint-plugin-prettier/recommended` after shared configs, `simple-import-sort/imports` and `simple-import-sort/exports` as `"error"`, `eslint-plugin-unused-imports` with `^_` ignore patterns, and `@typescript-eslint/consistent-type-imports` with `inline-type-imports`.
 
 ## Nx monorepo
 

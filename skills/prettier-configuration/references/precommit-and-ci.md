@@ -23,7 +23,7 @@ The docs' minimal lint-staged config:
 }
 ```
 
-When ESLint also runs, it must run before Prettier. The house block in house-style.md does this.
+When ESLint also runs, it must run before Prettier (`"*.{ts,tsx,js,jsx,cjs,mjs}": ["eslint --fix", "prettier --write"]`, `"*.{json,md,css,yml,yaml}": ["prettier --write"]`).
 
 Yarn 2 and later do not run the `prepare` lifecycle script, so `husky init` (which writes `"prepare": "husky"`) does not install hooks on `yarn install`. The Husky docs use `"postinstall": "husky"` for Yarn instead (and `pinst` to disable it when publishing the package).
 
@@ -45,7 +45,7 @@ Yarn 2 and later do not run the `prepare` lifecycle script, so `husky init` (whi
 
 Check these in order:
 
-1. Prettier version. The install docs say to install an exact version because even patch releases can change formatting, and `npx prettier` without a local install downloads the latest release. Run the skill's version check (it flags a stale `node_modules` below the declared range) and compare `npx prettier --version` locally and in the CI log. Minor releases changed output noticeably (3.4.0 changed Markdown list-marker spacing and YAML comment spacing; 3.9.0 replaced the Markdown parser and upgraded the YAML parser; see version-differences.md).
+1. Prettier version. The install docs say to install an exact version because even patch releases can change formatting, and `npx prettier` without a local install downloads the latest release. Run the skill's version check (it flags a stale `node_modules` outside the declared range) and compare `npx prettier --version` locally and in the CI log. Minor releases changed output noticeably (3.4.0 changed Markdown list-marker spacing under `tabWidth: 4` from `-   item` to `- item` and fixed YAML comment spacing; 3.9.0 replaced the Markdown parser and upgraded the YAML parser).
 2. Install state. A `node_modules` installed before the lockfile changed keeps the old version. Reinstall from the lockfile.
 3. Editor integration. The editor extension should use the project's local Prettier; a bundled or global copy formats differently.
 4. Config resolution. Run `npx prettier --find-config-path <file>` in both places. A config or `.editorconfig` above the repository (for example in a home directory or a parent of a worktree before 3.9.0) can apply locally but not in CI.

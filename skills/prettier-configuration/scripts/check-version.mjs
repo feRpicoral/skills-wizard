@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -24,8 +23,9 @@ directory) with the docs version this skill was written against, read from
 metadata.docs-version in SKILL.md.
 
 Prints one sentence for the agent, then one JSON line with: skill, package,
-status (match | newer | older | missing), docsVersion, installedVersion,
-declaredRange, declaredIn, source, staleInstall, action, reference, projectDir.
+status (match | newer | older | declared | missing), docsVersion,
+installedVersion, installedFrom, declaredRange, declaredIn, source,
+staleInstall, action, reference, projectDir.
 
 When ${PACKAGE} is not installed, the lower bound of the range declared in
 package.json (dependencies or devDependencies) is compared instead.
@@ -57,8 +57,16 @@ function readFrontmatter(skillFile) {
   throw new Error(`${skillFile} has an unterminated frontmatter block`);
 }
 
+function stripNpmAlias(range) {
+  const trimmed = String(range).trim();
+  if (!trimmed.startsWith('npm:')) return trimmed;
+  const atIndex = trimmed.lastIndexOf('@');
+  return atIndex > 4 ? trimmed.slice(atIndex + 1).trim() : '';
+}
+
 function parseVersion(text) {
-  const match = String(text).match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  const cleaned = stripNpmAlias(text);
+  const match = cleaned.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
   if (!match) return null;
   return match.slice(1).map((part) => Number(part ?? 0));
 }
@@ -68,6 +76,33 @@ function compareVersions({ left, right }) {
     if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1;
   }
   return 0;
+}
+
+function isOutsideDeclaredRange({ installedParts, rawRange, lowerParts }) {
+  if (compareVersions({ left: installedParts, right: lowerParts }) < 0) {
+    return true;
+  }
+  const cleaned = stripNpmAlias(rawRange);
+  if (/^\^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+][\w.-]+)?$/.test(cleaned)) {
+    if (lowerParts[0] > 0) return installedParts[0] !== lowerParts[0];
+    if (lowerParts[1] > 0) {
+      return installedParts[0] !== 0 || installedParts[1] !== lowerParts[1];
+    }
+    return (
+      installedParts[0] !== 0 ||
+      installedParts[1] !== 0 ||
+      installedParts[2] !== lowerParts[2]
+    );
+  }
+  if (/^~(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+][\w.-]+)?$/.test(cleaned)) {
+    return (
+      installedParts[0] !== lowerParts[0] || installedParts[1] !== lowerParts[1]
+    );
+  }
+  if (/^=?(\d+)\.(\d+)\.(\d+)(?:[-+][\w.-]+)?$/.test(cleaned)) {
+    return compareVersions({ left: installedParts, right: lowerParts }) !== 0;
+  }
+  return false;
 }
 
 const formatVersion = (parts) => parts.join('.');
@@ -80,37 +115,57 @@ function readJson(file) {
   }
 }
 
-function findManifestUpwards(startDir) {
+function isWorkspaceRootDir(dir) {
+  if (
+    existsSync(join(dir, 'pnpm-workspace.yaml')) ||
+    existsSync(join(dir, '.git'))
+  ) {
+    return true;
+  }
+  const pkgPath = join(dir, 'package.json');
+  if (!existsSync(pkgPath)) return false;
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    return Boolean(pkg && typeof pkg === 'object' && 'workspaces' in pkg);
+  } catch {
+    return false;
+  }
+}
+
+function findWorkspaceCeiling(startDir) {
   let dir = startDir;
+  let ceiling = startDir;
+  for (;;) {
+    if (isWorkspaceRootDir(dir)) {
+      ceiling = dir;
+      break;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return ceiling;
+}
+
+function findInstalled(projectDir) {
+  const ceiling = findWorkspaceCeiling(projectDir);
+  let dir = projectDir;
   for (;;) {
     const candidate = join(dir, 'node_modules', PACKAGE, 'package.json');
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) {
+      const manifest = readJson(candidate);
+      const version = String(manifest.version ?? '').trim();
+      const parts = parseVersion(version);
+      if (!parts) {
+        throw new Error(`${candidate} has no usable "version" field`);
+      }
+      return { version, parts, manifestPath: candidate, installedFrom: dir };
+    }
+    if (dir === ceiling) return null;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
-}
-
-function findInstalled(projectDir) {
-  const require = createRequire(join(projectDir, 'package.json'));
-  let manifestPath;
-  try {
-    manifestPath = require.resolve(`${PACKAGE}/package.json`);
-  } catch (error) {
-    if (error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
-      manifestPath = findManifestUpwards(projectDir);
-    } else if (error.code === 'MODULE_NOT_FOUND') {
-      return null;
-    } else {
-      throw error;
-    }
-  }
-  if (!manifestPath) return null;
-  const manifest = readJson(manifestPath);
-  const version = String(manifest.version ?? '').trim();
-  const parts = parseVersion(version);
-  if (!parts) throw new Error(`${manifestPath} has no usable "version" field`);
-  return { version, parts, manifestPath };
 }
 
 function findDeclared(projectDir) {
@@ -151,6 +206,7 @@ const ACTIONS = {
   match: 'use-references',
   newer: 'tell-user-skill-outdated',
   older: 'read-version-differences',
+  declared: 'install-and-recheck',
   missing: 'treat-as-new-setup',
 };
 
@@ -183,12 +239,21 @@ function check(projectDir) {
       `${PACKAGE} ${installed.version} is installed, ` +
       statusSentence({ status, version: installed.version, docsVersion });
     if (
+      declared &&
       declaredParts &&
-      compareVersions({ left: installedParts, right: declaredParts }) < 0
+      isOutsideDeclaredRange({
+        installedParts,
+        rawRange: declared.range,
+        lowerParts: declaredParts,
+      })
     ) {
       staleInstall = true;
+      const relation =
+        compareVersions({ left: installedParts, right: declaredParts }) < 0
+          ? 'below'
+          : 'outside';
       message +=
-        ` The installed version is below the range ${declaredText}, so ` +
+        ` The installed version is ${relation} the range ${declaredText}, so ` +
         `node_modules is stale: reinstall from the lockfile before trusting ` +
         `local results or comparing them with CI.`;
     }
@@ -203,6 +268,7 @@ function check(projectDir) {
       statusSentence({ status, version: lowerBound, docsVersion }) +
       ` Install dependencies and re-run this check for the exact version.`;
   } else if (declared) {
+    status = 'declared';
     source = 'package.json';
     message =
       `${PACKAGE} is ${declaredText} but not installed, and the range has no ` +
@@ -228,6 +294,7 @@ function check(projectDir) {
       status,
       docsVersion,
       installedVersion: installed?.version ?? null,
+      installedFrom: installed?.installedFrom ?? null,
       declaredRange: declared?.range ?? null,
       declaredIn: declared?.field ?? null,
       source,

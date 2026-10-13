@@ -20,33 +20,33 @@ ESLint 10 cannot load `.eslintrc*`, `.eslintignore` or an `eslintConfig` key in 
 
 ## Mapping
 
-| eslintrc                                                          | Flat config                                                                                                            |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `root: true`                                                      | Remove; every flat config acts as root                                                                                 |
-| `extends: "eslint:recommended"` / `"eslint:all"`                  | `js.configs.recommended` / `js.configs.all` from `@eslint/js`, or `extends: ['js/recommended']` with `plugins: { js }` |
-| `extends: ["eslint-config-x", "./custom.js"]`                     | Import the modules and add them to the array or to `extends`                                                           |
-| `plugins: ["jsdoc"]`                                              | `import jsdoc from 'eslint-plugin-jsdoc'` and `plugins: { jsdoc }`                                                     |
-| `parser: "@babel/eslint-parser"`                                  | `languageOptions.parser` set to the imported parser object                                                             |
-| `parserOptions.ecmaVersion`, `parserOptions.sourceType`           | `languageOptions.ecmaVersion`, `languageOptions.sourceType`                                                            |
-| Other `parserOptions`                                             | `languageOptions.parserOptions`                                                                                        |
-| `env: { browser: true, node: true }`                              | `languageOptions.globals: { ...globals.browser, ...globals.node }`                                                     |
-| `globals: { myGlobal: "readonly" }`                               | `languageOptions.globals`                                                                                              |
-| `overrides: [{ files: [...], ... }]`                              | Later objects with `files` (always an array, never a single string)                                                    |
-| `ignorePatterns`, `.eslintignore`                                 | `globalIgnores([...])`; `temp.js` becomes `**/temp.js`                                                                 |
-| `noInlineConfig`, `reportUnusedDisableDirectives: true`           | `linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'warn' }`                                       |
-| Extension-named processors (`"plugin/.md"`) applied automatically | An explicit object: `{ files: ['**/*.md'], processor: plugin.processors['.md'] }`                                      |
-| `--rulesdir`                                                      | A virtual plugin in the config (plugins-parsers-languages.md)                                                          |
-| `settings`                                                        | `settings` (unchanged)                                                                                                 |
+| eslintrc                                                          | Flat config                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `root: true`                                                      | Remove; every flat config acts as root                                                                                                                                                                                                           |
+| `extends: "eslint:recommended"` / `"eslint:all"`                  | `js.configs.recommended` / `js.configs.all` from `@eslint/js`, or `extends: ['js/recommended']` with `plugins: { js }`                                                                                                                           |
+| `extends: ["eslint-config-x", "./custom.js"]`                     | Import the modules and add them to the array or to `extends`                                                                                                                                                                                     |
+| `plugins: ["jsdoc"]`                                              | `import jsdoc from 'eslint-plugin-jsdoc'` and `plugins: { jsdoc }`                                                                                                                                                                               |
+| `parser: "@babel/eslint-parser"`                                  | `languageOptions.parser` set to the imported parser object                                                                                                                                                                                       |
+| `parserOptions.ecmaVersion`, `parserOptions.sourceType`           | `languageOptions.ecmaVersion`, `languageOptions.sourceType`                                                                                                                                                                                      |
+| Other `parserOptions`                                             | `languageOptions.parserOptions`                                                                                                                                                                                                                  |
+| `env: { browser: true, node: true }`                              | `languageOptions.globals: { ...globals.browser, ...globals.node }`                                                                                                                                                                               |
+| `globals: { myGlobal: "readonly" }`                               | `languageOptions.globals`                                                                                                                                                                                                                        |
+| `overrides: [{ files: [...], ... }]`                              | Later objects with `files` (always an array, never a single string); slash-less patterns such as `*.config.js` matched at any depth in eslintrc (`matchBase: true`) and must become `**/*.config.js` (`./`-prefixed patterns stay root-relative) |
+| `ignorePatterns`, `.eslintignore`                                 | `globalIgnores([...])`; `temp.js` becomes `**/temp.js`                                                                                                                                                                                           |
+| `noInlineConfig`, `reportUnusedDisableDirectives: true`           | `linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'warn' }`                                                                                                                                                                 |
+| Extension-named processors (`"plugin/.md"`) applied automatically | An explicit object: `{ files: ['**/*.md'], processor: plugin.processors['.md'] }`                                                                                                                                                                |
+| `--rulesdir`                                                      | A virtual plugin in the config (`plugins: { local: { rules: { 'my-rule': rule } } }`)                                                                                                                                                            |
+| `settings`                                                        | `settings` (unchanged)                                                                                                                                                                                                                           |
 
 Unchanged: rule configuration syntax, processor syntax, and most CLI flags.
 
 ## Behavior differences to account for
 
 - An object without `files` applies to `**/*.js`, `**/*.mjs` and `**/*.cjs` plus any extension another object adds. Every flat config object behaves like an `overrides` entry.
-- Patterns resolve relative to the config file. `.eslintignore` used gitignore semantics, where `temp.js` matched at any depth.
+- Patterns resolve relative to the config file. `.eslintignore` used gitignore semantics, where `temp.js` matched at any depth, and `overrides[].files` used minimatch `matchBase: true`, where slash-less patterns like `*.config.js` matched in every subdirectory; in flat config, prepend `**/` (`**/temp.js`, `**/*.config.js`) unless the old pattern started with `./`.
 - Dotfiles are linted by default; add `'**/.*'` to global ignores if the old setup relied on skipping them.
 - `sourceType: 'commonjs'` is available.
-- `--ignore-path .gitignore` becomes `includeIgnoreFile()` from `eslint/config` (10.4.0 and later) or from `@eslint/compat` on older versions (ignoring-files.md).
+- `--ignore-path .gitignore` becomes `includeIgnoreFile(gitignorePath, { gitignoreResolution: true })` from `eslint/config` (10.4.0 and later) or `includeIgnoreFile(gitignorePath)` from `@eslint/compat` on older versions.
 
 ## Worked example
 

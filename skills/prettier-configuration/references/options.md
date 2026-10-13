@@ -2,7 +2,7 @@ Source: https://github.com/prettier/prettier/tree/3.9.10/docs/options.md, https:
 
 # Options
 
-Set options in a configuration file (configuration.md), not as CLI flags, so the CLI, editors and other tools agree.
+Set options in a configuration file (`.prettierrc`, `prettier.config.*` or `"prettier"` in `package.json`), not as CLI flags, so the CLI, editors and other tools agree.
 
 ## All options
 
@@ -36,7 +36,7 @@ Set options in a configuration file (configuration.md), not as CLI flags, so the
 | Embedded Language Formatting     | `embeddedLanguageFormatting`   | `--embedded-language-formatting=<off\|auto>`          | `"auto"`        | `"auto"`, `"off"`                           |
 | Single Attribute Per Line        | `singleAttributePerLine`       | `--single-attribute-per-line`                         | `false`         | `true`, `false`                             |
 
-`plugins` and `overrides` are configuration keys too; see plugins.md and configuration.md.
+`plugins` and `overrides` are configuration keys too (`plugins` lists plugin package names or paths; `overrides` applies options to matching `files` globs).
 
 ## Notes per option
 
