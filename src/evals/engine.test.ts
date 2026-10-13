@@ -642,3 +642,105 @@ test('extractSkillAtRef rejects links that leave the skill and refs that look li
     /Invalid git ref/,
   );
 });
+
+test('runSkillTriggers runs runner preflight before allocating the triggers directory', async (t) => {
+  const { paths, skillDir, env } = await demoSkill({
+    t,
+    files: { 'evals/trigger_queries.json': triggerQueries },
+  });
+  const fake = createFakeRunner();
+  let taskCalls = 0;
+  const runner: EvalRunner = {
+    ...fake,
+    preflight() {
+      return Promise.reject(new RunnerError('codex binary not found on PATH'));
+    },
+    async runTask(request) {
+      taskCalls += 1;
+      return fake.runTask(request);
+    },
+  };
+
+  await assert.rejects(
+    runSkillTriggers({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: paths.evalsDir,
+      runner,
+      env,
+    }),
+    /codex binary not found/,
+  );
+
+  assert.equal(taskCalls, 0);
+  assert.equal(await lstatIfExists(join(paths.evalsDir, 'demo-skill')), null);
+});
+
+test(
+  'runSkillEval grades and cleans up whatever state the agent leaves in the workspace',
+  { skip: process.getuid?.() === 0 },
+  async (t) => {
+    const { paths, skillDir, env } = await demoSkill({
+      t,
+      files: {
+        'evals/evals.json': evalSuite([
+          'The output confirms skill execution',
+          { type: 'json_valid', path: 'out.json' },
+          { type: 'regex', path: 'locked/notes.md', pattern: 'x' },
+        ]),
+      },
+    });
+    const fake = createFakeRunner();
+    const runner: EvalRunner = {
+      ...fake,
+      async runTask(request) {
+        const result = await fake.runTask(request);
+        // A folder where a file is expected, an unreadable folder and a
+        // read-only folder with content.
+        await writeFiles(request.workdir, {
+          'out.json/inner.txt': '{}',
+          'locked/notes.md': 'x',
+          'readonly/kept.txt': 'kept',
+        });
+        await chmod(join(request.workdir, 'locked'), 0o000);
+        await chmod(join(request.workdir, 'readonly'), 0o500);
+        return result;
+      },
+    };
+
+    const result = await runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: paths.evalsDir,
+      runner,
+      baseline: false,
+      paths,
+      env,
+    });
+    const runs = result.benchmark.cases.flatMap((item) => item.runs);
+    const evidence = runs[0]?.grading.expectations.map((item) => item.evidence);
+
+    assert.equal(runs.length, 2);
+    assert.ok(await lstatIfExists(join(result.iterationDir, 'benchmark.json')));
+    assert.equal(
+      evidence?.[1],
+      '"out.json" in workspace is not a regular file.',
+    );
+    assert.match(
+      evidence?.[2] ?? '',
+      /^Could not evaluate assertion: .*EACCES/,
+    );
+    assert.equal(
+      await lstatIfExists(
+        join(
+          result.iterationDir,
+          'eval-case-1',
+          'with_skill',
+          'run-1',
+          'workdir',
+        ),
+      ),
+      null,
+    );
+  },
+);
