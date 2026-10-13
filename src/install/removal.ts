@@ -3,9 +3,9 @@ import type { ManifestEntry } from '../state/manifest.ts';
 import { readSymlink, resolveIfSymlink, statIfExists } from './fs.ts';
 import { removeLine } from './import-line.ts';
 import {
-  parseJsonObject,
+  isEmptyJsonObject,
+  LEGACY_CREATED_KEYS,
   removeArrayValues,
-  serializeJson,
 } from './json-merge.ts';
 import {
   excludeMarkers,
@@ -192,22 +192,17 @@ function planJsonArrayRemoval(
   file: ResolvedRemovalFile,
 ): PlannedAction {
   try {
-    const before = parseJsonObject(file.existing);
-    const after = removeArrayValues({
-      doc: before,
+    const next = removeArrayValues({
+      existing: file.existing,
       keyPath: entry.key,
       values: entry.added,
       restoreString: entry.wasString,
+      createdKeys: entry.createdKeys ?? LEGACY_CREATED_KEYS,
     });
-    if (JSON.stringify(after) === JSON.stringify(before)) {
+    if (next === file.existing) {
       return removal({ entry, change: NONE, reason: NOTHING_LEFT });
     }
-    return rewriteOrDelete({
-      entry,
-      file,
-      next: serializeJson(after, file.existing),
-      emptyWhen: () => Object.keys(after).length === 0,
-    });
+    return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
       return conflict({

@@ -1,29 +1,31 @@
 import detectIndent from 'detect-indent';
+import { getProperty, hasProperty, parsePath } from 'dot-prop';
 import {
-  deleteProperty,
-  getProperty,
-  hasProperty,
-  parsePath,
-  setProperty,
-} from 'dot-prop';
+  applyEdits,
+  type FormattingOptions,
+  type JSONPath,
+  modify,
+} from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
-import { lineEnding } from './lines.ts';
+import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
 
 type JsonObject = Record<string, unknown>;
 
 const DEFAULT_INDENT = 2;
+
+export const LEGACY_CREATED_KEYS = 1;
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function parseJsonObject(content: string | null): JsonObject {
-  if (content === null || content.trim() === '') return {};
+  if (content === null || isBlank(content)) return {};
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = JSON.parse(withoutBom(content));
   } catch (error) {
     throw new JsonMergeError(
       'not plain JSON (comments or syntax errors); edit it by hand',
@@ -36,10 +38,7 @@ export function parseJsonObject(content: string | null): JsonObject {
   return parsed;
 }
 
-function parseKeyPath(
-  doc: JsonObject,
-  keyPath: string,
-): Array<string | number> {
+function parseKeyPath(doc: JsonObject, keyPath: string): JSONPath {
   const keys = parsePath(keyPath);
   if (keys.length === 0) {
     throw new JsonMergeError(`invalid key path "${keyPath}"`);
@@ -64,79 +63,118 @@ function stringValues(value: unknown, keyPath: string): string[] {
   );
 }
 
+function missingKeys(doc: JsonObject, keys: JSONPath): number {
+  let depth = keys.length;
+  while (depth > 0 && !hasProperty(doc, keys.slice(0, depth))) depth -= 1;
+  return keys.length - depth;
+}
+
+function formatting(text: string): FormattingOptions {
+  const { amount, type } = detectIndent(text);
+  return {
+    insertSpaces: type !== 'tab',
+    tabSize: amount || DEFAULT_INDENT,
+    eol: lineEnding(text || null),
+  };
+}
+
+interface SetValueParams {
+  existing: string | null;
+  keys: JSONPath;
+  value: unknown;
+}
+
+function setValue({ existing, keys, value }: SetValueParams): string {
+  const edit = (text: string) =>
+    applyEdits(
+      text,
+      modify(text, keys, value, { formattingOptions: formatting(text) }),
+    );
+  if (existing === null || isBlank(existing)) {
+    const eol = lineEnding(existing);
+    return keepBom(existing ?? '', () => `${edit('')}${eol}`);
+  }
+  return keepBom(existing, edit);
+}
+
 interface EnsureArrayValuesParams {
-  doc: JsonObject;
+  existing: string | null;
   keyPath: string;
   values: readonly string[];
 }
 
 interface EnsureResult {
-  doc: JsonObject;
+  content: string;
   added: string[];
   wasString: boolean;
+  createdKeys: number;
 }
 
 export function ensureArrayValues({
-  doc,
+  existing,
   keyPath,
   values,
 }: EnsureArrayValuesParams): EnsureResult {
-  const next = structuredClone(doc);
-  const keys = parseKeyPath(next, keyPath);
-  const original = getProperty(next, keys);
+  const doc = parseJsonObject(existing);
+  const keys = parseKeyPath(doc, keyPath);
+  const original = getProperty(doc, keys);
   const current = stringValues(original, keyPath);
   const added = values.filter((value) => !current.includes(value));
-  if (added.length > 0) setProperty(next, keys, [...current, ...added]);
-  return { doc: next, added, wasString: typeof original === 'string' };
+  const content =
+    added.length > 0 || existing === null
+      ? setValue({ existing, keys, value: [...current, ...added] })
+      : existing;
+  return {
+    content,
+    added,
+    wasString: typeof original === 'string',
+    createdKeys: added.length > 0 ? missingKeys(doc, keys) : 0,
+  };
 }
 
 interface RemoveArrayValuesParams {
-  doc: JsonObject;
+  existing: string;
   keyPath: string;
   values: readonly string[];
   restoreString: boolean;
+  createdKeys: number;
 }
 
 export function removeArrayValues({
-  doc,
+  existing,
   keyPath,
   values,
   restoreString,
-}: RemoveArrayValuesParams): JsonObject {
-  const next = structuredClone(doc);
-  const keys = parseKeyPath(next, keyPath);
-  if (!hasProperty(next, keys)) return next;
+  createdKeys,
+}: RemoveArrayValuesParams): string {
+  const doc = parseJsonObject(existing);
+  const keys = parseKeyPath(doc, keyPath);
+  if (!hasProperty(doc, keys)) return existing;
 
-  const remaining = stringValues(getProperty(next, keys), keyPath).filter(
-    (value) => !values.includes(value),
-  );
-  if (remaining.length > 0) {
-    setProperty(
-      next,
-      keys,
-      restoreString && remaining.length === 1 ? remaining[0] : remaining,
-    );
-    return next;
+  const current = stringValues(getProperty(doc, keys), keyPath);
+  const remaining = current.filter((value) => !values.includes(value));
+  if (remaining.length === current.length) return existing;
+  if (remaining.length > 0 || createdKeys === 0) {
+    const value =
+      restoreString && remaining.length === 1 ? remaining[0] : remaining;
+    return setValue({ existing, keys, value });
   }
 
-  deleteProperty(next, keys);
-  for (let depth = keys.length - 1; depth > 0; depth -= 1) {
+  let content = setValue({ existing, keys, value: undefined });
+  const existingDepth = keys.length - createdKeys;
+  for (let depth = keys.length - 1; depth > existingDepth; depth -= 1) {
     const ancestorPath = keys.slice(0, depth);
-    const ancestor = getProperty(next, ancestorPath);
+    const ancestor = getProperty(parseJsonObject(content), ancestorPath);
     if (!isObject(ancestor) || Object.keys(ancestor).length > 0) break;
-    deleteProperty(next, ancestorPath);
+    content = setValue({
+      existing: content,
+      keys: ancestorPath,
+      value: undefined,
+    });
   }
-  return next;
+  return content;
 }
 
-export function serializeJson(
-  doc: JsonObject,
-  existing: string | null,
-): string {
-  const eol = lineEnding(existing);
-  const indent = existing
-    ? detectIndent(existing).indent || DEFAULT_INDENT
-    : DEFAULT_INDENT;
-  const text = JSON.stringify(doc, null, indent);
-  return `${text.replace(/\n/g, eol)}${eol}`;
+export function isEmptyJsonObject(content: string): boolean {
+  return Object.keys(parseJsonObject(content)).length === 0;
 }
