@@ -8,6 +8,7 @@ import {
   withRequirements,
 } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
+import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { displayPath, planPath } from '../install/describe.ts';
 import {
@@ -130,7 +131,9 @@ interface PlanFindingsParams {
   manifest: Manifest;
   library: BlockLibrary;
   blocks: string[];
+  variables: Record<string, string>;
   keepLocal: boolean;
+  reportOutdated: boolean;
 }
 
 async function planFindings({
@@ -139,7 +142,9 @@ async function planFindings({
   manifest,
   library,
   blocks,
+  variables,
   keepLocal,
+  reportOutdated,
 }: PlanFindingsParams): Promise<Finding[]> {
   const findings: Finding[] = [];
   const home = ctx.paths.home;
@@ -148,7 +153,7 @@ async function planFindings({
     selection: {
       tools: manifest.tools,
       blocks,
-      variables: manifest.variables,
+      variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
     },
@@ -170,7 +175,7 @@ async function planFindings({
             : 'warn',
         message: `${where}: ${action.reason ?? 'conflict'}`,
       });
-    } else if (action.change.type !== 'none') {
+    } else if (reportOutdated && action.change.type !== 'none') {
       findings.push({
         level: 'warn',
         message: `${where} is out of date; run agents-config sync`,
@@ -236,23 +241,38 @@ export async function runDoctor(
   }
   const needed = requiredVariables(selectBlocks(library, blocks, scope));
   const missing = needed.filter((name) => !manifest.variables[name]?.trim());
-  if (missing.length > 0) {
+  const found = await lookupVariables(missing, manifest.variables);
+  const unresolved = missing.filter((name) => !found[name]?.trim());
+  for (const name of missing.filter((name) => !unresolved.includes(name))) {
+    findings.push({
+      level: 'warn',
+      message: `The blocks now use ${name}, which has no recorded value; agents-config sync will record ${name}=${found[name] ?? ''}`,
+    });
+  }
+  if (unresolved.length > 0) {
     findings.push({
       level: 'error',
-      message: `The blocks now use variables with no recorded value: ${missing.join(', ')}; set them with ${setVariablesCommand({ ctx, location, names: missing })}`,
+      message: `The blocks now use variables with no recorded value: ${unresolved.join(', ')}; set them with ${setVariablesCommand({ ctx, location, names: unresolved })}`,
     });
-  } else {
-    findings.push(
-      ...(await planFindings({
-        ctx,
-        location,
-        manifest,
-        library,
-        blocks,
-        keepLocal,
-      })),
-    );
   }
+  // A placeholder keeps conflict checks running without a value, but the
+  // rendered files would always differ, so out-of-date files are not reported.
+  const variables = {
+    ...found,
+    ...Object.fromEntries(unresolved.map((name) => [name, `<${name}>`])),
+  };
+  findings.push(
+    ...(await planFindings({
+      ctx,
+      location,
+      manifest,
+      library,
+      blocks,
+      variables,
+      keepLocal,
+      reportOutdated: unresolved.length === 0,
+    })),
+  );
   findings.push(...(await symlinkFindings(ctx, manifest)));
   if (scope === 'global') {
     findings.push(...(await globalFindings(ctx, manifest)));

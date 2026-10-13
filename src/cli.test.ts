@@ -259,6 +259,40 @@ test('doctor reports a variable a block gained without crashing', async (t) => {
   assert.equal(result.stderr, '');
 });
 
+test('doctor still reports conflicts when a gained variable has no value', async (t) => {
+  const { home, cli } = await sandbox(t);
+  await cli(INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+  const marker = '<!-- BEGIN:agents-config -->';
+  await writeFile(
+    join(home, '.codex', 'AGENTS.md'),
+    `${marker}\n${marker}\n<!-- END:agents-config -->\n`,
+  );
+
+  const result = await cli(['doctor']);
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /^error\s+.*githubUsername.*init --global/m);
+  assert.match(result.stdout, /^error\s+~\/\.codex\/AGENTS\.md: /m);
+  assert.doesNotMatch(result.stdout, /out of date/);
+});
+
+test('doctor says sync will record a gained variable it can look up', async (t) => {
+  const { home, cli } = await sandbox(t);
+  await cli(INSTALL);
+  await clearRecordedVariables(manifestPath(home));
+  await writeFile(join(home, '.gitconfig'), '[github]\n\tuser = hubot\n');
+
+  const result = await cli(['doctor']);
+
+  assert.equal(result.code, 0);
+  assert.match(
+    result.stdout,
+    /^warn\s+.*agents-config sync will record githubUsername=hubot/m,
+  );
+  assert.doesNotMatch(result.stdout, /init --global --var/);
+});
+
 async function doctorWithGeminiExtras(
   { home, cli }: Sandbox,
   tools: string,
