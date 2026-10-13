@@ -27,7 +27,7 @@ Gemini CLI also reads `~/.gemini/skills/` and Copilot also reads `$COPILOT_HOME/
 | `AGY_EXTRA_ARGS`             | `agy` evals    | JSON array of strings appended to every `agy` task and grader invocation, for example `["--model=…"]`. Read only for `agy` runs.                    |
 | `GEMINI_CLI_TRUST_WORKSPACE` | `gemini` evals | Not read: the CLI sets it to `true` for every `gemini` run so a headless run trusts the temporary workspace when `security.folderTrust` is enabled. |
 
-Eval runs use your real home directory, so each agent CLI reads its usual settings, credentials and system-wide skills. They are not confined to the temporary workspace: `--sandbox` is passed only to runners that support it, and the CLI prints a warning when the selected runner cannot honor it.
+Eval runs use your real home directory, so each agent CLI reads its usual settings, credentials and system-wide skills. They are not confined to the temporary workspace: `--sandbox` is passed only to `agy` and `gemini`. Claude Code has no sandbox flag, so the CLI prints a warning for `--runner claude --sandbox`, and Codex task runs always use `--sandbox workspace-write`. Each runner gets only the environment the CLI passes to it. [docs/architecture.md](architecture.md#runners) lists the flags each runner gets.
 
 ## Sources
 
