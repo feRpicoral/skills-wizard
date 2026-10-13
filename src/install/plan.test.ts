@@ -761,6 +761,15 @@ test('keep-local patterns are relative to the repository root, one region per pr
   );
 });
 
+async function isIgnored(root: string, path: string): Promise<boolean> {
+  try {
+    await run('git', ['check-ignore', '-q', path], { cwd: root });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 test('keep-local patterns match paths with gitignore metacharacters literally', async (t) => {
   const paths = await tempPaths(t);
   const root = await tempDir(t);
@@ -773,10 +782,12 @@ test('keep-local patterns match paths with gitignore metacharacters literally', 
     overrides: { keepLocal: true },
   });
 
-  await assert.doesNotReject(
-    run('git', ['check-ignore', '-q', 'packages/[app]*?/AGENTS.md'], {
-      cwd: root,
-    }),
+  assert.deepEqual(
+    {
+      target: await isIgnored(root, 'packages/[app]*?/AGENTS.md'),
+      sibling: await isIgnored(root, 'packages/pp/AGENTS.md'),
+    },
+    { target: true, sibling: false },
   );
 });
 
