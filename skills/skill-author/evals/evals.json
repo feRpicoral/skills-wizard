@@ -14,8 +14,9 @@
           "path": "skills/release-notes-drafter/SKILL.md"
         },
         {
-          "type": "file_absent",
-          "path": "skills/release-notes-drafter/README.md"
+          "type": "command",
+          "run": "test -f skills/release-notes-drafter/SKILL.md && test ! -e skills/release-notes-drafter/README.md",
+          "expect": 0
         },
         {
           "type": "regex",
@@ -69,7 +70,7 @@
         },
         {
           "type": "command",
-          "run": "node skills/json-schema-linter/scripts/lint-schema.mjs sample-schema.json < /dev/null; [ $? -ne 0 ]",
+          "run": "test -f skills/json-schema-linter/scripts/lint-schema.mjs && ! node skills/json-schema-linter/scripts/lint-schema.mjs sample-schema.json < /dev/null",
           "expect": 0
         },
         {
@@ -95,7 +96,10 @@
       ],
       "assertions": [
         "SKILL.md tells the agent when to read the status code reference instead of inlining the full list",
-        { "type": "file_absent", "path": "README.md" },
+        {
+          "type": "file_absent",
+          "path": "README.md"
+        },
         {
           "type": "regex",
           "path": "SKILL.md",
