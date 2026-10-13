@@ -181,6 +181,10 @@ async function resolveTargetSkill({
   ctx,
   nameOrPath,
 }: ResolveTargetSkillParams): Promise<{ skillName: string; skillDir: string }> {
+  const cwdSkillDir = join(ctx.cwd, 'skills', nameOrPath);
+  if (isSkillName(nameOrPath) && (await isDirectory(cwdSkillDir))) {
+    return { skillName: nameOrPath, skillDir: cwdSkillDir };
+  }
   const repoSkillDir = join(ctx.repoRoot, 'skills', nameOrPath);
   if (isSkillName(nameOrPath) && (await isDirectory(repoSkillDir))) {
     return { skillName: nameOrPath, skillDir: repoSkillDir };
@@ -281,16 +285,19 @@ interface RunSkillNewParams {
 
 async function runSkillNew({
   ctx,
-  name,
+  name: rawName,
   template,
   withEvals,
 }: RunSkillNewParams): Promise<number> {
+  const name = rawName.startsWith('skills/')
+    ? rawName.slice('skills/'.length)
+    : rawName;
   if (!isSkillName(name)) {
     throw new UsageError(
-      `Invalid skill name "${name}". Use lowercase alphanumeric characters and single hyphens.`,
+      `Invalid skill name "${rawName}". Use lowercase alphanumeric characters and single hyphens.`,
     );
   }
-  const skillDir = join(ctx.repoRoot, 'skills', name);
+  const skillDir = join(ctx.cwd, 'skills', name);
   if ((await lstatIfExists(skillDir)) !== null) {
     throw new UsageError(`Skill directory already exists: skills/${name}`);
   }

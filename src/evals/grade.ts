@@ -304,8 +304,8 @@ async function listWorkspaceSummary({
     } else if (entry.isFile()) {
       const info = await stat(fullPath);
       const preview =
-        info.size <= 4096
-          ? ((await readTextIfExists(fullPath)) ?? '').slice(0, 600)
+        info.size <= 32768
+          ? ((await readTextIfExists(fullPath)) ?? '').slice(0, 8000)
           : `(${info.size} bytes)`;
       lines.push(`--- ${relPath} ---\n${preview}`);
     }
@@ -330,6 +330,7 @@ export function buildBlindGraderPrompt({
   return [
     'You are an impartial, blind evaluation grader.',
     'Evaluate each assertion against the task prompt, expected output description, agent response, and workspace files.',
+    'Do not call any tools, read files, or run commands; grade strictly from the <agent_response> and <workspace_files> provided below and return the structured JSON output immediately.',
     'An assertion passes ONLY if there is clear, concrete evidence in the response or workspace files.',
     'Always provide a specific, non-empty evidence string explaining why each assertion passed or failed.',
     '',
