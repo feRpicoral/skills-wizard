@@ -7,6 +7,7 @@ import which from 'which';
 
 import type { Environment } from '../../env.ts';
 import { isSystemError, RunnerError } from '../../errors.ts';
+import { trackChildGroup } from '../children.ts';
 import type { EvalRunnerName } from '../workspace.ts';
 
 export type { EvalRunnerName };
@@ -507,6 +508,8 @@ export async function spawnRunnerProcess({
         );
         return;
       }
+      // Stops the group if this process is interrupted while it runs.
+      const untrack = trackChildGroup(child);
 
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
@@ -526,6 +529,7 @@ export async function spawnRunnerProcess({
         settled = true;
         clearTimers();
         signalProcessTree(child, 'SIGKILL');
+        untrack();
         child.stdout?.destroy();
         child.stderr?.destroy();
         resolve({
@@ -559,6 +563,7 @@ export async function spawnRunnerProcess({
         settled = true;
         clearTimers();
         signalProcessTree(child, 'SIGKILL');
+        untrack();
         reject(launchError(binary, error));
       });
 

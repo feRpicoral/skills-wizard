@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Environment } from '../env.ts';
 import { lstatIfExists, readTextIfExists } from '../install/fs.ts';
 import type { EvalAssertion, EvalCase, ScriptedAssertion } from './cases.ts';
+import { trackChildGroup } from './children.ts';
 import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 
 const COMMAND_ASSERTION_TIMEOUT_MS = 30_000;
@@ -164,6 +165,8 @@ export async function runShellCommand({
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // Stops the group if this process is interrupted while it runs.
+    const untrack = trackChildGroup(child);
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const openStreams = new Set(['stdout', 'stderr']);
@@ -179,6 +182,7 @@ export async function runShellCommand({
       for (const timer of timers) clearTimeout(timer);
       // Stragglers that outlived the shell would otherwise keep running.
       signalGroup({ child, signal: 'SIGKILL' });
+      untrack();
       child.stdout.destroy();
       child.stderr.destroy();
       resolve({
