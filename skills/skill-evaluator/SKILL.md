@@ -13,7 +13,7 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
 - Run `agents-config skill <subcommand>` from the repository that holds `skills/<name>/`.
 - Inside the agents-config repository itself, run `yarn agents-config skill <subcommand>` instead.
 - If neither command is available, say so: you can still write and audit `evals/evals.json`, `evals/trigger_queries.json`, and existing `benchmark.json` or `triggers.json` files, but do not claim pass rates or trigger metrics you did not measure.
-- Eval runs launch real agent CLIs with your real home directory and credentials. They are not confined: `--sandbox` is passed only to runners that support it, and the CLI warns when a runner cannot honor it. Use `--runner fake` to dry-run a suite without calling any agent.
+- Eval runs launch real agent CLIs with your real home directory and credentials. They are not confined: `--sandbox` is passed only to runners that support it, and the CLI warns when a runner cannot honor it. Use `--runner fake` to check that a suite loads, stages its fixtures, and produces reports without calling any agent; its pass rates and trigger decisions are synthetic and say nothing about the skill.
 
 ## Workflow
 
@@ -51,7 +51,7 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
      - **Failed runs**: a run that errored or timed out fails all of its assertions with `Agent run failed: ...`; fix the runner problem before reading pass rates.
      - **Baseline status**: verify `metadata.baseline_status` is `"clean"`. If it is `"possibly contaminated"` (the runner cannot exclude a system-wide copy of the skill; always the case for `codex` and `agy` when the skill is installed globally), treat small deltas with caution.
      - **Pass-rate, duration, and token deltas**: `run_summary.delta` is `with_skill` minus `without_skill` (`old_skill_delta` is against `old_skill`); the report shows the pass-rate delta in percentage points. Tokens read `n/a` when the runner reported no usage.
-     - **Assertion classifications**: `non-discriminating` assertions pass in both variants and should be tightened or replaced; `regressing` assertions pass less often with the skill and point at a counterproductive instruction; `no-baseline` means there was nothing to compare against. `old_skill_classification` classifies each assertion against `old_skill` when `--compare` was used.
+     - **Assertion classifications**: `non-discriminating` assertions pass in both variants and should be tightened or replaced; `regressing` assertions pass less often with the skill and point at a counterproductive instruction; `no-baseline` means there was nothing to compare against. `classification` compares against `without_skill`, or against `old_skill` when no `without_skill` baseline ran (`--baseline <ref>`); `old_skill_classification` compares against `old_skill` whenever it ran.
 
 4. **Measure and optimize trigger precision & recall (`skill triggers`)**
    - Ensure `evals/trigger_queries.json` has at least 10 positive (`should_trigger: true`) and 10 near-miss negative (`should_trigger: false`) queries, written as plain user requests without labels.

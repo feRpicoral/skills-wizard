@@ -62,11 +62,11 @@
 
 **Blind grader rules:**
 
-- The grader runs in an empty directory with the most restrictive tool mode the runner offers, and its prompt never reveals whether a run is `with_skill`, `without_skill`, or `old_skill`.
+- The grader runs in a fresh, empty temporary directory that does not depend on the variant, with the most restrictive tool mode the runner offers, and its prompt never reveals whether a run is `with_skill`, `without_skill`, or `old_skill`.
 - It returns `{ "results": [{ "assertion", "passed", "evidence", "quote" }] }`, quoting each assertion verbatim. A string assertion with empty `evidence` fails.
 - `quote` is an optional verbatim excerpt. A passed result whose quote does not occur in the response or the workspace summary is downgraded to failed with `Unverified evidence`.
-- Malformed grader output fails closed: the affected string assertions fail with a `malformed grader output` reason.
-- A grader error fails only that run's string assertions, with `Grader error: ...`.
+- Grader output that parses but has the wrong shape (missing results, unknown or unmatched assertions) fails closed: the affected string assertions fail with `Malformed grader output`.
+- A grader error fails only that run's string assertions, with `Grader error: ...`. This includes a grader that times out, exits non-zero, or prints output that is not JSON at all.
 
 **Failed runs:** when the agent run errors or times out, every assertion of that run fails with `Agent run failed: <reason>` without calling the grader. The run's `timing.json` records `timed_out`, `exit_code`, `error`, and `usage_reported`.
 
@@ -83,12 +83,15 @@ Results are stored outside the repository under `~/.agents/agents-config/evals/<
 
 - `iteration-<N>/benchmark.json`:
   - `metadata`: `skill_name`, `skill_path`, `runner`, `timestamp`, `runs_per_configuration`, `compare_ref`, `baseline_status` (`"clean"`, `"possibly contaminated"`, or `"skipped"`), `warnings`.
+  - `baseline_status` describes only the `without_skill` baseline. A personal Claude Code skill with the same name (in `$CLAUDE_CONFIG_DIR/skills/`) shadows the staged working copy in `with_skill` runs; that is reported as its own warning, not through `baseline_status`.
   - How the `without_skill` baseline hides the skill: Claude Code gets `skillOverrides` plus permission deny rules, and Gemini CLI gets `skills.disabled`, which it honors only in trusted folders. Codex and `agy` have no documented workspace-level exclusion, so their baseline is `possibly contaminated` whenever the skill is also installed system-wide.
   - `run_summary`: `with_skill`, `without_skill`, `old_skill`, plus `delta` (`with_skill` minus `without_skill`) and `old_skill_delta` (`with_skill` minus `old_skill`). Each variant has `runs`, `failed_runs`, `usage_reported_runs`, and `pass_rate`, `time_seconds`, `tokens` summaries (`mean`, `stddev`, `min`, `max`; means and sample standard deviations across case runs). `tokens` is `null` when no run of that variant reported usage.
   - Statistics are stored unrounded; rounding happens only when rendering.
   - Deltas are signed strings in raw units: `pass_rate` as a fraction (`"+0.33"`), `time_seconds` (`"+12.40"`), and `tokens` (`"+1500"`, or `"n/a"` when either side reported no usage). `report.md` and the CLI summary show the pass-rate delta in percentage points, for example `with_skill pass rate 80.0% (+33.3 pp vs baseline, -10.0 pp vs old_skill)`.
   - Runs whose runner reported no token usage (`usage_reported: false`) are left out of token statistics.
-  - `cases`: per-case variant summaries, per-run grading and timing records, and assertions with a `classification` against `without_skill` and an `old_skill_classification` against `old_skill` (present only with `--compare`). Classes: `differentiating`, `non-discriminating`, `regressing`, `failing`, `flaky`, and `no-baseline` when there is no reference run.
+  - `cases`: per-case variant summaries, per-run grading and timing records, and assertions with a `classification` and an `old_skill_classification`. Classes: `differentiating`, `non-discriminating`, `regressing`, `failing`, `flaky`, and `no-baseline` when there is no reference run.
+    - `classification` compares against `without_skill`. When the eval ran no `without_skill` baseline but did run `old_skill` (`--baseline <ref>`, or `--no-baseline --compare <ref>`), it compares against `old_skill` instead.
+    - `old_skill_classification` compares against `old_skill` and is present whenever `old_skill` ran.
   - `non_discriminating_assertions`: `<case_id>: <assertion>` entries that passed in every `with_skill` and baseline run.
   - `assertion_analysis`: `<case_id>: <assertion>` entries grouped into `pass_only_with_skill` (only when a reference exists), `pass_in_both`, `fail_in_both`, `flaky`, `regressing` (against `without_skill`), and `regressing_vs_old` (against `old_skill`).
 - `triggers-<N>/triggers.json`: one file per `skill triggers` run, so a train run and a validation run land in separate `triggers-<N>` directories.
