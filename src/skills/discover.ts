@@ -106,7 +106,12 @@ export interface ResolvedDiscoveredSkill {
   risks: RiskFlag[];
 }
 
-function decodeSegment(segment: string, input: string): string {
+interface DecodeSegmentParams {
+  segment: string;
+  input: string;
+}
+
+function decodeSegment({ segment, input }: DecodeSegmentParams): string {
   try {
     return decodeURIComponent(segment);
   } catch (error) {
@@ -139,7 +144,7 @@ function parseGithubUrl(input: string): ParsedSkillTarget {
   const segments = url.pathname
     .split('/')
     .filter(Boolean)
-    .map((part) => decodeSegment(part, input));
+    .map((part) => decodeSegment({ segment: part, input }));
   const [owner, rawRepo, ...rest] = segments;
   if (!owner || !rawRepo) {
     throw new UsageError(

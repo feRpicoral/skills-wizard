@@ -52,15 +52,16 @@ async function startMockServer(
 }
 
 test('parseSkillTarget parses GitHub tree and blob URLs, owner/repo shorthands, and search queries', () => {
-  const treeTarget = parseSkillTarget(
-    'https://github.com/anthropics/skills/tree/main/skills/frontend-design',
-  );
-  const blobTarget = parseSkillTarget(
-    'https://github.com/anthropics/skills/blob/v1.2.0/skills/frontend-design/SKILL.md',
-  );
-  const rootBlobTarget = parseSkillTarget(
-    'https://github.com/owner/single-skill/blob/main/SKILL.md',
-  );
+  const treeUrl =
+    'https://github.com/anthropics/skills/tree/main/skills/frontend-design';
+  const blobUrl =
+    'https://github.com/anthropics/skills/blob/v1.2.0/skills/frontend-design/SKILL.md';
+  const rootBlobUrl =
+    'https://github.com/owner/single-skill/blob/main/SKILL.md';
+
+  const treeTarget = parseSkillTarget(treeUrl);
+  const blobTarget = parseSkillTarget(blobUrl);
+  const rootBlobTarget = parseSkillTarget(rootBlobUrl);
   const repoUrlTarget = parseSkillTarget('https://github.com/owner/repo.git/');
   const repoShorthand = parseSkillTarget('vercel-labs/agent-skills');
   const repoSkillShorthand = parseSkillTarget(

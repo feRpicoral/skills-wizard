@@ -198,15 +198,16 @@ test('gitEnvironment drops every variable git lists as local to a repository', a
 });
 
 test('resolveSkillsShUrl defaults to https://skills.sh and validates overrides', () => {
-  assert.equal(resolveSkillsShUrl({}), DEFAULT_SKILLS_SH_URL);
-  assert.equal(
-    resolveSkillsShUrl({ SKILLS_SH_URL: '  ' }),
-    DEFAULT_SKILLS_SH_URL,
-  );
-  assert.equal(
-    resolveSkillsShUrl({ SKILLS_SH_URL: 'http://127.0.0.1:4321/' }),
-    'http://127.0.0.1:4321',
-  );
+  const validEnv = { SKILLS_SH_URL: 'http://127.0.0.1:4321/' };
+  const blankEnv = { SKILLS_SH_URL: '  ' };
+
+  const defaultUrl = resolveSkillsShUrl({});
+  const blankUrl = resolveSkillsShUrl(blankEnv);
+  const customUrl = resolveSkillsShUrl(validEnv);
+
+  assert.equal(defaultUrl, DEFAULT_SKILLS_SH_URL);
+  assert.equal(blankUrl, DEFAULT_SKILLS_SH_URL);
+  assert.equal(customUrl, 'http://127.0.0.1:4321');
   assert.throws(
     () => resolveSkillsShUrl({ SKILLS_SH_URL: 'not-a-url' }),
     EnvironmentError,

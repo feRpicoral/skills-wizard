@@ -377,6 +377,18 @@ async function resolveCompareSpec({
     return { compareSkills: [singleLocal] };
   }
 
+  if (isSkillName(compare) && compare !== primarySkillName) {
+    const library = await loadSkillLibrary(ctx.repoRoot);
+    const entry = library.catalog.skills.find((item) => item.name === compare);
+    if (entry !== undefined) {
+      const catalogSkill = await resolveComparedSkill({
+        ctx,
+        nameOrPath: compare,
+      });
+      return { compareSkills: [catalogSkill] };
+    }
+  }
+
   return { compareRef: compare };
 }
 
