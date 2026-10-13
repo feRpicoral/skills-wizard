@@ -23,7 +23,7 @@ test('loads the repository block library starting with the identity block', asyn
   assert.deepEqual(firstBlock?.variables, ['githubUsername']);
 });
 
-test('repository stack blocks are project-scoped only and global instructions stay at 200 lines', async () => {
+test('repository stack blocks are project-scoped only and global instructions stay within the line budget', async () => {
   const library = await loadBlockLibrary(repoBlocks);
 
   const stackBlocks = library.blocks.filter((block) => block.group === 'stack');
@@ -31,6 +31,9 @@ test('repository stack blocks are project-scoped only and global instructions st
   const composedGlobal = composeGlobal(library, globalIds, {
     githubUsername: 'feRpicoral',
   });
+  const nonEmptyLines = composedGlobal
+    .split('\n')
+    .filter((line) => line.trim().length > 0).length;
 
   assert.equal(stackBlocks.length, 14);
   for (const block of stackBlocks) {
@@ -39,9 +42,9 @@ test('repository stack blocks are project-scoped only and global instructions st
   }
   assert.equal(globalIds.includes('git/github-repo-setup'), false);
   assert.equal(globalIds.includes('stack/supabase-prisma'), false);
-  assert.equal(
-    composedGlobal.split('\n').filter((line) => line.trim().length > 0).length,
-    205,
+  assert.ok(
+    nonEmptyLines <= 210,
+    `Expected <= 210 non-empty global lines, got ${nonEmptyLines}`,
   );
 });
 

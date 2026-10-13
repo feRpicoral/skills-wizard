@@ -13,4 +13,5 @@ requires: [git/pr-reviews]
 - If the user asks to open, update, fix, or resolve conflicts on a PR, that authorizes normal pushes to that PR branch needed to complete that request after validation.
 - Do not push unrelated changes. Force-pushes, pushes to `main`/protected/shared branches, tags, releases, or remote changes require explicit permission.
 - Do not create an empty PR unless explicitly asked. If the repository runs CI on ready-for-review PRs, open the PR as ready for review after the subagent review passes; otherwise open it as a draft.
+- When creating a GitHub repository, use the `github-repo-setup` skill before the first push.
 - Merge PRs with a merge commit (`gh pr merge --merge`). Do not squash or rebase.
