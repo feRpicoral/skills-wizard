@@ -24,14 +24,11 @@ function isSafeRelativePath(value: string): boolean {
   return true;
 }
 
+// Case ids become directory names (`eval-<id>`), so keep them portable.
+const SAFE_CASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 function isSafeCaseId(value: string): boolean {
-  return (
-    value.length > 0 &&
-    value !== '.' &&
-    value !== '..' &&
-    !value.includes('/') &&
-    !value.includes('\\')
-  );
+  return SAFE_CASE_ID.test(value);
 }
 
 const safePathSchema = z
@@ -109,7 +106,10 @@ const evalCaseSchema = z
     id: z
       .union([z.string(), z.number()])
       .transform((val) => String(val).trim())
-      .refine(isSafeCaseId, 'must be a valid case identifier'),
+      .refine(
+        isSafeCaseId,
+        'must start with a letter or digit and contain only letters, digits, ".", "_" or "-"',
+      ),
     prompt: z
       .string()
       .transform((val) => val.trim())
@@ -127,6 +127,13 @@ const evalCaseSchema = z
       ctx.addIssue({
         code: 'custom',
         message: 'cannot define both "assertions" and "expectations"',
+      });
+      return;
+    }
+    if ((val.assertions ?? val.expectations ?? []).length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'must define at least one assertion',
       });
     }
   })
@@ -165,6 +172,8 @@ export type TriggerSplit = 'train' | 'validation' | 'all';
 export interface TriggerQuerySplit {
   train: TriggerQuery[];
   validation: TriggerQuery[];
+  /** Splits where a class has fewer than two queries. */
+  warnings: string[];
 }
 
 export interface ParseEvalSuiteParams {
@@ -189,14 +198,20 @@ export function parseEvalSuite({
     );
   }
 
-  const seenIds = new Set<string>();
+  // Compared case-insensitively: on case-insensitive file systems `eval-A`
+  // and `eval-a` would share one run directory.
+  const seenIds = new Map<string, string>();
   for (const evalCase of suite.evals) {
-    if (seenIds.has(evalCase.id)) {
+    const key = evalCase.id.toLowerCase();
+    const previous = seenIds.get(key);
+    if (previous !== undefined) {
+      const detail =
+        previous === evalCase.id ? '' : ` (conflicts with "${previous}")`;
       throw new EvalError(
-        `${sourcePath}: duplicate eval case id "${evalCase.id}"`,
+        `${sourcePath}: duplicate eval case id "${evalCase.id}"${detail}`,
       );
     }
-    seenIds.add(evalCase.id);
+    seenIds.set(key, evalCase.id);
   }
 
   return suite;
@@ -283,24 +298,38 @@ export async function loadTriggerQueries(
   return parseTriggerQueries(raw, queriesPath);
 }
 
-function queryDigest(query: string): string {
-  return createHash('sha256').update(query).digest('hex');
+const TRAIN_PERCENT = 60;
+const MIN_QUERIES_PER_CLASS = 2;
+
+// Each query lands in a split by its own hash, so adding or removing other
+// queries never moves it between train and validation.
+function isTrainQuery(query: string): boolean {
+  const digest = createHash('sha256').update(query).digest('hex');
+  return Number.parseInt(digest.slice(0, 8), 16) % 100 < TRAIN_PERCENT;
 }
 
-function splitBucket(bucket: readonly TriggerQuery[]): TriggerQuerySplit {
-  const sorted = [...bucket].sort((left, right) => {
-    const leftHash = queryDigest(left.query);
-    const rightHash = queryDigest(right.query);
-    if (leftHash !== rightHash) {
-      return leftHash < rightHash ? -1 : 1;
-    }
-    return left.query.localeCompare(right.query);
-  });
-  const trainCount = Math.round(sorted.length * 0.6);
+function splitBucket(
+  bucket: readonly TriggerQuery[],
+): Omit<TriggerQuerySplit, 'warnings'> {
   return {
-    train: sorted.slice(0, trainCount),
-    validation: sorted.slice(trainCount),
+    train: bucket.filter((item) => isTrainQuery(item.query)),
+    validation: bucket.filter((item) => !isTrainQuery(item.query)),
   };
+}
+
+interface SplitWarningParams {
+  split: 'train' | 'validation';
+  label: string;
+  count: number;
+}
+
+function splitWarning({
+  split,
+  label,
+  count,
+}: SplitWarningParams): string | null {
+  if (count >= MIN_QUERIES_PER_CLASS) return null;
+  return `The ${split} split has ${count} ${label} trigger ${count === 1 ? 'query' : 'queries'}; add more queries so each split has at least ${MIN_QUERIES_PER_CLASS}.`;
 }
 
 export function splitTriggerQueries(
@@ -310,10 +339,33 @@ export function splitTriggerQueries(
   const negative = queries.filter((item) => !item.should_trigger);
   const posSplit = splitBucket(positive);
   const negSplit = splitBucket(negative);
+  const warnings = [
+    splitWarning({
+      split: 'train',
+      label: 'should-trigger',
+      count: posSplit.train.length,
+    }),
+    splitWarning({
+      split: 'train',
+      label: 'should-not-trigger',
+      count: negSplit.train.length,
+    }),
+    splitWarning({
+      split: 'validation',
+      label: 'should-trigger',
+      count: posSplit.validation.length,
+    }),
+    splitWarning({
+      split: 'validation',
+      label: 'should-not-trigger',
+      count: negSplit.validation.length,
+    }),
+  ].filter((item): item is string => item !== null);
 
   return {
     train: [...posSplit.train, ...negSplit.train],
     validation: [...posSplit.validation, ...negSplit.validation],
+    warnings,
   };
 }
 
