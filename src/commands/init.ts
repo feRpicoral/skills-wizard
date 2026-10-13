@@ -13,7 +13,7 @@ import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
-import { isDirectory, lstatIfExists } from '../install/fs.ts';
+import { isDirectory } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
 import type { ProjectDetection } from '../project/detect.ts';
 import {
@@ -47,12 +47,17 @@ import {
   type SkillLibrary,
   unknownSkillNames,
 } from '../skills/library.ts';
-import { globalManifestPath, type Manifest } from '../state/manifest.ts';
+import {
+  globalManifestPath,
+  type Manifest,
+  readGlobalManifest,
+} from '../state/manifest.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
+  dropUnknownPreset,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
@@ -168,6 +173,7 @@ interface ResolveProjectPresetParams {
   presets: readonly PresetDefinition[];
   detection: ProjectDetection | undefined;
   previous: Manifest | null;
+  previousPreset: PresetId | undefined;
   requestedPreset: PresetId | undefined;
   requestedStyle: ProjectStyle | undefined;
 }
@@ -179,6 +185,7 @@ async function resolveProjectPresetAndStyle({
   presets,
   detection,
   previous,
+  previousPreset,
   requestedPreset,
   requestedStyle,
 }: ResolveProjectPresetParams): Promise<{
@@ -193,7 +200,7 @@ async function resolveProjectPresetAndStyle({
   if (requestedPreset !== undefined) {
     preset = requestedPreset;
   } else if (previous !== null) {
-    preset = previous.options.preset;
+    preset = previousPreset;
   } else if (prompting && presets.length > 0) {
     preset = await promptPreset(presets, detection?.preset);
   } else if (presets.length > 0) {
@@ -209,7 +216,7 @@ async function resolveProjectPresetAndStyle({
   let style: ProjectStyle | undefined;
   if (requestedStyle !== undefined) {
     style = requestedStyle;
-  } else if (previous !== null && previous.options.style !== undefined) {
+  } else if (previous !== null) {
     style = previous.options.style;
   } else if (prompting) {
     style = await promptProjectStyle(defaultStyle);
@@ -218,6 +225,38 @@ async function resolveProjectPresetAndStyle({
   }
 
   return { preset, style };
+}
+
+interface ApplyReRunPresetAndStyleParams {
+  library: BlockLibrary;
+  recordedBlocks: readonly string[];
+  presetBlocks: readonly string[];
+  requestedStyle: ProjectStyle | undefined;
+}
+
+function applyReRunPresetAndStyle({
+  library,
+  recordedBlocks,
+  presetBlocks,
+  requestedStyle,
+}: ApplyReRunPresetAndStyleParams): string[] {
+  const projectDefaults = new Set(defaultBlockIds(library, 'project'));
+  const wanted = new Set(recordedBlocks);
+  if (requestedStyle === 'lean') {
+    for (const id of projectDefaults) {
+      wanted.delete(id);
+    }
+  } else if (requestedStyle === 'self-contained') {
+    for (const id of projectDefaults) {
+      wanted.add(id);
+    }
+  }
+  for (const id of presetBlocks) {
+    wanted.add(id);
+  }
+  return library.blocks
+    .filter((block) => block.scopes.includes('project') && wanted.has(block.id))
+    .map((block) => block.id);
 }
 
 export async function runInit(
@@ -279,9 +318,24 @@ export async function runInit(
           skillLibrary,
         })
       : [];
+  const globalManifest =
+    scope === 'project'
+      ? await readGlobalManifest(globalManifestPath(ctx.paths)).catch(
+          () => null,
+        )
+      : null;
   const hasGlobalInstall =
     scope === 'project' &&
-    (await lstatIfExists(globalManifestPath(ctx.paths))) !== null;
+    globalManifest !== null &&
+    tools.length > 0 &&
+    tools.every((tool) => globalManifest.tools.includes(tool));
+  const previousPreset = previous
+    ? dropUnknownPreset({
+        ctx,
+        prompting,
+        preset: previous.options.preset,
+      })
+    : undefined;
   const { preset, style } = await resolveProjectPresetAndStyle({
     scope,
     prompting,
@@ -289,6 +343,7 @@ export async function runInit(
     presets,
     detection: location.detection,
     previous,
+    previousPreset,
     requestedPreset,
     requestedStyle,
   });
@@ -308,24 +363,38 @@ export async function runInit(
         style: style ?? (hasGlobalInstall ? 'lean' : 'self-contained'),
         blockLibrary: library,
         skillLibrary,
+        ...(location.detection?.packageManager !== undefined
+          ? { packageManager: location.detection.packageManager }
+          : {}),
         detectedBlocks: location.detection?.detectedBlocks ?? [],
         detectedSkills: location.detection?.detectedSkills ?? [],
       })
     : null;
 
   if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
+  const recordedBlocks = previous
+    ? dropUnavailableBlocks({
+        ctx,
+        prompting,
+        library,
+        ids: previous.blocks,
+        scope,
+      })
+    : null;
   const initialBlocks =
     requestedBlocks ??
-    (presetSelection
-      ? presetSelection.blocks
-      : previous
-        ? dropUnavailableBlocks({
-            ctx,
-            prompting,
+    (recordedBlocks !== null
+      ? presetSelection !== null
+        ? applyReRunPresetAndStyle({
             library,
-            ids: previous.blocks,
-            scope,
+            recordedBlocks,
+            presetBlocks:
+              requestedPreset !== undefined ? presetSelection.blocks : [],
+            requestedStyle,
           })
+        : recordedBlocks
+      : presetSelection !== null
+        ? presetSelection.blocks
         : defaultBlockIds(library, scope));
   const chosen = prompting
     ? await promptBlocks(library, scope, initialBlocks)
@@ -366,20 +435,22 @@ export async function runInit(
   if (requestedSkills) {
     checkExplicitSkills(skillLibrary, requestedSkills, scope);
   }
-  const usePresetSkillDefaults =
-    presetSelection !== null &&
-    (previous === null || requestedPreset !== undefined);
+  const recordedSkills = previous
+    ? dropUnknownSkills({
+        ctx,
+        prompting,
+        library: skillLibrary,
+        names: previous.skills,
+      })
+    : null;
   const initialSkills =
     requestedSkills ??
-    (usePresetSkillDefaults
-      ? presetSelection.skills
-      : previous
-        ? dropUnknownSkills({
-            ctx,
-            prompting,
-            library: skillLibrary,
-            names: previous.skills,
-          })
+    (recordedSkills !== null
+      ? requestedPreset !== undefined && presetSelection !== null
+        ? [...new Set([...recordedSkills, ...presetSelection.skills])]
+        : recordedSkills
+      : presetSelection !== null
+        ? presetSelection.skills
         : defaultSkillNames(skillLibrary, scope));
   const skills = prompting
     ? await promptSkills(skillLibrary, scope, initialSkills)

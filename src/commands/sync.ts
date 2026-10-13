@@ -9,6 +9,7 @@ import { loadSkillLibrary } from '../skills/library.ts';
 import {
   confirmAndApply,
   dropUnavailableBlocks,
+  dropUnknownPreset,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
@@ -86,6 +87,11 @@ export async function runSync(
   if (location.project && recordedLocal && !keepLocal) {
     notifyLeftGit(ctx, prompting, location.project.dir);
   }
+  const preset = dropUnknownPreset({
+    ctx,
+    prompting,
+    preset: previous.options.preset,
+  });
   const plan = await buildPlan({
     scope,
     selection: {
@@ -96,9 +102,7 @@ export async function runSync(
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
-      ...(previous.options.preset !== undefined
-        ? { preset: previous.options.preset }
-        : {}),
+      ...(preset !== undefined ? { preset } : {}),
       ...(previous.options.style !== undefined
         ? { style: previous.options.style }
         : {}),

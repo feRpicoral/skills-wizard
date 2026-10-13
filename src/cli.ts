@@ -60,7 +60,8 @@ Options:
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --preset <id>         Project preset: ${PRESET_IDS.join(', ')}
-  --style <mode>        Project instructions style: lean (default) or self-contained
+  --style <mode>        Project instructions style: lean (default with a system-wide install)
+                        or self-contained
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json

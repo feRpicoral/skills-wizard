@@ -36,6 +36,7 @@ import { isDirectory, lstatIfExists } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
 import { skillFolders } from '../install/targets.ts';
 import { detectProject, type ProjectDetection } from '../project/detect.ts';
+import { isPresetId, type PresetId } from '../project/presets.ts';
 import { buildProjectSeed } from '../project/seed.ts';
 import { confirmApply, promptVariables } from '../prompts/selection.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
@@ -276,6 +277,45 @@ export function notifyLeftGit(
   });
 }
 
+const BLOCK_REPLACEMENT_SKILLS: Readonly<Record<string, string>> = {
+  'git/github-repo-setup': 'github-repo-setup',
+  'stack/supabase-prisma': 'supabase-prisma',
+};
+
+export function replacementSkillHint(ids: readonly string[]): string {
+  const skills = [
+    ...new Set(
+      ids
+        .map((id) => BLOCK_REPLACEMENT_SKILLS[id])
+        .filter((name): name is string => name !== undefined),
+    ),
+  ];
+  if (skills.length === 0) return '';
+  return ` (use the ${skills.join(', ')} skill${skills.length === 1 ? '' : 's'} instead)`;
+}
+
+interface DropUnknownPresetParams {
+  ctx: Context;
+  prompting: boolean;
+  preset: string | undefined;
+}
+
+export function dropUnknownPreset({
+  ctx,
+  prompting,
+  preset,
+}: DropUnknownPresetParams): PresetId | undefined {
+  if (preset === undefined) return undefined;
+  if (isPresetId(preset)) return preset;
+  notify({
+    ctx,
+    prompting,
+    message: `Preset "${preset}" is no longer recognized and was dropped.`,
+    level: 'warn',
+  });
+  return undefined;
+}
+
 interface DropUnavailableBlocksParams {
   ctx: Context;
   prompting: boolean;
@@ -297,7 +337,7 @@ export function dropUnavailableBlocks({
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}`,
+      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}${replacementSkillHint(unknown)}`,
       level: 'warn',
     });
   }
@@ -305,7 +345,7 @@ export function dropUnavailableBlocks({
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}${replacementSkillHint(outOfScope)}`,
       level: 'warn',
     });
   }

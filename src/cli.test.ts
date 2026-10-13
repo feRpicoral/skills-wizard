@@ -982,3 +982,140 @@ test('doctor warns that sync will stop keeping files local once the project leav
   );
   assert.doesNotMatch(result.stdout, /another repository/);
 });
+
+test('upgrading a pre-PR global manifest drops git/github-repo-setup and stack/supabase-prisma and points to replacement skills', async (t) => {
+  const { home, cli } = await sandbox(t);
+  await cli(INSTALL);
+  await addRecordedBlock({
+    file: manifestPath(home),
+    id: 'git/github-repo-setup',
+  });
+  await addRecordedBlock({
+    file: manifestPath(home),
+    id: 'stack/supabase-prisma',
+  });
+
+  const doctor = await cli(['doctor']);
+  const sync = await cli(['sync', '--yes']);
+  const updatedManifest = await readFile(manifestPath(home), 'utf8');
+
+  assert.equal(doctor.code, 0);
+  assert.match(
+    doctor.stdout,
+    /git\/github-repo-setup.*use the github-repo-setup skill instead/,
+  );
+  assert.match(
+    doctor.stdout,
+    /stack\/supabase-prisma.*use the supabase-prisma skill instead/,
+  );
+  assert.equal(sync.code, 0);
+  assert.match(
+    sync.stdout,
+    /git\/github-repo-setup.*use the github-repo-setup skill instead/,
+  );
+  assert.match(
+    sync.stdout,
+    /stack\/supabase-prisma.*use the supabase-prisma skill instead/,
+  );
+  assert.doesNotMatch(
+    updatedManifest,
+    /git\/github-repo-setup|stack\/supabase-prisma/,
+  );
+});
+
+test('re-running init with --style or --preset preserves recorded stack blocks and skills, and lean requires tool coverage', async (t) => {
+  const { cli } = await sandbox(t);
+  const project = await tempDir(t);
+  await cli([
+    'init',
+    '--global',
+    '--yes',
+    '--tools',
+    'claude-code',
+    '--skills',
+    '',
+    '--var',
+    'githubUsername=octocat',
+  ]);
+  await writeFile(
+    join(project, 'package.json'),
+    JSON.stringify({ name: 'svc' }),
+  );
+
+  const firstInit = await cli([
+    'init',
+    '--project',
+    project,
+    '--tools',
+    'codex',
+    '--blocks',
+    'core/task-execution,stack/typescript,stack/nextjs',
+    '--skills',
+    'skill-author',
+    '--yes',
+  ]);
+  assert.equal(firstInit.code, 0);
+  const firstManifest = JSON.parse(
+    await readFile(projectManifestPath(project), 'utf8'),
+  ) as {
+    blocks: string[];
+    skills: string[];
+    options: { style?: string; preset?: string };
+  };
+  assert.equal(firstManifest.options.style, 'self-contained');
+
+  const leanInit = await cli([
+    'init',
+    '--project',
+    project,
+    '--style',
+    'lean',
+    '--yes',
+  ]);
+  assert.equal(leanInit.code, 0);
+  const leanManifest = JSON.parse(
+    await readFile(projectManifestPath(project), 'utf8'),
+  ) as {
+    blocks: string[];
+    skills: string[];
+  };
+  assert.deepEqual(leanManifest.blocks, ['stack/typescript', 'stack/nextjs']);
+  assert.deepEqual(leanManifest.skills, ['skill-author']);
+
+  const presetInit = await cli([
+    'init',
+    '--project',
+    project,
+    '--preset',
+    'node-tool',
+    '--yes',
+  ]);
+  assert.equal(presetInit.code, 0);
+  const presetManifest = JSON.parse(
+    await readFile(projectManifestPath(project), 'utf8'),
+  ) as {
+    blocks: string[];
+    skills: string[];
+    options: { preset?: string };
+  };
+  assert.equal(presetManifest.blocks.includes('stack/nextjs'), true);
+  assert.equal(presetManifest.blocks.includes('stack/lint-format'), true);
+  assert.equal(presetManifest.skills.includes('skill-author'), true);
+  assert.equal(presetManifest.skills.includes('eslint-configuration'), true);
+
+  const raw = JSON.parse(
+    await readFile(projectManifestPath(project), 'utf8'),
+  ) as { options: { preset?: string } };
+  raw.options.preset = 'retired-preset';
+  await writeFile(projectManifestPath(project), JSON.stringify(raw));
+
+  const doctor = await cli(['doctor', '--project', project]);
+  const sync = await cli(['sync', '--project', project, '--yes']);
+  assert.equal(doctor.code, 0);
+  assert.match(
+    doctor.stdout,
+    /Preset "retired-preset" is no longer recognized/,
+  );
+  assert.equal(sync.code, 0);
+  assert.match(sync.stdout, /Preset "retired-preset" is no longer recognized/);
+});
