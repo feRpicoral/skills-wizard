@@ -47,6 +47,10 @@ const entrySchema = z.discriminatedUnion('kind', [
     createdKeys: z.number().int().min(0).optional(),
     original: z.string().optional(),
     wasEmpty: z.boolean().optional(),
+    blankText: z
+      .string()
+      .regex(/^[\s\uFEFF]*$/, 'must hold only whitespace')
+      .optional(),
     createdFile: z.boolean(),
   }),
   z.object({

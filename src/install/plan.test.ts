@@ -266,6 +266,19 @@ test('deselecting Gemini CLI leaves an empty settings file empty again', async (
   );
 });
 
+test('deselecting Gemini CLI puts back a whitespace-only settings file', async (t) => {
+  const paths = await tempPaths(t);
+  await writeFiles(paths.home, { '.gemini/settings.json': '  \n' });
+  await installGlobal(paths, ['gemini-cli', 'codex']);
+
+  await installGlobal(paths, ['codex']);
+
+  assert.equal(
+    await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
+    '  \n',
+  );
+});
+
 test('deselecting Gemini CLI restores a context file name with escapes as written', async (t) => {
   const paths = await tempPaths(t);
   const settings = '{"context": {"fileName": "GEM\\u0049NI.md"}}\n';
