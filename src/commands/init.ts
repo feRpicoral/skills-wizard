@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import {
   defaultBlockIds,
   outOfScopeBlockIds,
@@ -61,6 +63,11 @@ function checkExplicitBlocks(
       `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
+}
+
+function isOnSearchPath(ctx: Context, dir: string): boolean {
+  const wanted = resolve(dir);
+  return ctx.searchPath.some((entry) => resolve(ctx.cwd, entry) === wanted);
 }
 
 interface ScopeSpecificOptions {
@@ -226,7 +233,7 @@ export async function runInit(
   if (
     result.applied &&
     linkCommand &&
-    !ctx.searchPath.includes(ctx.paths.localBin)
+    !isOnSearchPath(ctx, ctx.paths.localBin)
   ) {
     notify({
       ctx,
