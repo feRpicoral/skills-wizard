@@ -386,7 +386,7 @@ export function skillFolders({
   scope,
   paths,
   project,
-}: PlanInput): SkillFolders | null {
+}: Pick<PlanInput, 'scope' | 'paths' | 'project'>): SkillFolders | null {
   const tools = Object.values(TOOLS);
   if (scope === 'global') {
     return {

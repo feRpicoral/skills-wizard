@@ -29,12 +29,14 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
+import { skillFolders } from '../install/targets.ts';
 import { confirmApply } from '../prompts/selection.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
 import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import { readSkillLock, skillLockPath } from '../skills/lock.ts';
 import type { SourceCache } from '../skills/sources.ts';
 import {
+  checkSkillEntries,
   globalManifestPath,
   type Manifest,
   projectManifestPath,
@@ -152,6 +154,30 @@ export async function resolveLocation({
 }
 
 export async function readLocationManifest(
+  ctx: Context,
+  prompting: boolean,
+  location: Location,
+): Promise<Manifest | null> {
+  const manifest = await readRecordedManifest(ctx, prompting, location);
+  const folders = manifest
+    ? skillFolders({
+        scope: location.scope,
+        paths: ctx.paths,
+        ...(location.project ? { project: location.project } : {}),
+      })
+    : null;
+  if (manifest && folders) {
+    checkSkillEntries({
+      file: location.manifestPath,
+      entries: manifest.entries,
+      folders,
+      scope: location.scope,
+    });
+  }
+  return manifest;
+}
+
+async function readRecordedManifest(
   ctx: Context,
   prompting: boolean,
   { manifestPath, project }: Location,
