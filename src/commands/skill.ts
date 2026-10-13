@@ -631,8 +631,12 @@ export async function runSkill(
       onLog: (line) => ctx.print(line),
     });
     const { metrics } = result.summary;
+    const excluded =
+      metrics.errored_queries > 0
+        ? `, ${metrics.errored_queries}/${metrics.total_queries} queries excluded (failed runs)`
+        : '';
     ctx.print(
-      `Triggers for ${skillName} (${split}): recall ${formatRate(metrics.recall)}, precision ${formatRate(metrics.precision)}, false positive rate ${formatRate(metrics.false_positive_rate)}, accuracy ${formatRate(metrics.accuracy)}.`,
+      `Triggers for ${skillName} (${split}): recall ${formatRate(metrics.recall)}, precision ${formatRate(metrics.precision)}, false positive rate ${formatRate(metrics.false_positive_rate)}, accuracy ${formatRate(metrics.accuracy)}${excluded}.`,
     );
     ctx.print(
       `Report: ${displayPath({ path: join(result.outputDir, 'triggers.md'), home: ctx.paths.home })}`,
