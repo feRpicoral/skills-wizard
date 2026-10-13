@@ -13,6 +13,7 @@
     "total_queries": 12,
     "positive_queries": 6,
     "negative_queries": 6,
+    "errored_queries": 0,
     "true_positives": 6,
     "false_positives": 0,
     "true_negatives": 6,
@@ -29,6 +30,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -37,6 +39,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -45,6 +48,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -53,6 +57,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -61,6 +66,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -69,6 +75,7 @@
       "should_trigger": true,
       "trigger_count": 3,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 1,
       "passed": true
     },
@@ -77,6 +84,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     },
@@ -85,6 +93,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     },
@@ -93,6 +102,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     },
@@ -101,6 +111,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     },
@@ -109,6 +120,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     },
@@ -117,6 +129,7 @@
       "should_trigger": false,
       "trigger_count": 0,
       "runs": 3,
+      "errored_runs": 0,
       "trigger_rate": 0,
       "passed": true
     }

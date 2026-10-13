@@ -44,6 +44,7 @@
 - `id` must match `^[A-Za-z0-9][A-Za-z0-9._-]*$` and be unique ignoring case.
 - Every case needs at least one assertion.
 - `files` entries must live under `evals/files/`. When copied into `<workdir>`, leading `evals/files/` and `<case-id>/` prefixes are stripped so `evals/files/case-identifier/package.json` lands at `<workdir>/package.json`.
+- Name a fixture skill file `SKILL.fixture.md`: it is staged as `SKILL.md` in the workspace, and it is never mistaken for a real skill when the skill folder is linked into an agent's skills directory.
 - `expectations` is accepted as an alias for `assertions` (do not specify both on the same case).
 
 ## 2. Scripted vs Blind-Grader Assertions
@@ -82,16 +83,18 @@ Results are stored outside the repository under `~/.agents/agents-config/evals/<
 
 - `iteration-<N>/benchmark.json`:
   - `metadata`: `skill_name`, `skill_path`, `runner`, `timestamp`, `runs_per_configuration`, `compare_ref`, `baseline_status` (`"clean"`, `"possibly contaminated"`, or `"skipped"`), `warnings`.
-  - `run_summary`: `with_skill`, `without_skill`, `old_skill` (`pass_rate`, `time_seconds`, `tokens`, each with `mean`, `stddev`, `min`, `max` across case runs), plus `delta` (`with_skill` minus `without_skill`) and `old_skill_delta` (`with_skill` minus `old_skill`).
-  - Deltas are signed strings in raw units: `pass_rate` as a fraction (`"+0.33"`), `time_seconds` (`"+12.40"`), and `tokens` (`"+1500"`, or `"n/a"` when no run reported usage). `report.md` and the CLI summary show the pass-rate delta in percentage points (`+33.3 pp`).
+  - How the `without_skill` baseline hides the skill: Claude Code gets `skillOverrides` plus permission deny rules, and Gemini CLI gets `skills.disabled`, which it honors only in trusted folders. Codex and `agy` have no documented workspace-level exclusion, so their baseline is `possibly contaminated` whenever the skill is also installed system-wide.
+  - `run_summary`: `with_skill`, `without_skill`, `old_skill`, plus `delta` (`with_skill` minus `without_skill`) and `old_skill_delta` (`with_skill` minus `old_skill`). Each variant has `runs`, `failed_runs`, `usage_reported_runs`, and `pass_rate`, `time_seconds`, `tokens` summaries (`mean`, `stddev`, `min`, `max`; means and sample standard deviations across case runs). `tokens` is `null` when no run of that variant reported usage.
+  - Statistics are stored unrounded; rounding happens only when rendering.
+  - Deltas are signed strings in raw units: `pass_rate` as a fraction (`"+0.33"`), `time_seconds` (`"+12.40"`), and `tokens` (`"+1500"`, or `"n/a"` when either side reported no usage). `report.md` and the CLI summary show the pass-rate delta in percentage points, for example `with_skill pass rate 80.0% (+33.3 pp vs baseline, -10.0 pp vs old_skill)`.
   - Runs whose runner reported no token usage (`usage_reported: false`) are left out of token statistics.
   - `cases`: per-case variant summaries, per-run grading and timing records, and assertions with a `classification` against `without_skill` and an `old_skill_classification` against `old_skill` (present only with `--compare`). Classes: `differentiating`, `non-discriminating`, `regressing`, `failing`, `flaky`, and `no-baseline` when there is no reference run.
   - `non_discriminating_assertions`: `<case_id>: <assertion>` entries that passed in every `with_skill` and baseline run.
   - `assertion_analysis`: `<case_id>: <assertion>` entries grouped into `pass_only_with_skill` (only when a reference exists), `pass_in_both`, `fail_in_both`, `flaky`, `regressing` (against `without_skill`), and `regressing_vs_old` (against `old_skill`).
 - `triggers-<N>/triggers.json`: one file per `skill triggers` run, so a train run and a validation run land in separate `triggers-<N>` directories.
   - `metadata`: `skill_name`, `skill_path`, `runner`, `split` (`train`, `validation`, or `all`), `runs_per_query`, `threshold`, `timestamp`.
-  - `metrics`: `total_queries`, `positive_queries`, `negative_queries`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `recall`, `precision`, `specificity`, `false_positive_rate`, `accuracy`. A ratio with a zero denominator is `null` and renders as `n/a`.
-  - `queries`: per-query `trigger_count`, `runs`, `trigger_rate`, and `passed`.
+  - `metrics`: `total_queries`, `positive_queries`, `negative_queries`, `errored_queries`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `recall`, `precision`, `specificity`, `false_positive_rate`, `accuracy`. A ratio with a zero denominator is `null` and renders as `n/a (0/0)`.
+  - `queries`: per-query `trigger_count`, `runs`, `errored_runs`, `trigger_rate` (`null` when every run errored), and `passed`.
 
 `--baseline <ref>` and `--compare <ref>` read the ref from the repository that contains the skill folder. The ref, the skill folder at that ref, and runner availability are checked before anything is written.
 

@@ -59,7 +59,7 @@ When adding scripts under `skills/<name>/scripts/`:
 - Prefer established, focused libraries over hand-rolled parsing, schema validation, or path lookup logic when writing helper scripts or recommending project dependencies.
 - Never block on interactive stdin prompts; fail fast with usage instructions when required flags are missing.
 - Support `--help` and exit `0` when printing help.
-- Keep `evals/` out of runtime dependencies: copy-mode installs to `~/.agents/skills/<name>` leave out `evals/`, but link-mode installs expose the whole folder, `evals/files/` included.
+- Keep `evals/` out of runtime dependencies: copy-mode installs to `~/.agents/skills/<name>` leave out `evals/`, but link-mode installs expose the whole folder, `evals/files/` included, so name fixture skill files `SKILL.fixture.md` (the eval harness stages them as `SKILL.md`).
 
 ## 5. Pre-Flight Authoring Checklist
 

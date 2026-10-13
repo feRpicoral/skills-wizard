@@ -49,7 +49,7 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
 3. **Analyze `benchmark.json` and `report.md` (`skill report`)**
    - Read `~/.agents/agents-config/evals/<name>/iteration-<N>/report.md`, or regenerate it with `agents-config skill report <name>` (latest iteration), `agents-config skill report <name> iteration-<N>`, or `agents-config skill report <run-dir>`:
      - **Failed runs**: a run that errored or timed out fails all of its assertions with `Agent run failed: ...`; fix the runner problem before reading pass rates.
-     - **Baseline status**: verify `metadata.baseline_status` is `"clean"`. If it is `"possibly contaminated"` (the runner cannot exclude a globally installed copy of the skill), treat small deltas with caution.
+     - **Baseline status**: verify `metadata.baseline_status` is `"clean"`. If it is `"possibly contaminated"` (the runner cannot exclude a system-wide copy of the skill; always the case for `codex` and `agy` when the skill is installed globally), treat small deltas with caution.
      - **Pass-rate, duration, and token deltas**: `run_summary.delta` is `with_skill` minus `without_skill` (`old_skill_delta` is against `old_skill`); the report shows the pass-rate delta in percentage points. Tokens read `n/a` when the runner reported no usage.
      - **Assertion classifications**: `non-discriminating` assertions pass in both variants and should be tightened or replaced; `regressing` assertions pass less often with the skill and point at a counterproductive instruction; `no-baseline` means there was nothing to compare against. `old_skill_classification` classifies each assertion against `old_skill` when `--compare` was used.
 
