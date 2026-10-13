@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, readdir, readFile, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 
+import { lstatIfExists } from '../install/fs.ts';
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
 import { isolatedGitEnv } from '../test-support/git.ts';
 import type { EvalCase } from './cases.ts';
 import {
   buildBlindGraderPrompt,
+  capResponse,
   evaluateScriptedAssertion,
   gradeEvalRun,
   type GradingReport,
@@ -325,12 +327,17 @@ test('gradeEvalRun marks string assertions failed when the grader throws and kee
   assert.equal(timing.usage_reported, false);
 });
 
-test('gradeEvalRun runs the grader in an empty folder outside the task workspace', async (t) => {
+test('gradeEvalRun runs the grader in an empty temporary folder that names neither the variant nor the run', async (t) => {
   const root = await tempDir(t);
-  const workdir = join(root, 'workdir');
-  const runDir = join(root, 'run');
+  const runDir = join(
+    root,
+    'iteration-1',
+    'eval-case-1',
+    'with_skill',
+    'run-1',
+  );
+  const workdir = join(runDir, 'workdir');
   await writeFiles(workdir, { 'notes.md': 'summary\n' });
-  await writeFiles(join(runDir, 'grader-cwd'), { 'stale.txt': 'old\n' });
   let graderDir = '';
   let graderDirEntries: string[] = [];
   const runner = createFakeRunner({
@@ -351,8 +358,178 @@ test('gradeEvalRun runs the grader in an empty folder outside the task workspace
     env: isolatedGitEnv(root),
   });
 
-  assert.equal(graderDir, join(runDir, 'grader-cwd'));
+  assert.match(basename(graderDir), /^agents-config-grader-/);
+  assert.doesNotMatch(graderDir, /with_skill|without_skill|old_skill/);
+  assert.ok(!graderDir.startsWith(root));
   assert.deepEqual(graderDirEntries, []);
+  assert.equal(await lstatIfExists(graderDir), null);
+  assert.ok(await lstatIfExists(join(runDir, 'grader-stdout.log')));
+});
+
+test('gradeEvalRun turns folders and unreadable files at assertion paths into failed expectations', async (t) => {
+  const root = await tempDir(t);
+  const workdir = join(root, 'workdir');
+  await writeFiles(workdir, {
+    'out.json/inner.txt': 'not json\n',
+    'report.md/inner.txt': 'not a file\n',
+    'locked.md': 'secret\n',
+  });
+  const canChmod = process.getuid?.() !== 0;
+  if (canChmod) await chmod(join(workdir, 'locked.md'), 0o000);
+
+  const { grading } = await gradeEvalRun({
+    evalCase: {
+      id: 'odd-state',
+      prompt: 'Write files',
+      expected_output: 'Files',
+      files: [],
+      assertions: [
+        { type: 'json_valid', path: 'out.json' },
+        { type: 'regex', path: 'report.md', pattern: 'x' },
+        { type: 'regex', path: 'locked.md', pattern: 'secret' },
+      ],
+    },
+    workdir,
+    runDir: join(root, 'run'),
+    taskResult: completedTask(),
+    runner: createFakeRunner(),
+    timeoutSeconds: 30,
+    env: isolatedGitEnv(root),
+  });
+
+  assert.deepEqual(
+    grading.expectations.map((item) => item.passed),
+    [false, false, !canChmod],
+  );
+  assert.equal(
+    grading.expectations[0]?.evidence,
+    '"out.json" in workspace is not a regular file.',
+  );
+  assert.equal(
+    grading.expectations[1]?.evidence,
+    '"report.md" in workspace is not a regular file.',
+  );
+  if (canChmod) {
+    assert.match(
+      grading.expectations[2]?.evidence ?? '',
+      /^Could not evaluate assertion: .*EACCES/,
+    );
+  }
+});
+
+test(
+  'summarizeWorkspace skips unreadable folders and files and lists them',
+  { skip: process.getuid?.() === 0 },
+  async (t) => {
+    const workdir = await tempDir(t);
+    await writeFiles(workdir, {
+      'visible.txt': 'shown\n',
+      'locked-dir/hidden.txt': 'hidden\n',
+      'locked.txt': 'hidden\n',
+    });
+    await chmod(join(workdir, 'locked-dir'), 0o000);
+    await chmod(join(workdir, 'locked.txt'), 0o000);
+    let text: string;
+    try {
+      text = (await summarizeWorkspace({ workdir })).join('\n\n');
+    } finally {
+      // Restore before the temp folder is removed.
+      await chmod(join(workdir, 'locked-dir'), 0o755);
+    }
+
+    assert.match(text, /--- visible\.txt ---\nshown/);
+    assert.doesNotMatch(text, /hidden\n/);
+    assert.match(
+      text,
+      /--- unreadable paths \(skipped\) ---\nlocked-dir\/ \(EACCES\)\nlocked\.txt \(EACCES\)/,
+    );
+  },
+);
+
+test('summarizeWorkspace and capResponse budget UTF-8 bytes without splitting characters', async (t) => {
+  const workdir = await tempDir(t);
+  await writeFiles(workdir, {
+    'a-cjk.md': '\u6f22\u5b57'.repeat(5_000),
+    'b-cjk.md': '\u4eee\u540d'.repeat(5_000),
+  });
+  const response = `\u958b\u59cb${'\u3042'.repeat(50_000)}\u7d42\u4e86`;
+
+  const summary = (await summarizeWorkspace({ workdir, budget: 9_000 })).join(
+    '\n\n',
+  );
+  const capped = capResponse(response, 3_000);
+
+  assert.ok(Buffer.byteLength(summary) < 9_000 + 200);
+  assert.doesNotMatch(summary, /\ufffd/);
+  assert.match(summary, /b-cjk\.md \(30000 bytes, truncated\)/);
+  assert.ok(Buffer.byteLength(capped) <= 3_100);
+  assert.doesNotMatch(capped, /\ufffd/);
+  assert.ok(capped.startsWith('\u958b\u59cb'));
+  assert.ok(capped.endsWith('\u7d42\u4e86'));
+  assert.match(capped, /\[\.\.\. \d+ bytes of the response omitted \.\.\.\]/);
+});
+
+test('gradeEvalRun keeps the grader prompt under 100 KB with large CJK output', async (t) => {
+  const root = await tempDir(t);
+  const workdir = join(root, 'workdir');
+  await writeFiles(
+    workdir,
+    Object.fromEntries(
+      Array.from({ length: 20 }, (_, idx) => [
+        `notes-${idx}.md`,
+        '\u6f22\u5b57\u304b\u306a'.repeat(3_000),
+      ]),
+    ),
+  );
+  let promptBytes = 0;
+  const runner = createFakeRunner({
+    onGrader(request) {
+      promptBytes = Buffer.byteLength(request.prompt);
+      return {};
+    },
+  });
+
+  await gradeEvalRun({
+    evalCase: mixedCase,
+    workdir,
+    runDir: join(root, 'run'),
+    taskResult: completedTask({ response: '\u3042'.repeat(200_000) }),
+    runner,
+    timeoutSeconds: 30,
+    env: isolatedGitEnv(root),
+  });
+
+  assert.ok(promptBytes > 50_000);
+  assert.ok(promptBytes < 100_000, `prompt was ${promptBytes} bytes`);
+});
+
+test('gradeEvalRun stores exact pass rate and duration', async (t) => {
+  const root = await tempDir(t);
+  const workdir = join(root, 'workdir');
+  await writeFiles(workdir, { 'a.txt': 'a\n' });
+
+  const { grading, timing } = await gradeEvalRun({
+    evalCase: {
+      id: 'exact',
+      prompt: 'Write a.txt',
+      expected_output: 'a.txt',
+      files: [],
+      assertions: [
+        { type: 'file_exists', path: 'a.txt' },
+        { type: 'file_exists', path: 'b.txt' },
+        { type: 'file_exists', path: 'c.txt' },
+      ],
+    },
+    workdir,
+    runDir: join(root, 'run'),
+    taskResult: completedTask({ durationMs: 1234.5678 }),
+    runner: createFakeRunner(),
+    timeoutSeconds: 30,
+    env: isolatedGitEnv(root),
+  });
+
+  assert.equal(grading.summary.pass_rate, 1 / 3);
+  assert.equal(timing.total_duration_seconds, 1.2345678);
 });
 
 test('normalizeGraderResults matches verbatim text first, falls back to position only when counts match, and fails closed otherwise', () => {

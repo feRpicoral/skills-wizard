@@ -1,9 +1,19 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdir, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Environment } from '../env.ts';
-import { lstatIfExists, readTextIfExists } from '../install/fs.ts';
+import { lstatIfExists, statIfExists } from '../install/fs.ts';
 import type { EvalAssertion, EvalCase, ScriptedAssertion } from './cases.ts';
 import { trackChildGroup } from './children.ts';
 import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
@@ -11,9 +21,13 @@ import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 const COMMAND_ASSERTION_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 2_000;
 const OUTPUT_DRAIN_MS = 1_000;
+// Byte budgets keep the grader prompt under PROMPT_BUDGET_BYTES.
+const PROMPT_BUDGET_BYTES = 100_000;
 const WORKSPACE_SUMMARY_BUDGET = 60_000;
-const FILE_PREVIEW_CHARS = 8_000;
-const MAX_LISTED_SHORTENED_FILES = 200;
+const RESPONSE_BUDGET_BYTES = 24_000;
+const FILE_PREVIEW_BYTES = 8_000;
+const LISTING_BUDGET_BYTES = 6_000;
+const GRADER_DIR_PREFIX = 'agents-config-grader-';
 const MALFORMED_GRADER_OUTPUT = 'Malformed grader output';
 const WORKSPACE_SKIP_DIRS = new Set([
   '.git',
@@ -241,7 +255,57 @@ export interface EvaluateScriptedAssertionParams {
   env: Environment;
 }
 
-export async function evaluateScriptedAssertion({
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Evaluates one scripted assertion. Whatever the agent left in the workspace
+ * (a folder where a file was expected, an unreadable file), the result is a
+ * failed expectation with the reason as evidence, never an exception.
+ */
+export async function evaluateScriptedAssertion(
+  params: EvaluateScriptedAssertionParams,
+): Promise<GradedExpectation> {
+  try {
+    return await evaluateScriptedAssertionUnchecked(params);
+  } catch (error) {
+    return {
+      text: formatAssertionLabel(params.assertion),
+      kind: params.assertion.type,
+      passed: false,
+      evidence: `Could not evaluate assertion: ${errorMessage(error)}`,
+    };
+  }
+}
+
+interface ReadWorkspaceFileParams {
+  workdir: string;
+  path: string;
+}
+
+type WorkspaceFileRead =
+  | { content: string; problem?: undefined }
+  | { content?: undefined; problem: string };
+
+// Only regular files are read: a folder or a FIFO at the path is reported
+// instead of failing (EISDIR) or blocking.
+async function readWorkspaceFile({
+  workdir,
+  path,
+}: ReadWorkspaceFileParams): Promise<WorkspaceFileRead> {
+  const fullPath = join(workdir, path);
+  const info = await statIfExists(fullPath);
+  if (info === null) {
+    return { problem: `File "${path}" does not exist in workspace.` };
+  }
+  if (!info.isFile()) {
+    return { problem: `"${path}" in workspace is not a regular file.` };
+  }
+  return { content: await readFile(fullPath, 'utf8') };
+}
+
+async function evaluateScriptedAssertionUnchecked({
   assertion,
   workdir,
   env,
@@ -287,15 +351,12 @@ export async function evaluateScriptedAssertion({
   }
 
   if (assertion.type === 'regex') {
-    const fullPath = join(workdir, assertion.path);
-    const content = await readTextIfExists(fullPath);
-    if (content === null) {
-      return {
-        text,
-        kind: 'regex',
-        passed: false,
-        evidence: `File "${assertion.path}" does not exist in workspace.`,
-      };
+    const { content, problem } = await readWorkspaceFile({
+      workdir,
+      path: assertion.path,
+    });
+    if (content === undefined) {
+      return { text, kind: 'regex', passed: false, evidence: problem };
     }
     const regex = new RegExp(assertion.pattern, assertion.flags);
     const match = regex.exec(content);
@@ -317,15 +378,12 @@ export async function evaluateScriptedAssertion({
   }
 
   if (assertion.type === 'json_valid') {
-    const fullPath = join(workdir, assertion.path);
-    const content = await readTextIfExists(fullPath);
-    if (content === null) {
-      return {
-        text,
-        kind: 'json_valid',
-        passed: false,
-        evidence: `File "${assertion.path}" does not exist in workspace.`,
-      };
+    const { content, problem } = await readWorkspaceFile({
+      workdir,
+      path: assertion.path,
+    });
+    if (content === undefined) {
+      return { text, kind: 'json_valid', passed: false, evidence: problem };
     }
     try {
       JSON.parse(content);
@@ -340,7 +398,7 @@ export async function evaluateScriptedAssertion({
         text,
         kind: 'json_valid',
         passed: false,
-        evidence: `Invalid JSON in "${assertion.path}": ${error instanceof Error ? error.message : String(error)}`,
+        evidence: `Invalid JSON in "${assertion.path}": ${errorMessage(error)}`,
       };
     }
   }
@@ -372,34 +430,61 @@ interface WorkspaceFile {
   size: number;
 }
 
+interface WorkspaceListing {
+  files: WorkspaceFile[];
+  /** Paths that could not be read, with the reason. */
+  unreadable: string[];
+}
+
 interface CollectWorkspaceFilesParams {
   workdir: string;
   segments?: readonly string[];
+  listing?: WorkspaceListing;
 }
 
+function errorCode(error: unknown): string {
+  return error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string'
+    ? error.code
+    : errorMessage(error);
+}
+
+// Folders or files the agent made unreadable are listed, not fatal.
 async function collectWorkspaceFiles({
   workdir,
   segments = [],
-}: CollectWorkspaceFilesParams): Promise<WorkspaceFile[]> {
-  const entries = await readdir(join(workdir, ...segments), {
-    withFileTypes: true,
-  });
+  listing = { files: [], unreadable: [] },
+}: CollectWorkspaceFilesParams): Promise<WorkspaceListing> {
+  let entries;
+  try {
+    entries = await readdir(join(workdir, ...segments), {
+      withFileTypes: true,
+    });
+  } catch (error) {
+    listing.unreadable.push(
+      `${segments.length > 0 ? `${segments.join('/')}/` : './'} (${errorCode(error)})`,
+    );
+    return listing;
+  }
   entries.sort((left, right) => left.name.localeCompare(right.name));
-  const files: WorkspaceFile[] = [];
   for (const entry of entries) {
     if (WORKSPACE_SKIP_DIRS.has(entry.name)) continue;
     const relSegments = [...segments, entry.name];
     if (entry.isDirectory()) {
-      files.push(
-        ...(await collectWorkspaceFiles({ workdir, segments: relSegments })),
-      );
+      await collectWorkspaceFiles({ workdir, segments: relSegments, listing });
     } else if (entry.isFile()) {
       const fullPath = join(workdir, ...relSegments);
-      const info = await stat(fullPath);
-      files.push({ relPath: relSegments.join('/'), fullPath, size: info.size });
+      const relPath = relSegments.join('/');
+      try {
+        const info = await stat(fullPath);
+        listing.files.push({ relPath, fullPath, size: info.size });
+      } catch (error) {
+        listing.unreadable.push(`${relPath} (${errorCode(error)})`);
+      }
     }
   }
-  return files;
+  return listing;
 }
 
 async function readHead(path: string, bytes: number): Promise<Buffer> {
@@ -413,22 +498,66 @@ async function readHead(path: string, bytes: number): Promise<Buffer> {
   }
 }
 
+function isContinuationByte(byte: number | undefined): boolean {
+  return byte !== undefined && (byte & 0xc0) === 0x80;
+}
+
+/** The longest prefix of `buffer` within `maxBytes` that ends on a character. */
+function utf8Head(buffer: Buffer, maxBytes: number): string {
+  let end = Math.max(0, Math.min(maxBytes, buffer.length));
+  if (end < buffer.length) {
+    while (end > 0 && isContinuationByte(buffer[end])) end -= 1;
+  }
+  return buffer.subarray(0, end).toString('utf8');
+}
+
+/** The longest suffix of `buffer` within `maxBytes` that starts on a character. */
+function utf8Tail(buffer: Buffer, maxBytes: number): string {
+  let start = Math.max(0, buffer.length - Math.max(0, maxBytes));
+  while (start < buffer.length && isContinuationByte(buffer[start])) start += 1;
+  return buffer.subarray(start).toString('utf8');
+}
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf8');
+}
+
+interface ListingSectionParams {
+  title: string;
+  lines: readonly string[];
+}
+
+function listingSection({ title, lines }: ListingSectionParams): string {
+  const kept: string[] = [];
+  let used = byteLength(title);
+  for (const line of lines) {
+    used += byteLength(line) + 1;
+    if (used > LISTING_BUDGET_BYTES) break;
+    kept.push(line);
+  }
+  const more = lines.length - kept.length;
+  return [title, ...kept, ...(more > 0 ? [`... and ${more} more`] : [])].join(
+    '\n',
+  );
+}
+
 export interface SummarizeWorkspaceParams {
   workdir: string;
-  /** Total characters of file content to include. */
+  /** UTF-8 bytes of file content and headers to include. */
   budget?: number;
 }
 
 /**
  * Renders workspace files for the blind grader: text files only, each capped,
- * the whole summary capped, build and vendor folders skipped. Files that were
- * cut short or left out are listed by path and size at the end.
+ * the whole summary capped (in UTF-8 bytes), build and vendor folders skipped.
+ * Files that were cut short, left out or unreadable are listed by path at the
+ * end.
  */
 export async function summarizeWorkspace({
   workdir,
   budget = WORKSPACE_SUMMARY_BUDGET,
 }: SummarizeWorkspaceParams): Promise<string[]> {
-  const files = await collectWorkspaceFiles({ workdir });
+  const { files, unreadable } = await collectWorkspaceFiles({ workdir });
   const sections: string[] = [];
   const shortened: string[] = [];
   let remaining = budget;
@@ -438,43 +567,71 @@ export async function summarizeWorkspace({
       shortened.push(`${file.relPath} (${file.size} bytes, omitted)`);
       continue;
     }
-    const head = await readHead(
-      file.fullPath,
-      Math.min(file.size, FILE_PREVIEW_CHARS + 1),
-    );
+    let head: Buffer;
+    try {
+      head = await readHead(
+        file.fullPath,
+        Math.min(file.size, FILE_PREVIEW_BYTES + 1),
+      );
+    } catch (error) {
+      unreadable.push(`${file.relPath} (${errorCode(error)})`);
+      continue;
+    }
     if (head.includes(0)) {
       const line = `--- ${file.relPath} (binary, ${file.size} bytes) ---`;
       sections.push(line);
-      remaining -= line.length;
+      // Sections are joined with a blank line.
+      remaining -= byteLength(line) + 2;
       continue;
     }
-    const text = head.toString('utf8');
-    const limit = Math.min(FILE_PREVIEW_CHARS, remaining);
-    const preview = text.slice(0, limit);
-    const truncated = file.size > Buffer.byteLength(preview, 'utf8');
+    const preview = utf8Head(head, Math.min(FILE_PREVIEW_BYTES, remaining));
+    const truncated = file.size > byteLength(preview);
     const header = truncated
       ? `--- ${file.relPath} (truncated, ${file.size} bytes) ---`
       : `--- ${file.relPath} ---`;
     if (truncated) {
       shortened.push(`${file.relPath} (${file.size} bytes, truncated)`);
     }
-    sections.push(`${header}\n${preview}`);
-    remaining -= header.length + preview.length;
+    const section = `${header}\n${preview}`;
+    sections.push(section);
+    remaining -= byteLength(section) + 2;
   }
 
   if (shortened.length > 0) {
-    const listed = shortened.slice(0, MAX_LISTED_SHORTENED_FILES);
-    const more = shortened.length - listed.length;
     sections.push(
-      [
-        '--- files not shown in full (summary limit) ---',
-        ...listed,
-        ...(more > 0 ? [`... and ${more} more`] : []),
-      ].join('\n'),
+      listingSection({
+        title: '--- files not shown in full (summary limit) ---',
+        lines: shortened,
+      }),
+    );
+  }
+  if (unreadable.length > 0) {
+    sections.push(
+      listingSection({
+        title: '--- unreadable paths (skipped) ---',
+        lines: unreadable,
+      }),
     );
   }
 
   return sections;
+}
+
+/**
+ * Caps the agent response for the grader prompt, keeping its beginning and
+ * end, which usually carry the plan and the final answer.
+ */
+export function capResponse(
+  response: string,
+  maxBytes = RESPONSE_BUDGET_BYTES,
+): string {
+  const buffer = Buffer.from(response, 'utf8');
+  if (buffer.length <= maxBytes) return response;
+  const half = Math.floor(maxBytes / 2);
+  const head = utf8Head(buffer, half);
+  const tail = utf8Tail(buffer, half);
+  const omitted = buffer.length - byteLength(head) - byteLength(tail);
+  return `${head}\n\n[... ${omitted} bytes of the response omitted ...]\n\n${tail}`;
 }
 
 export interface BuildBlindGraderPromptParams {
@@ -692,7 +849,8 @@ async function writeRunReports({
   const passed = expectations.filter((item) => item.passed).length;
   const total = expectations.length;
   const failed = total - passed;
-  const passRate = total === 0 ? 1 : Number((passed / total).toFixed(4));
+  // Stored exactly; reports round when rendering.
+  const passRate = total === 0 ? 1 : passed / total;
 
   const grading: GradingReport = {
     expectations,
@@ -706,7 +864,7 @@ async function writeRunReports({
 
   const timing: TimingReport = {
     duration_ms: taskResult.durationMs,
-    total_duration_seconds: Number((taskResult.durationMs / 1000).toFixed(3)),
+    total_duration_seconds: taskResult.durationMs / 1000,
     input_tokens: taskResult.usage.input_tokens,
     output_tokens: taskResult.usage.output_tokens,
     total_tokens: taskResult.usage.total_tokens,
@@ -839,18 +997,36 @@ export async function gradeEvalRun({
       schemaPath,
       `${JSON.stringify(GRADER_JSON_SCHEMA, null, 2)}\n`,
     );
-    // The grader runs in an empty folder of its own so it cannot read the
-    // workspace (which would reveal the variant) or change it.
-    const graderDir = join(runDir, 'grader-cwd');
-    await rm(graderDir, { recursive: true, force: true });
-    await mkdir(graderDir, { recursive: true });
-    const workspaceSummary = await summarizeWorkspace({ workdir });
+    const response = capResponse(taskResult.response);
+    // Whatever the fixed parts of the prompt leave, up to the summary budget.
+    const fixedBytes = byteLength(
+      buildBlindGraderPrompt({
+        evalCase,
+        response,
+        workspaceSummary: [],
+        stringAssertions,
+      }),
+    );
+    const workspaceSummary = await summarizeWorkspace({
+      workdir,
+      budget: Math.max(
+        0,
+        Math.min(
+          WORKSPACE_SUMMARY_BUDGET,
+          PROMPT_BUDGET_BYTES - fixedBytes - 2 * LISTING_BUDGET_BYTES,
+        ),
+      ),
+    });
     const prompt = buildBlindGraderPrompt({
       evalCase,
-      response: taskResult.response,
+      response,
       workspaceSummary,
       stringAssertions,
     });
+    // The grader runs in an empty temporary folder whose path names neither
+    // the variant nor the run, away from the workspace it could otherwise
+    // read (revealing the variant) or change. Its logs stay in runDir.
+    const graderDir = await mkdtemp(join(tmpdir(), GRADER_DIR_PREFIX));
     let normalized: GradedExpectation[];
     try {
       const graderResult = await runner.runGrader({
@@ -864,13 +1040,14 @@ export async function gradeEvalRun({
       normalized = normalizeGraderResults({
         assertions: stringAssertions,
         output: graderResult.output,
-        evidenceText: [taskResult.response, ...workspaceSummary].join('\n'),
+        evidenceText: [response, ...workspaceSummary].join('\n'),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       normalized = stringAssertions.map((assertion) =>
-        failedString(assertion, `Grader error: ${message}`),
+        failedString(assertion, `Grader error: ${errorMessage(error)}`),
       );
+    } finally {
+      await rm(graderDir, { recursive: true, force: true });
     }
     for (const [position, item] of normalized.entries()) {
       const index = stringIndexes[position];
