@@ -2,15 +2,17 @@ import { join } from 'node:path';
 
 import { withRequirements } from '../blocks/compose.ts';
 import type { Context } from '../context.ts';
-import { UsageError } from '../errors.ts';
+import { CatalogError, UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { lstatIfExists } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
 import { type AdoptChoice, promptAdoptSkills } from '../prompts/selection.ts';
 import {
   appendCatalogEntries,
+  type Catalog,
   type CatalogEntry,
   catalogPath,
+  extendCatalog,
   WHOLE_REPOSITORY,
 } from '../skills/catalog.ts';
 import {
@@ -24,7 +26,6 @@ import {
   type SkillLibrary,
 } from '../skills/library.ts';
 import { type LockedSkill, readSkillLock } from '../skills/lock.ts';
-import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
@@ -46,16 +47,25 @@ export interface AdoptOptions {
 
 const DEFAULT_ADOPT_CATEGORY = 'workflow';
 
-function upstreamEntry(
-  name: string,
-  locked: ReadonlyMap<string, LockedSkill>,
-): CatalogEntry | undefined {
+interface UpstreamEntryParams {
+  name: string;
+  locked: ReadonlyMap<string, LockedSkill>;
+  catalog: Catalog;
+}
+
+function upstreamEntry({
+  name,
+  locked,
+  catalog,
+}: UpstreamEntryParams): CatalogEntry | undefined {
   const info = locked.get(name);
   if (!info?.repo) return undefined;
+  const ref = catalog.skills.find((entry) => entry.repo === info.repo)?.ref;
   return {
     name,
     repo: info.repo,
     path: info.path ?? WHOLE_REPOSITORY,
+    ...(ref ? { ref } : {}),
     category: DEFAULT_ADOPT_CATEGORY,
     scopes: ['global', 'project'],
     defaults: [],
@@ -86,37 +96,87 @@ function choiceHint({
         : existing.origin.entry.repo;
     return `${location} (${source})`;
   }
-  const entry = upstreamEntry(skill.name, locked);
+  const entry = upstreamEntry({
+    name: skill.name,
+    locked,
+    catalog: library.catalog,
+  });
   if (entry) return `${location} (${entry.repo}, adds to catalog.yaml)`;
   return null;
 }
 
-function withInMemoryEntries(
-  library: SkillLibrary,
-  entries: readonly CatalogEntry[],
-): SkillLibrary {
-  if (entries.length === 0) return library;
+interface CatalogAdditions {
+  library: SkillLibrary;
+  entries: CatalogEntry[];
+}
+
+interface WithCatalogEntriesParams {
+  library: SkillLibrary;
+  candidates: readonly CatalogEntry[];
+  file: string;
+}
+
+function withCatalogEntries({
+  library,
+  candidates,
+  file,
+}: WithCatalogEntriesParams): CatalogAdditions {
+  if (candidates.length === 0) return { library, entries: [] };
+  let catalog: Catalog;
+  try {
+    catalog = extendCatalog({
+      catalog: library.catalog,
+      entries: candidates,
+      file,
+    });
+  } catch (error) {
+    if (!(error instanceof CatalogError)) throw error;
+    throw new UsageError(
+      `Cannot adopt ${candidates.map((entry) => entry.name).join(', ')} from ~/.agents/.skill-lock.json: ${error.message}`,
+      { cause: error },
+    );
+  }
+  const entries = catalog.skills.slice(library.catalog.skills.length);
   return {
-    catalog: {
-      categories: {
-        ...library.catalog.categories,
-        [DEFAULT_ADOPT_CATEGORY]:
-          library.catalog.categories[DEFAULT_ADOPT_CATEGORY] ??
-          DEFAULT_ADOPT_CATEGORY,
-      },
-      skills: [...library.catalog.skills, ...entries],
+    entries,
+    library: {
+      catalog,
+      skills: [
+        ...library.skills,
+        ...entries.map((entry) => ({
+          name: entry.name,
+          group: catalog.categories[entry.category] ?? entry.category,
+          scopes: entry.scopes,
+          defaults: entry.defaults,
+          origin: { type: 'catalog' as const, entry },
+        })),
+      ],
     },
-    skills: [
-      ...library.skills,
-      ...entries.map((entry) => ({
-        name: entry.name,
-        group: library.catalog.categories[entry.category] ?? entry.category,
-        scopes: entry.scopes,
-        defaults: entry.defaults,
-        origin: { type: 'catalog' as const, entry },
-      })),
-    ],
   };
+}
+
+interface CheckFolderNamesParams {
+  unmanaged: readonly DiscoveredSkill[];
+  picked: readonly string[];
+  home: string;
+}
+
+function checkFolderNames({
+  unmanaged,
+  picked,
+  home,
+}: CheckFolderNamesParams): void {
+  const mismatched = unmanaged.filter(
+    (skill) => picked.includes(skill.name) && skill.folder !== skill.name,
+  );
+  if (mismatched.length === 0) return;
+  const details = mismatched.map(
+    (skill) =>
+      `${displayPath({ path: skill.path, home })} declares the name ${skill.name}`,
+  );
+  throw new UsageError(
+    `Cannot adopt skills whose folder name differs from their name: ${details.join('; ')}. Rename or remove these folders first.`,
+  );
 }
 
 export async function runAdopt(
@@ -126,6 +186,11 @@ export async function runAdopt(
   const prompting = ctx.interactive && !yes;
   const location = await resolveLocation({ ctx, scope: 'global' });
   const previous = await readLocationManifest(ctx, prompting, location);
+  if (!previous) {
+    throw new UsageError(
+      'No system-wide install recorded; run agents-config init --global first.',
+    );
+  }
   const scan = await scanInstalledSkills(ctx.paths, previous);
   if (scan.unmanaged.length === 0) {
     notify({ ctx, prompting, message: 'No unmanaged skills found.' });
@@ -145,7 +210,9 @@ export async function runAdopt(
       throw new UsageError(`Not an unmanaged skill: ${missing.join(', ')}`);
     }
     const unknown = names.filter(
-      (name) => !findSkill(skillLibrary, name) && !upstreamEntry(name, locked),
+      (name) =>
+        !findSkill(skillLibrary, name) &&
+        !upstreamEntry({ name, locked, catalog: skillLibrary.catalog }),
     );
     if (unknown.length > 0) {
       throw new UsageError(
@@ -193,40 +260,49 @@ export async function runAdopt(
     }
   }
 
-  const newCatalogEntries = picked.flatMap((name) => {
+  checkFolderNames({
+    unmanaged: scan.unmanaged,
+    picked,
+    home: ctx.paths.home,
+  });
+  const candidates = picked.flatMap((name) => {
     if (findSkill(skillLibrary, name)) return [];
-    const entry = upstreamEntry(name, locked);
+    const entry = upstreamEntry({
+      name,
+      locked,
+      catalog: skillLibrary.catalog,
+    });
     return entry ? [entry] : [];
   });
-  skillLibrary = withInMemoryEntries(skillLibrary, newCatalogEntries);
+  const file = catalogPath(ctx.repoRoot);
+  const additions = withCatalogEntries({
+    library: skillLibrary,
+    candidates,
+    file,
+  });
+  skillLibrary = additions.library;
+  const newCatalogEntries = additions.entries;
 
   const library = await loadLibrary(ctx);
-  const tools =
-    requestedTools ??
-    previous?.tools ??
-    (await detectTools(ctx.paths, ctx.searchPath));
+  const tools = requestedTools ?? previous.tools;
   if (tools.length === 0) {
     throw new UsageError(
-      'No tools recorded or detected; run agents-config init first or pass --tools <ids>.',
+      'No tools recorded; pass --tools <ids> or run agents-config init --global.',
     );
   }
-  const knownBlocks = previous
-    ? dropUnknownBlocks({
-        ctx,
-        prompting,
-        library,
-        ids: previous.blocks,
-      })
-    : [];
+  const knownBlocks = dropUnknownBlocks({
+    ctx,
+    prompting,
+    library,
+    ids: previous.blocks,
+  });
   const { ids: blocks } = withRequirements(library, knownBlocks);
-  const priorSkills = previous
-    ? dropUnknownSkills({
-        ctx,
-        prompting,
-        library: skillLibrary,
-        names: previous.skills,
-      })
-    : [];
+  const priorSkills = dropUnknownSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: previous.skills,
+  });
   const skills = [...new Set([...priorSkills, ...picked])];
   const skillSources = await fetchSkills({
     ctx,
@@ -243,10 +319,10 @@ export async function runAdopt(
       tools,
       blocks,
       skills,
-      variables: previous?.variables ?? {},
-      linkCommand: previous?.options.linkCommand ?? false,
+      variables: previous.variables,
+      linkCommand: previous.options.linkCommand ?? false,
       keepLocal: false,
-      skillMode: previous?.options.skillMode ?? DEFAULT_SKILL_MODE,
+      skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
     },
     library,
     paths: ctx.paths,
@@ -259,7 +335,7 @@ export async function runAdopt(
 
   const result = await confirmAndApply(ctx, plan, { yes, dryRun });
   if (result.applied && newCatalogEntries.length > 0) {
-    await appendCatalogEntries(catalogPath(ctx.repoRoot), newCatalogEntries);
+    await appendCatalogEntries(file, newCatalogEntries);
     notify({
       ctx,
       prompting,
