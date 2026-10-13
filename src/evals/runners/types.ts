@@ -52,6 +52,12 @@ export interface RunnerGraderResult {
   rawStderr: string;
 }
 
+export interface ParsedGraderOutput {
+  output: unknown;
+  durationMs: number;
+  usage: RunnerUsage;
+}
+
 export interface EvalRunner {
   readonly name: EvalRunnerName;
   runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult>;

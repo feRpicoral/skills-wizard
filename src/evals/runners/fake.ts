@@ -70,26 +70,46 @@ function extractAssertionsFromGraderPrompt(prompt: string): string[] {
   return [];
 }
 
-export function createFakeRunner(options: FakeRunnerOptions = {}): EvalRunner {
+export function createFakeRunner({
+  onTask,
+  onGrader,
+}: FakeRunnerOptions = {}): EvalRunner {
   return {
     name: 'fake',
-    async runTask(request: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      await mkdir(request.runDir, { recursive: true });
+    async runTask({
+      prompt,
+      workdir,
+      runDir,
+      skillName,
+      timeoutSeconds,
+      sandbox,
+      excludeSkill,
+    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
+      await mkdir(runDir, { recursive: true });
       const active =
-        !request.excludeSkill &&
+        !excludeSkill &&
         (await isSkillActiveInWorkdir({
-          workdir: request.workdir,
-          skillName: request.skillName,
+          workdir,
+          skillName,
         }));
-      const custom = options.onTask ? await options.onTask(request) : {};
+      const custom = onTask
+        ? await onTask({
+            prompt,
+            workdir,
+            runDir,
+            skillName,
+            timeoutSeconds,
+            sandbox,
+            excludeSkill,
+          })
+        : {};
 
-      const shouldTriggerDefault =
-        active && !request.prompt.includes('[negative]');
+      const shouldTriggerDefault = active && !prompt.includes('[negative]');
       const response =
         custom.response ??
         (active
-          ? `Executed with skill ${request.skillName}: ${request.prompt}`
-          : `Executed without skill: ${request.prompt}`);
+          ? `Executed with skill ${skillName}: ${prompt}`
+          : `Executed without skill: ${prompt}`);
       const triggered = custom.triggered ?? shouldTriggerDefault;
       const durationMs = custom.durationMs ?? (active ? 120 : 90);
       const usage = custom.usage ?? {
@@ -109,8 +129,8 @@ export function createFakeRunner(options: FakeRunnerOptions = {}): EvalRunner {
         })}\n`;
       const rawStderr = custom.rawStderr ?? '';
 
-      await writeFile(join(request.runDir, 'stdout.log'), rawStdout);
-      await writeFile(join(request.runDir, 'stderr.log'), rawStderr);
+      await writeFile(join(runDir, 'stdout.log'), rawStdout);
+      await writeFile(join(runDir, 'stderr.log'), rawStderr);
 
       return {
         response,
@@ -124,12 +144,28 @@ export function createFakeRunner(options: FakeRunnerOptions = {}): EvalRunner {
       };
     },
 
-    async runGrader(request: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      await mkdir(request.runDir, { recursive: true });
-      const custom = options.onGrader ? await options.onGrader(request) : {};
+    async runGrader({
+      prompt,
+      schemaPath,
+      schema,
+      workdir,
+      runDir,
+      timeoutSeconds,
+    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
+      await mkdir(runDir, { recursive: true });
+      const custom = onGrader
+        ? await onGrader({
+            prompt,
+            schemaPath,
+            schema,
+            workdir,
+            runDir,
+            timeoutSeconds,
+          })
+        : {};
 
-      const assertions = extractAssertionsFromGraderPrompt(request.prompt);
-      const passedDefault = request.prompt.includes('Executed with skill');
+      const assertions = extractAssertionsFromGraderPrompt(prompt);
+      const passedDefault = prompt.includes('Executed with skill');
       const output = custom.output ?? {
         results: assertions.map((assertion) => ({
           assertion,
@@ -155,8 +191,8 @@ export function createFakeRunner(options: FakeRunnerOptions = {}): EvalRunner {
         })}\n`;
       const rawStderr = custom.rawStderr ?? '';
 
-      await writeFile(join(request.runDir, 'grader-stdout.log'), rawStdout);
-      await writeFile(join(request.runDir, 'grader-stderr.log'), rawStderr);
+      await writeFile(join(runDir, 'grader-stdout.log'), rawStdout);
+      await writeFile(join(runDir, 'grader-stderr.log'), rawStderr);
 
       return {
         output,
