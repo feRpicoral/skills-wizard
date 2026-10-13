@@ -22,7 +22,8 @@ export async function tempSearchPath(
 ): Promise<string> {
   const dir = await tempDir(t);
   for (const command of commands) {
-    await symlink(await which(command), join(dir, command));
+    const binary = command === 'node' ? process.execPath : await which(command);
+    await symlink(binary, join(dir, command));
   }
   return dir;
 }
