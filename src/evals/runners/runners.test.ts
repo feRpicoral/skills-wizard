@@ -62,19 +62,23 @@ test('buildAgyTaskArgs and buildAgyGraderArgs keep -p=<prompt> last and omit --m
 test('parseAgyStreamJson detects view_file and run_command SKILL.md triggers and extracts result', () => {
   const viewFileStream = [
     JSON.stringify({
-      type: 'step_update',
-      tool_name: 'view_file',
-      tool_info: {
-        parameters: {
-          AbsolutePath: '/tmp/work/.agents/skills/demo-skill/SKILL.md',
+      event: 'step_update',
+      step_update: {
+        tool_name: 'view_file',
+        tool_info: {
+          parameters: {
+            AbsolutePath: '/tmp/work/.agents/skills/demo-skill/SKILL.md',
+          },
         },
       },
     }),
     JSON.stringify({
-      type: 'result',
-      response: 'Done with view_file',
-      duration_ms: 4200,
-      usage: { input_tokens: 300, output_tokens: 150, total_tokens: 450 },
+      event: 'result',
+      result: {
+        response: 'Done with view_file',
+        duration_ms: 4200,
+        usage: { input_tokens: 300, output_tokens: 150, total_tokens: 450 },
+      },
     }),
   ].join('\n');
   const commandStream = [
