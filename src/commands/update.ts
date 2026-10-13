@@ -7,6 +7,7 @@ import type { BlockLibrary } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import {
   AgentsConfigError,
+  MissingVariablesError,
   RegistryError,
   SourceError,
   UsageError,
@@ -53,6 +54,7 @@ import {
   notifyLeftGit,
   readLocationManifest,
   resolveLocation,
+  resolveVariables,
   sourceCache,
 } from './shared.ts';
 
@@ -309,6 +311,14 @@ async function planUpdateTarget({
       message: `Added required blocks: ${added.join(', ')}`,
     });
   }
+  const variables = await resolveVariables({
+    ctx,
+    prompting,
+    library,
+    blocks,
+    location,
+    recorded: previous.variables,
+  });
   const skills = dropUnknownSkills({
     ctx,
     prompting,
@@ -326,7 +336,7 @@ async function planUpdateTarget({
       tools: previous.tools,
       blocks,
       skills,
-      variables: previous.variables,
+      variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
@@ -447,13 +457,23 @@ export async function runUpdate(
           }),
         );
       } catch (error) {
-        if (!target.location.project) throw error;
-        skipProject({
-          ctx,
-          prompting,
-          projectDir: target.location.project.dir,
-          error,
-        });
+        if (target.location.project) {
+          skipProject({
+            ctx,
+            prompting,
+            projectDir: target.location.project.dir,
+            error,
+          });
+        } else if (error instanceof MissingVariablesError) {
+          notify({
+            ctx,
+            prompting,
+            message: `Skipping the system-wide install: ${error.message}`,
+            level: 'warn',
+          });
+        } else {
+          throw error;
+        }
       }
     }
 

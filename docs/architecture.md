@@ -32,7 +32,7 @@ sequenceDiagram
 - placeholders that are not declared as variables, and declared variables that are never used
 - `requires` entries that name an unknown block, a block later in the order, or a block missing one of the scopes
 
-Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library, or no longer available for the manifest's scope, are dropped with a warning by `sync`, `update` and `adopt`, and `doctor` reports them. When a recorded block gains a variable, `sync` looks up its value the way `init` does (asking for it in a terminal) and records it. If no value is found, `sync` stops with a usage error naming the `init --var` command, and `doctor` reports the missing variable as an error.
+Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library, or no longer available for the manifest's scope, are dropped with a warning by `sync`, `update` and `adopt`, and `doctor` reports them. When a recorded block gains a variable, `sync`, `update` and `adopt` look up its value the way `init` does (asking for it in a terminal) and record it. If no value is found, `sync` and `adopt` stop with a usage error naming the `init --var` command before anything is written, `update` skips that install with a warning naming the command and refreshes the others, and `doctor` reports the missing variable as an error.
 
 The system-wide file is the global header plus the selected blocks joined by blank lines. A project file gets the selected blocks inside a managed region, below a `# <project name>` heading that is written once.
 
