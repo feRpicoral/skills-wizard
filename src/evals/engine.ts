@@ -30,8 +30,8 @@ import {
   prepareEvalWorkspace,
   prepareTriggerWorkspace,
   resolveSkillRepository,
-  verifySkillAtRef,
   validateEvalSuiteFileDestinations,
+  verifySkillAtRef,
 } from './workspace.ts';
 
 interface BoundedConcurrencyParams<T, R> {
