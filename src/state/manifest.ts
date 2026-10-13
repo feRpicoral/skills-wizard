@@ -146,6 +146,27 @@ export async function readManifest(file: string): Promise<Manifest | null> {
   return result.data;
 }
 
+// System-wide entries are used as they are, so a relative path would resolve
+// against whatever directory the CLI runs from.
+export async function readGlobalManifest(
+  file: string,
+): Promise<Manifest | null> {
+  const manifest = await readManifest(file);
+  for (const entry of manifest?.entries ?? []) {
+    if (!isAbsolute(entry.path)) {
+      throw new ManifestError(
+        `${file}: entry paths must be absolute, got ${entry.path}`,
+      );
+    }
+    if (entry.kind === 'symlink' && !isAbsolute(entry.target)) {
+      throw new ManifestError(
+        `${file}: symlink targets must be absolute, got ${entry.target}`,
+      );
+    }
+  }
+  return manifest;
+}
+
 export async function readProjectManifest(
   file: string,
   { dir, ...rest }: ProjectBase,

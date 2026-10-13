@@ -15,6 +15,7 @@ import {
   type Manifest,
   MANIFEST_VERSION,
   projectManifestPath,
+  readGlobalManifest,
   readManifest,
   readProjectManifest,
   writeManifest,
@@ -152,4 +153,39 @@ test('a manifest path that is not a regular file is refused', async (t) => {
   await mkdir(file);
 
   await assert.rejects(readManifest(file), /is not a regular file/);
+});
+
+test('system-wide manifests cannot use relative paths', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  await storeRaw(file, [
+    { kind: 'region', path: '.codex/AGENTS.md', createdFile: true },
+  ]);
+
+  await assert.rejects(readGlobalManifest(file), /must be absolute/);
+});
+
+test('system-wide manifests cannot record relative symlink targets', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  await storeRaw(file, [
+    {
+      kind: 'symlink',
+      path: join(dir, 'agents-config'),
+      target: 'src/cli.ts',
+    },
+  ]);
+
+  await assert.rejects(readGlobalManifest(file), /must be absolute/);
+});
+
+test('system-wide manifests with absolute paths are read', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  const entries: Manifest['entries'] = [
+    { kind: 'region', path: join(dir, 'AGENTS.md'), createdFile: true },
+  ];
+  await storeRaw(file, entries);
+
+  assert.deepEqual((await readGlobalManifest(file))?.entries, entries);
 });

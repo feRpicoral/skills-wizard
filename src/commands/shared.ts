@@ -34,7 +34,7 @@ import {
   globalManifestPath,
   type Manifest,
   projectManifestPath,
-  readManifest,
+  readGlobalManifest,
   readProjectManifest,
 } from '../state/manifest.ts';
 
@@ -151,7 +151,7 @@ export async function readLocationManifest(
   prompting: boolean,
   { manifestPath, project }: Location,
 ): Promise<Manifest | null> {
-  if (!project) return readManifest(manifestPath);
+  if (!project) return readGlobalManifest(manifestPath);
 
   const result = await readProjectManifest(manifestPath, {
     dir: project.dir,
