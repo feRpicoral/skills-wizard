@@ -123,12 +123,14 @@ interface AssertionRowParams {
   assertion: AssertionAggregate;
   hasBaseline: boolean;
   withOldSkill: boolean;
+  compareSkillNames: readonly string[];
 }
 
 function formatAssertionRow({
   assertion,
   hasBaseline,
   withOldSkill,
+  compareSkillNames,
 }: AssertionRowParams): string {
   const oldClassification =
     assertion.old_skill_classification ??
@@ -139,6 +141,9 @@ function formatAssertionRow({
     formatRate(assertion.with_skill_pass_rate),
     ...(hasBaseline ? [formatRate(assertion.baseline_pass_rate)] : []),
     ...(withOldSkill ? [formatRate(assertion.old_skill_pass_rate)] : []),
+    ...compareSkillNames.map((name) =>
+      formatRate(assertion.compare_pass_rates?.[name]),
+    ),
     ...(hasBaseline || !withOldSkill
       ? [cellCodeSpan(assertion.classification)]
       : []),
@@ -151,6 +156,8 @@ function formatAssertionRow({
 
 export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   const { metadata, run_summary: summary, cases } = benchmark;
+  const compareSkillNames =
+    metadata.compare_skills ?? Object.keys(summary.compare_skills ?? {});
   const lines: string[] = [
     `# Skill Evaluation Report: ${codeSpan(metadata.skill_name)}`,
     '',
@@ -162,6 +169,11 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   ];
   if (metadata.compare_ref) {
     lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
+  }
+  if (compareSkillNames.length > 0) {
+    lines.push(
+      `- **Compared against skills:** ${compareSkillNames.map(codeSpan).join(', ')}`,
+    );
   }
   lines.push('');
 
@@ -188,6 +200,14 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   if (summary.old_skill) {
     lines.push(formatVariantRow('`old_skill`', summary.old_skill));
   }
+  for (const name of compareSkillNames) {
+    const compareVariant = summary.compare_skills?.[name];
+    if (compareVariant) {
+      lines.push(
+        formatVariantRow(cellCodeSpan(`compare:${name}`), compareVariant),
+      );
+    }
+  }
   if (summary.delta && summary.without_skill) {
     lines.push(
       formatDeltaRow({
@@ -209,6 +229,21 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
         tokens: summary.old_skill_delta.tokens,
       }),
     );
+  }
+  for (const name of compareSkillNames) {
+    const compareVariant = summary.compare_skills?.[name];
+    const compareDelta = summary.compare_deltas?.[name];
+    if (compareVariant && compareDelta) {
+      lines.push(
+        formatDeltaRow({
+          label: `Delta (vs ${escapeTableCell(name)})`,
+          primary: summary.with_skill,
+          reference: compareVariant,
+          timeSeconds: compareDelta.time_seconds,
+          tokens: compareDelta.tokens,
+        }),
+      );
+    }
   }
   lines.push('');
 
@@ -274,6 +309,7 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
         '`with_skill`',
         ...(hasBaseline ? ['`without_skill`'] : []),
         ...(withOldSkill ? ['`old_skill`'] : []),
+        ...compareSkillNames.map((name) => cellCodeSpan(`compare:${name}`)),
         ...(hasBaseline
           ? ['Classification (vs baseline)']
           : withOldSkill
@@ -287,7 +323,12 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
       );
       for (const assertion of evalCase.assertions) {
         lines.push(
-          formatAssertionRow({ assertion, hasBaseline, withOldSkill }),
+          formatAssertionRow({
+            assertion,
+            hasBaseline,
+            withOldSkill,
+            compareSkillNames,
+          }),
         );
       }
       lines.push('');

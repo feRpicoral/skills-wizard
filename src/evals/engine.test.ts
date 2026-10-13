@@ -785,3 +785,61 @@ test('runSkillEval reports a personal Claude skill as with_skill contamination, 
   assert.equal(result.benchmark.metadata.with_skill_contaminated, true);
   assert.equal(result.benchmark.metadata.baseline_status, 'clean');
 });
+
+test('runSkillEval stages competing skills for compareSkills and records side-by-side results', async (t) => {
+  const { paths, repoRoot, skillDir, env } = await demoSkill({ t });
+  const altSkillDir = join(repoRoot, 'skills', 'alt-skill');
+  await writeFiles(altSkillDir, {
+    'SKILL.md': skillSource('alt-skill'),
+  });
+  const stagedChecks: string[] = [];
+  const fake = createFakeRunner();
+  const runner: EvalRunner = {
+    ...fake,
+    async runTask(request) {
+      const stagedMd = await lstatIfExists(
+        join(
+          request.workdir,
+          '.agents',
+          'skills',
+          request.skillName,
+          'SKILL.md',
+        ),
+      );
+      if (stagedMd?.isFile()) {
+        stagedChecks.push(request.skillName);
+      }
+      return fake.runTask(request);
+    },
+  };
+
+  const result = await runSkillEval({
+    skillName: 'demo-skill',
+    skillDir,
+    evalsRootDir: paths.evalsDir,
+    runner,
+    baseline: true,
+    compareSkills: [{ skillName: 'alt-skill', skillDir: altSkillDir }],
+    paths,
+    env,
+  });
+  const variants = result.benchmark.cases
+    .flatMap((item) => item.runs)
+    .map((run) => run.variant)
+    .sort();
+
+  assert.deepEqual(variants, [
+    'compare:alt-skill',
+    'compare:alt-skill',
+    'with_skill',
+    'with_skill',
+    'without_skill',
+    'without_skill',
+  ]);
+  assert.deepEqual(result.benchmark.metadata.compare_skills, ['alt-skill']);
+  assert.ok(stagedChecks.includes('alt-skill'));
+  assert.match(
+    result.reportMarkdown,
+    /\| `compare:alt-skill` \| 100\.0% ± 0\.0% \|/,
+  );
+});

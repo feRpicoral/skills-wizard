@@ -44,7 +44,32 @@ const DEFAULT_PROJECT_SKILLS_DIR = posix.join('.agents', 'skills');
 /** Fixture file name that is staged into eval workspaces as `SKILL.md`. */
 export const FIXTURE_SKILL_FILE = 'SKILL.fixture.md';
 
-export type EvalVariant = 'with_skill' | 'without_skill' | 'old_skill';
+export type CompareSkillVariant = `compare:${string}`;
+
+export type EvalVariant =
+  'with_skill' | 'without_skill' | 'old_skill' | CompareSkillVariant;
+
+export interface ComparedSkillSpec {
+  skillName: string;
+  skillDir: string;
+}
+
+export function compareSkillVariant(skillName: string): CompareSkillVariant {
+  return `compare:${skillName}`;
+}
+
+export function parseCompareSkillVariant(
+  variant: EvalVariant,
+): string | undefined {
+  return variant.startsWith('compare:')
+    ? variant.slice('compare:'.length)
+    : undefined;
+}
+
+export function variantDirName(variant: EvalVariant): string {
+  const compared = parseCompareSkillVariant(variant);
+  return compared !== undefined ? `compare-${compared}` : variant;
+}
 
 export type EvalRunnerName = 'agy' | 'claude' | 'codex' | 'gemini' | 'fake';
 
@@ -154,6 +179,7 @@ export function mapCaseFileRelativePath({
 export interface CaseFileDestinationsParams {
   evalCase: Pick<EvalCase, 'id' | 'files'>;
   skillName: string;
+  compareSkillNames?: readonly string[];
 }
 
 function isUnderDir(path: string, dir: string): boolean {
@@ -171,12 +197,16 @@ function isUnderDir(path: string, dir: string): boolean {
 export function validateCaseFileDestinations({
   evalCase,
   skillName,
+  compareSkillNames = [],
 }: CaseFileDestinationsParams): void {
   const problems: string[] = [];
   const seen = new Map<string, string>();
+  const allSkillNames = [skillName, ...compareSkillNames];
   const stagedDirs = new Set(
-    (Object.keys(RUNNER_TOOLS) as EvalRunnerName[]).map((runner) =>
-      posix.join(projectSkillsDir(runner), skillName).toLowerCase(),
+    (Object.keys(RUNNER_TOOLS) as EvalRunnerName[]).flatMap((runner) =>
+      allSkillNames.map((name) =>
+        posix.join(projectSkillsDir(runner), name).toLowerCase(),
+      ),
     ),
   );
 
@@ -241,6 +271,7 @@ export function validateCaseFileDestinations({
 export interface EvalSuiteFileDestinationsParams {
   cases: readonly Pick<EvalCase, 'id' | 'files'>[];
   skillName: string;
+  compareSkillNames?: readonly string[];
 }
 
 /**
@@ -250,9 +281,10 @@ export interface EvalSuiteFileDestinationsParams {
 export function validateEvalSuiteFileDestinations({
   cases,
   skillName,
+  compareSkillNames,
 }: EvalSuiteFileDestinationsParams): void {
   for (const evalCase of cases) {
-    validateCaseFileDestinations({ evalCase, skillName });
+    validateCaseFileDestinations({ evalCase, skillName, compareSkillNames });
   }
 }
 
@@ -611,6 +643,7 @@ export interface PrepareEvalWorkspaceParams {
   paths?: Paths;
   repoRoot?: string;
   compareRef?: string;
+  compareSkill?: ComparedSkillSpec;
   env?: Environment;
 }
 
@@ -624,6 +657,7 @@ export async function prepareEvalWorkspace({
   paths,
   repoRoot,
   compareRef,
+  compareSkill,
   env,
 }: PrepareEvalWorkspaceParams): Promise<PreparedWorkspace> {
   const workdir = join(runDir, 'workdir');
@@ -668,6 +702,41 @@ export async function prepareEvalWorkspace({
       variant,
       runner,
       skillName,
+      possiblyContaminated: false,
+      skillShadowed: warning !== undefined,
+      ...(warning ? { warning } : {}),
+    };
+  }
+
+  if (parseCompareSkillVariant(variant) !== undefined) {
+    if (!compareSkill) {
+      throw new EvalError(`${variant} workspace requires compareSkill`);
+    }
+    const destSkillDir = stagedSkillDir({
+      workdir,
+      runner,
+      skillName: compareSkill.skillName,
+    });
+    await copySkillTree({
+      source: compareSkill.skillDir,
+      destination: destSkillDir,
+    });
+    await applyBaselineExclusion({
+      workdir,
+      skillName,
+      runner,
+      paths,
+    });
+    const warning = await personalSkillShadowWarning({
+      runner,
+      skillName: compareSkill.skillName,
+      paths,
+    });
+    return {
+      workdir,
+      variant,
+      runner,
+      skillName: compareSkill.skillName,
       possiblyContaminated: false,
       skillShadowed: warning !== undefined,
       ...(warning ? { warning } : {}),
