@@ -115,10 +115,16 @@ function regionPreamble({
     : undefined;
 }
 
+export interface EmptyJsonState {
+  wasEmpty: true;
+  blankText?: string;
+}
+
 interface FileActionParams<T extends FileTarget> {
   target: T;
   file: ResolvedTargetFile;
   previous: ManifestEntry | null;
+  emptyJson?: EmptyJsonState;
 }
 
 function planRegion({
@@ -231,14 +237,16 @@ function planJsonArray({
   target,
   file,
   previous,
+  emptyJson,
 }: FileActionParams<JsonArrayTarget>): PlannedAction {
   try {
+    const earlier = previous?.kind === 'json-array' ? previous : null;
     const result = ensureArrayValues({
       existing: file.existing,
       keyPath: target.key,
       values: target.values,
+      ...(earlier ? { ownedValues: earlier.added } : {}),
     });
-    const earlier = previous?.kind === 'json-array' ? previous : null;
     const added = [
       ...new Set([
         ...(earlier?.added ?? []).filter((value) =>
@@ -247,6 +255,12 @@ function planJsonArray({
         ...result.added,
       ]),
     ];
+    const wasEmpty = earlier
+      ? earlier.wasEmpty
+      : (emptyJson?.wasEmpty ?? result.wasEmpty);
+    const blankText = earlier
+      ? earlier.blankText
+      : (emptyJson?.blankText ?? result.blankText);
     return writeAction({
       target,
       file,
@@ -258,12 +272,8 @@ function planJsonArray({
         added,
         wasString: earlier?.wasString ?? result.wasString,
         ...createdShape(earlier, result),
-        ...((earlier ? earlier.wasEmpty : result.wasEmpty)
-          ? { wasEmpty: true }
-          : {}),
-        ...((earlier ? earlier.blankText : result.blankText) !== undefined
-          ? { blankText: earlier ? earlier.blankText : result.blankText }
-          : {}),
+        ...(wasEmpty ? { wasEmpty: true } : {}),
+        ...(blankText !== undefined ? { blankText } : {}),
         createdFile: file.createdFile,
       },
       previous,
@@ -280,6 +290,7 @@ function planMcpJson({
   target,
   file,
   previous,
+  emptyJson,
 }: FileActionParams<McpJsonTarget>): PlannedAction {
   try {
     const earlier = previous?.kind === 'mcp-json' ? previous : null;
@@ -291,8 +302,12 @@ function planMcpJson({
     const createdMcpServers =
       Boolean(earlier?.createdMcpServers) || result.createdMcpServers;
     const original = earlier ? earlier.original : result.original;
-    const wasEmpty = earlier ? earlier.wasEmpty : result.wasEmpty;
-    const blankText = earlier ? earlier.blankText : result.blankText;
+    const wasEmpty = earlier
+      ? earlier.wasEmpty
+      : (emptyJson?.wasEmpty ?? result.wasEmpty);
+    const blankText = earlier
+      ? earlier.blankText
+      : (emptyJson?.blankText ?? result.blankText);
     return writeAction({
       target,
       file,
@@ -354,6 +369,7 @@ export interface PlanFileParams {
   staged: StagedContents;
   boundary?: string;
   pathCreated?: boolean;
+  emptyJson?: EmptyJsonState;
 }
 
 async function resolveTargetFile({
@@ -471,6 +487,7 @@ async function planSatisfiedLine({
 export async function planFile({
   target,
   previous,
+  emptyJson,
   ...rest
 }: PlanFileParams): Promise<PlannedAction> {
   if (
@@ -488,6 +505,7 @@ export async function planFile({
   const resolved = await resolveTargetFile({ target, previous, ...rest });
   if ('status' in resolved) return resolved;
 
+  const emptyState = emptyJson ? { emptyJson } : {};
   switch (target.kind) {
     case 'region':
       return planRegion({ target, file: resolved, previous });
@@ -496,9 +514,9 @@ export async function planFile({
     case 'line':
       return planLine({ target, file: resolved, previous });
     case 'json-array':
-      return planJsonArray({ target, file: resolved, previous });
+      return planJsonArray({ target, file: resolved, previous, ...emptyState });
     case 'mcp-json':
-      return planMcpJson({ target, file: resolved, previous });
+      return planMcpJson({ target, file: resolved, previous, ...emptyState });
     case 'mcp-toml':
       return planMcpToml({ target, file: resolved, previous });
   }

@@ -8,7 +8,7 @@ import {
   type ManifestEntry,
   serializeManifest,
 } from '../state/manifest.ts';
-import { planFile } from './file-actions.ts';
+import { type EmptyJsonState, planFile } from './file-actions.ts';
 import { readTextIfExists, realLocation } from './fs.ts';
 import { planRemoval } from './removal.ts';
 import {
@@ -53,6 +53,7 @@ interface DispatchTargetParams {
   staged: StagedContents;
   boundary?: string;
   pathCreated?: boolean;
+  emptyJson?: EmptyJsonState;
 }
 
 function dispatchTarget({
@@ -62,6 +63,7 @@ function dispatchTarget({
   staged,
   boundary,
   pathCreated,
+  emptyJson,
 }: DispatchTargetParams): Promise<PlannedAction> {
   const location = boundary ? { boundary } : {};
   switch (target.kind) {
@@ -76,6 +78,7 @@ function dispatchTarget({
         staged,
         ...location,
         ...(pathCreated !== undefined ? { pathCreated } : {}),
+        ...(emptyJson ? { emptyJson } : {}),
       });
   }
 }
@@ -137,6 +140,20 @@ async function planTargetActions({
       'createdFile' in entry && entry.createdFile ? [entry.path] : [],
     ),
   );
+  const emptyJsonByPath = new Map<string, EmptyJsonState>();
+  for (const entry of previousEntries.values()) {
+    if (
+      (entry.kind === 'json-array' || entry.kind === 'mcp-json') &&
+      entry.wasEmpty
+    ) {
+      emptyJsonByPath.set(entry.path, {
+        wasEmpty: true,
+        ...(entry.blankText !== undefined
+          ? { blankText: entry.blankText }
+          : {}),
+      });
+    }
+  }
   for (const target of targets) {
     const key = keyOf(target);
     plannedKeys.add(key);
@@ -153,6 +170,7 @@ async function planTargetActions({
         continue;
       }
     }
+    const emptyJson = emptyJsonByPath.get(target.path);
     const action = await guarded({
       target,
       previous,
@@ -164,10 +182,24 @@ async function planTargetActions({
           staged,
           ...(boundary ? { boundary } : {}),
           pathCreated: createdPaths.has(target.path),
+          ...(emptyJson ? { emptyJson } : {}),
         }),
     });
     if (target.kind === 'skill' && action.status === 'conflict') {
       blockedSkills.add(target.name);
+    }
+    if (
+      action.entry &&
+      (action.entry.kind === 'json-array' ||
+        action.entry.kind === 'mcp-json') &&
+      action.entry.wasEmpty
+    ) {
+      emptyJsonByPath.set(action.entry.path, {
+        wasEmpty: true,
+        ...(action.entry.blankText !== undefined
+          ? { blankText: action.entry.blankText }
+          : {}),
+      });
     }
     await stageAction({ staged, action });
     actions.push(action);
@@ -248,6 +280,63 @@ function composeManifestMetadata({
               ? { style: selection.style }
               : {}),
           },
+  };
+}
+
+export interface ResolveManifestEntriesParams {
+  manifest: Omit<Manifest, 'entries'>;
+  actions: readonly PlannedAction[];
+  isApplied: (action: PlannedAction) => boolean;
+}
+
+function isMcpAction(action: PlannedAction): boolean {
+  return (
+    action.entry?.kind === 'mcp-json' ||
+    action.entry?.kind === 'mcp-toml' ||
+    action.previous?.kind === 'mcp-json' ||
+    action.previous?.kind === 'mcp-toml' ||
+    action.label.endsWith('MCP servers')
+  );
+}
+
+export function resolveManifestEntries({
+  manifest,
+  actions,
+  isApplied,
+}: ResolveManifestEntriesParams): {
+  manifest: Omit<Manifest, 'entries'>;
+  entries: ManifestEntry[];
+} {
+  const entries = actions.flatMap((action) => {
+    const entry = isApplied(action) ? action.entry : action.previous;
+    return entry ? [entry] : [];
+  });
+  const recordedSkills = new Set(
+    entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
+  );
+  const skills = [
+    ...manifest.skills.filter((name) => recordedSkills.has(name)),
+    ...[...recordedSkills].filter((name) => !manifest.skills.includes(name)),
+  ];
+  const skippedMcp = actions.some(
+    (action) => !isApplied(action) && isMcpAction(action),
+  );
+  const recordedMcp = new Set(
+    entries.flatMap((entry) =>
+      entry.kind === 'mcp-json' || entry.kind === 'mcp-toml'
+        ? entry.servers
+        : [],
+    ),
+  );
+  const mcp = skippedMcp
+    ? [
+        ...manifest.mcp.filter((name) => recordedMcp.has(name)),
+        ...[...recordedMcp].filter((name) => !manifest.mcp.includes(name)),
+      ]
+    : manifest.mcp;
+  return {
+    manifest: { ...manifest, skills, mcp },
+    entries,
   };
 }
 
@@ -333,12 +422,14 @@ export async function buildPlan({
   const actions = [...targetActions, ...removalActions];
 
   const manifest = composeManifestMetadata(input);
-  const entries = actions.flatMap((action) =>
-    action.entry ? [action.entry] : [],
-  );
-  const manifestStatus = await resolveManifestStatus({
+  const effective = resolveManifestEntries({
     manifest,
-    entries,
+    actions,
+    isApplied: (action) => action.status !== 'conflict',
+  });
+  const manifestStatus = await resolveManifestStatus({
+    manifest: effective.manifest,
+    entries: effective.entries,
     manifestPath,
     ...(project ? { projectDir: project.dir } : {}),
   });

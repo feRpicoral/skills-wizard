@@ -53,7 +53,7 @@ export function createContext({
       env: gitEnvironment(),
       now: () => new Date(),
       skillsShUrl: () => resolveSkillsShUrl(),
-      mcpRegistryUrl: (official) =>
+      mcpRegistryUrl: ({ official } = {}) =>
         resolveMcpRegistryUrl({
           ...(official !== undefined ? { official } : {}),
         }),

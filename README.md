@@ -92,7 +92,7 @@ flowchart LR
 
 ## Curated MCP servers
 
-`mcp/servers.yaml` defines curated MCP servers with explicit version pins (`@upstash/context7-mcp@2.1.6`, `fetcher-mcp@0.2.1`, `mcp-reddit@0.1.5`, `nx-mcp@0.4.6`, `@supabase/mcp-server-supabase@0.5.5`, and remote `https://mcp.sentry.dev/mcp`):
+`mcp/servers.yaml` defines curated MCP servers with explicit version pins and remote endpoints (remote `https://mcp.context7.com/mcp`, `fetcher-mcp@0.2.1`, `mcp-server-reddit@0.5.2`, `nx-mcp@0.3.2`, `@supabase/mcp-server-supabase@0.5.5`, and remote `https://mcp.sentry.dev/mcp`):
 
 - **Global defaults:** `context7`, `fetcher`, and `reddit`.
 - **Project auto-detected:** `nx` (when `nx.json` or `nx` is present), `supabase` (read-only by default, when `supabase/config.toml` or `@supabase/supabase-js` is present), and `sentry` (when `@sentry/*` or `sentry-sdk` is present).

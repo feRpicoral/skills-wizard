@@ -353,11 +353,17 @@ export async function promptRepoSkillLocation({
   );
 }
 
-export async function promptMcpServers(
-  catalog: McpCatalog,
-  scope: Scope,
-  initial: readonly string[],
-): Promise<string[]> {
+export interface PromptMcpServersParams {
+  catalog: McpCatalog;
+  scope: Scope;
+  initial: readonly string[];
+}
+
+export async function promptMcpServers({
+  catalog,
+  scope,
+  initial,
+}: PromptMcpServersParams): Promise<string[]> {
   const available = catalog.servers.filter((server) =>
     server.scopes.includes(scope),
   );

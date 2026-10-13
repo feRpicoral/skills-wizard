@@ -12,7 +12,11 @@ import {
   replaceSymlink,
   writeTextAtomic,
 } from './fs.ts';
-import type { Plan, PlannedAction } from './plan.ts';
+import {
+  type Plan,
+  type PlannedAction,
+  resolveManifestEntries,
+} from './plan.ts';
 
 interface SetupFailure {
   path: string;
@@ -72,41 +76,17 @@ async function setUp(
 }
 
 async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
-  const entries = plan.actions.flatMap((action) => {
-    const entry = applied.has(action) ? action.entry : action.previous;
-    return entry ? [entry] : [];
+  const effective = resolveManifestEntries({
+    manifest: plan.manifest,
+    actions: plan.actions,
+    isApplied: (action) => applied.has(action),
   });
-  if (entries.length === 0 && plan.manifest.tools.length === 0) {
+  if (effective.entries.length === 0 && effective.manifest.tools.length === 0) {
     await removePath(plan.manifestPath);
     return;
   }
 
-  const recordedSkills = new Set(
-    entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
-  );
-  const skills = plan.manifest.skills.filter((name) =>
-    recordedSkills.has(name),
-  );
-  const skippedMcp = plan.actions.some(
-    (action) =>
-      !applied.has(action) &&
-      (action.entry?.kind === 'mcp-json' ||
-        action.entry?.kind === 'mcp-toml' ||
-        action.previous?.kind === 'mcp-json' ||
-        action.previous?.kind === 'mcp-toml' ||
-        action.label.endsWith('MCP servers')),
-  );
-  const recordedMcp = new Set(
-    entries.flatMap((entry) =>
-      entry.kind === 'mcp-json' || entry.kind === 'mcp-toml'
-        ? entry.servers
-        : [],
-    ),
-  );
-  const mcp = skippedMcp
-    ? plan.manifest.mcp.filter((name) => recordedMcp.has(name))
-    : plan.manifest.mcp;
-  const manifest = { ...plan.manifest, skills, mcp, entries };
+  const manifest = { ...effective.manifest, entries: effective.entries };
   const existing = await readTextIfExists(plan.manifestPath);
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
     await writeManifest({

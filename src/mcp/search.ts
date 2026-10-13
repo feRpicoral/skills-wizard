@@ -16,6 +16,8 @@ import {
 const SEARCH_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_LIMIT = 10;
+const CONTROL_CHAR = /\p{Cc}/u;
+const UNSAFE_SPEC_TOKEN = /(?:^-|[\s\p{Cc}])/u;
 
 const registryEnvVarSchema = z.looseObject({
   name: z.string().min(1),
@@ -87,7 +89,7 @@ export interface SearchMcpRegistryParams {
   query: string;
   official?: boolean;
   limit?: number;
-  baseUrl?: string | ((official?: boolean) => string);
+  baseUrl?: string | ((options?: { official?: boolean }) => string);
   fetchFn?: typeof globalThis.fetch;
 }
 
@@ -173,8 +175,9 @@ function buildPackageArgs(
   for (const arg of args) {
     if (arg.isSecret) continue;
     const val = arg.value ?? arg.default;
-    if (!val) continue;
+    if (!val || CONTROL_CHAR.test(val)) continue;
     if (arg.type === 'named' && arg.name) {
+      if (CONTROL_CHAR.test(arg.name)) continue;
       const flag = arg.name.startsWith('-') ? arg.name : `--${arg.name}`;
       out.push(flag, val);
     } else {
@@ -241,19 +244,25 @@ function extractInnerServer(
   return parsed.success ? parsed.data : null;
 }
 
+function sanitizeDescription(raw: string | undefined): string {
+  return (raw ?? '').replace(/[\s\p{Cc}]+/gu, ' ').trim();
+}
+
 function toCandidate(
   inner: z.infer<typeof registryServerInnerSchema>,
 ): McpSearchCandidate | null {
   const shortName = deriveShortServerName(inner.name);
   if (!shortName) return null;
-  const description = inner.description?.trim() || `${shortName} MCP server`;
+  const description =
+    sanitizeDescription(inner.description) || `${shortName} MCP server`;
 
   for (const pkg of inner.packages ?? []) {
     const kind = (pkg.registryType ?? pkg.registry_name ?? '').toLowerCase();
     const hint = (pkg.runtimeHint ?? '').toLowerCase();
     const identifier = (pkg.identifier ?? pkg.name ?? '').trim();
-    if (!identifier) continue;
+    if (!identifier || UNSAFE_SPEC_TOKEN.test(identifier)) continue;
     const version = (pkg.version ?? inner.version ?? '').trim();
+    if (version && UNSAFE_SPEC_TOKEN.test(version)) continue;
     const spec =
       version && !identifier.includes('@', 1)
         ? `${identifier}@${version}`
@@ -364,13 +373,18 @@ function toCandidate(
   return null;
 }
 
-function resolveRegistryEndpoint(
-  baseUrl: string | ((official?: boolean) => string) | undefined,
-  official: boolean,
-): string {
+interface ResolveRegistryEndpointParams {
+  baseUrl: string | ((options?: { official?: boolean }) => string) | undefined;
+  official: boolean;
+}
+
+function resolveRegistryEndpoint({
+  baseUrl,
+  official,
+}: ResolveRegistryEndpointParams): string {
   const raw =
     typeof baseUrl === 'function'
-      ? baseUrl(official)
+      ? baseUrl({ official })
       : typeof baseUrl === 'string' && baseUrl.trim()
         ? baseUrl.trim()
         : official
@@ -395,7 +409,7 @@ export async function searchMcpRegistry({
   baseUrl,
   fetchFn = globalThis.fetch,
 }: SearchMcpRegistryParams): Promise<McpSearchCandidate[]> {
-  const serversUrl = resolveRegistryEndpoint(baseUrl, official);
+  const serversUrl = resolveRegistryEndpoint({ baseUrl, official });
   const endpoint = `${serversUrl}?search=${encodeURIComponent(query)}&version=latest&limit=${limit}`;
 
   let response: Response;

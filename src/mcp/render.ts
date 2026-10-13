@@ -143,10 +143,15 @@ function renderAntigravityRemote(
   return entry;
 }
 
-function renderExpandedServer(
-  server: McpServerDefinition,
-  includeStdioType: boolean,
-): Record<string, unknown> {
+interface RenderExpandedServerParams {
+  server: McpServerDefinition;
+  includeStdioType: boolean;
+}
+
+function renderExpandedServer({
+  server,
+  includeStdioType,
+}: RenderExpandedServerParams): Record<string, unknown> {
   if (server.transport === 'stdio') {
     const entry: Record<string, unknown> = {
       ...(includeStdioType ? { type: 'stdio' } : {}),
@@ -171,20 +176,26 @@ function renderExpandedServer(
   return entry;
 }
 
-function renderJsonServer(
-  client: McpJsonClient,
-  server: McpServerDefinition,
-  warnings: string[],
-): Record<string, unknown> | null {
+interface RenderJsonServerParams {
+  client: McpJsonClient;
+  server: McpServerDefinition;
+  warnings: string[];
+}
+
+function renderJsonServer({
+  client,
+  server,
+  warnings,
+}: RenderJsonServerParams): Record<string, unknown> | null {
   switch (client) {
     case 'antigravity':
       return server.transport === 'stdio'
         ? renderAntigravityStdio(server)
         : renderAntigravityRemote(server, warnings);
     case 'claude-code':
-      return renderExpandedServer(server, false);
+      return renderExpandedServer({ server, includeStdioType: false });
     case 'gemini-cli': {
-      const entry = renderExpandedServer(server, false);
+      const entry = renderExpandedServer({ server, includeStdioType: false });
       if (server.tools?.allow && server.tools.allow.length > 0) {
         entry.includeTools = [...server.tools.allow];
       }
@@ -195,7 +206,7 @@ function renderJsonServer(
     }
     case 'copilot':
     case 'claude-copilot-shared': {
-      const entry = renderExpandedServer(server, true);
+      const entry = renderExpandedServer({ server, includeStdioType: true });
       entry.tools =
         server.tools?.allow && server.tools.allow.length > 0
           ? [...server.tools.allow]
@@ -214,7 +225,7 @@ export function renderMcpJsonServers({
   const warnings: string[] = [];
 
   for (const server of servers) {
-    const config = renderJsonServer(client, server, warnings);
+    const config = renderJsonServer({ client, server, warnings });
     if (config !== null) {
       rendered[server.name] = config;
       serverNames.push(server.name);

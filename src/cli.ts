@@ -571,6 +571,16 @@ function rejectMcpOptions(
   if (extra.length > 0) {
     throw new UsageError(`${flags(extra)} does not apply to mcp ${subcommand}`);
   }
+  if (subcommand === 'search' && !provided.includes('add')) {
+    const addOnly = provided.filter(
+      (name) => name === 'yes' || name === 'dry-run',
+    );
+    if (addOnly.length > 0) {
+      throw new UsageError(
+        `${flags(addOnly)} only applies to mcp search with --add`,
+      );
+    }
+  }
 }
 
 async function version(): Promise<string> {
@@ -822,7 +832,12 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'mcp': {
       const subcommand = parseMcpSubcommand(positionals[1]);
-      if (terminal && !yes && subcommand !== 'list') {
+      if (
+        terminal &&
+        !yes &&
+        subcommand !== 'list' &&
+        (subcommand !== 'search' || Boolean(values.add))
+      ) {
         clack.intro('agents-config');
       }
       const tools = parseTools(values.tools);

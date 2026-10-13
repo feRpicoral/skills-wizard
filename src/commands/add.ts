@@ -592,7 +592,12 @@ async function installAddedSkill({
     );
   }
   const library = await loadLibrary(ctx);
-  const tools = requestedTools ?? previous.tools;
+  const tools =
+    requestedTools !== undefined
+      ? requestedTools.length === 0
+        ? []
+        : [...new Set([...previous.tools, ...requestedTools])]
+      : previous.tools;
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
