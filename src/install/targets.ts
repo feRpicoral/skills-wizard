@@ -3,9 +3,24 @@ import { dirname, join, relative } from 'node:path';
 import { composeGlobal, composeProject } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
+import {
+  type McpCatalog,
+  type McpServerDefinition,
+  selectMcpServers,
+} from '../mcp/model.ts';
+import {
+  claudeDeniedToolPermissions,
+  type McpJsonClient,
+  renderMcpJsonServers,
+  renderMcpTomlServers,
+} from '../mcp/render.ts';
 import type { PresetId, ProjectStyle } from '../project/presets.ts';
 import type { SkillMode, SkillSource } from '../skills/install.ts';
-import type { Manifest, SkillFolders } from '../state/manifest.ts';
+import type {
+  Manifest,
+  McpConfigPaths,
+  SkillFolders,
+} from '../state/manifest.ts';
 import {
   orderedTools,
   type ToolDefinition,
@@ -18,6 +33,7 @@ export interface Selection {
   tools: ToolId[];
   blocks: string[];
   skills: string[];
+  mcp?: string[];
   variables: Record<string, string>;
   linkCommand: boolean;
   keepLocal: boolean;
@@ -48,6 +64,7 @@ export interface PlanInput {
   manifestPath: string;
   project?: ProjectContext;
   skillSources?: ReadonlyMap<string, SkillSource>;
+  mcpCatalog?: McpCatalog;
   adopt?: Adoption;
 }
 
@@ -102,13 +119,30 @@ export interface SkillTarget {
   backup?: string;
 }
 
+export interface McpJsonTarget {
+  kind: 'mcp-json';
+  path: string;
+  servers: Readonly<Record<string, Record<string, unknown>>>;
+  label: string;
+}
+
+export interface McpTomlTarget {
+  kind: 'mcp-toml';
+  path: string;
+  body: string;
+  serverNames: readonly string[];
+  label: string;
+}
+
 export type Target =
   | RegionTarget
   | ExcludeRegionTarget
   | LineTarget
   | JsonArrayTarget
   | SymlinkTarget
-  | SkillTarget;
+  | SkillTarget
+  | McpJsonTarget
+  | McpTomlTarget;
 
 export type FileTarget = Exclude<Target, SymlinkTarget | SkillTarget>;
 
@@ -257,6 +291,220 @@ function globalSettingTargets(
   });
 }
 
+function selectedMcpServers(input: PlanInput): McpServerDefinition[] {
+  const names = input.selection.mcp ?? [];
+  if (!input.mcpCatalog || names.length === 0) return [];
+  return selectMcpServers({
+    catalog: input.mcpCatalog,
+    names,
+    scope: input.scope,
+  });
+}
+
+interface GlobalMcpTargetsParams {
+  tools: readonly ToolDefinition[];
+  servers: readonly McpServerDefinition[];
+  paths: Paths;
+}
+
+function globalMcpTargets({
+  tools,
+  servers,
+  paths,
+}: GlobalMcpTargetsParams): Target[] {
+  if (servers.length === 0) return [];
+  const targets: Target[] = [];
+
+  const agyTools = tools.filter(
+    (tool) => tool.id === 'antigravity' || tool.id === 'antigravity-cli',
+  );
+  if (agyTools.length > 0) {
+    const rendered = renderMcpJsonServers({ client: 'antigravity', servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(paths.geminiHome, 'config', 'mcp_config.json'),
+        servers: rendered.servers,
+        label: `${agyTools.map((tool) => tool.label).join(', ')} MCP servers`,
+      });
+    }
+  }
+
+  if (tools.some((tool) => tool.id === 'claude-code')) {
+    const rendered = renderMcpJsonServers({ client: 'claude-code', servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(paths.home, '.claude.json'),
+        servers: rendered.servers,
+        label: 'Claude Code MCP servers',
+      });
+    }
+    const denied = claudeDeniedToolPermissions(servers);
+    if (denied.length > 0) {
+      targets.push({
+        kind: 'json-array',
+        path: join(paths.claudeHome, 'settings.json'),
+        key: 'permissions.deny',
+        values: denied,
+        label: 'Claude Code MCP tool permissions',
+      });
+    }
+  }
+
+  if (tools.some((tool) => tool.id === 'codex')) {
+    const rendered = renderMcpTomlServers(servers);
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-toml',
+        path: join(paths.codexHome, 'config.toml'),
+        body: rendered.body,
+        serverNames: rendered.serverNames,
+        label: 'Codex MCP servers',
+      });
+    }
+  }
+
+  if (tools.some((tool) => tool.id === 'gemini-cli')) {
+    const rendered = renderMcpJsonServers({ client: 'gemini-cli', servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(paths.geminiHome, 'settings.json'),
+        servers: rendered.servers,
+        label: 'Gemini CLI MCP servers',
+      });
+    }
+  }
+
+  if (tools.some((tool) => tool.id === 'copilot')) {
+    const rendered = renderMcpJsonServers({ client: 'copilot', servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(paths.copilotHome, 'mcp-config.json'),
+        servers: rendered.servers,
+        label: 'GitHub Copilot MCP servers',
+      });
+    }
+  }
+
+  return targets;
+}
+
+interface ProjectMcpTargetsParams {
+  tools: readonly ToolDefinition[];
+  servers: readonly McpServerDefinition[];
+  projectDir: string;
+}
+
+function projectMcpTargets({
+  tools,
+  servers,
+  projectDir,
+}: ProjectMcpTargetsParams): Target[] {
+  if (servers.length === 0) return [];
+  const targets: Target[] = [];
+
+  const agyTools = tools.filter(
+    (tool) => tool.id === 'antigravity' || tool.id === 'antigravity-cli',
+  );
+  if (agyTools.length > 0) {
+    const rendered = renderMcpJsonServers({ client: 'antigravity', servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(projectDir, '.agents', 'mcp_config.json'),
+        servers: rendered.servers,
+        label: `${agyTools.map((tool) => tool.label).join(', ')} MCP servers`,
+      });
+    }
+  }
+
+  const sharedTools = tools.filter(
+    (tool) => tool.id === 'claude-code' || tool.id === 'copilot',
+  );
+  if (sharedTools.length > 0) {
+    const hasClaude = sharedTools.some((tool) => tool.id === 'claude-code');
+    const hasCopilot = sharedTools.some((tool) => tool.id === 'copilot');
+    const client: McpJsonClient =
+      hasClaude && hasCopilot
+        ? 'claude-copilot-shared'
+        : hasCopilot
+          ? 'copilot'
+          : 'claude-code';
+    const rendered = renderMcpJsonServers({ client, servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(projectDir, '.mcp.json'),
+        servers: rendered.servers,
+        label: `${sharedTools.map((tool) => tool.label).join(', ')} MCP servers`,
+      });
+    }
+    if (hasClaude) {
+      const denied = claudeDeniedToolPermissions(servers);
+      if (denied.length > 0) {
+        targets.push({
+          kind: 'json-array',
+          path: join(projectDir, '.claude', 'settings.json'),
+          key: 'permissions.deny',
+          values: denied,
+          label: 'Claude Code MCP tool permissions',
+        });
+      }
+    }
+  }
+
+  if (tools.some((tool) => tool.id === 'codex')) {
+    const rendered = renderMcpTomlServers(servers);
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-toml',
+        path: join(projectDir, '.codex', 'config.toml'),
+        body: rendered.body,
+        serverNames: rendered.serverNames,
+        label: 'Codex MCP servers',
+      });
+    }
+  }
+
+  if (tools.some((tool) => tool.id === 'gemini-cli')) {
+    const rendered = renderMcpJsonServers({ client: 'gemini-cli', servers });
+    if (rendered.serverNames.length > 0) {
+      targets.push({
+        kind: 'mcp-json',
+        path: join(projectDir, '.gemini', 'settings.json'),
+        servers: rendered.servers,
+        label: 'Gemini CLI MCP servers',
+      });
+    }
+  }
+
+  return targets;
+}
+
+export function mcpWarningsForPlan(input: PlanInput): string[] {
+  const servers = selectedMcpServers(input);
+  if (servers.length === 0) return [];
+  const tools = orderedTools(input.selection.tools);
+  const warnings: string[] = [];
+
+  if (
+    tools.some(
+      (tool) => tool.id === 'antigravity' || tool.id === 'antigravity-cli',
+    )
+  ) {
+    warnings.push(
+      ...renderMcpJsonServers({ client: 'antigravity', servers }).warnings,
+    );
+  }
+  if (tools.some((tool) => tool.id === 'codex')) {
+    warnings.push(...renderMcpTomlServers(servers).warnings);
+  }
+  return [...new Set(warnings)];
+}
+
 function globalTargets(input: PlanInput): Target[] {
   const { selection, paths, library, repoRoot } = input;
   const tools = orderedTools(selection.tools);
@@ -267,6 +515,11 @@ function globalTargets(input: PlanInput): Target[] {
     targets.push(
       ...globalInstructionTargets(tools, body, paths),
       ...globalSettingTargets(tools, paths),
+      ...globalMcpTargets({
+        tools,
+        servers: selectedMcpServers(input),
+        paths,
+      }),
       ...globalSkillTargets(input),
     );
   }
@@ -340,7 +593,10 @@ function gitExcludeTarget({
   targets,
   manifestPath,
 }: GitExcludeTargetParams): ExcludeRegionTarget {
-  const patterns = [...targets.map((target) => target.path), manifestPath]
+  const uniquePaths = [
+    ...new Set([...targets.map((target) => target.path), manifestPath]),
+  ];
+  const patterns = uniquePaths
     .map((path) => gitignorePattern(relative(root, path)))
     .join('\n');
   return {
@@ -370,6 +626,11 @@ function projectTargets(input: PlanInput): Target[] {
       tools,
       projectDir: project.dir,
       instructionsPath,
+    }),
+    ...projectMcpTargets({
+      tools,
+      servers: selectedMcpServers(input),
+      projectDir: project.dir,
     }),
     ...projectSkillTargets(input, project),
   ];
@@ -411,5 +672,32 @@ export function skillFolders({
     links: tools.flatMap((tool) =>
       tool.project.skills ? [join(project.dir, tool.project.skills)] : [],
     ),
+  };
+}
+
+export function mcpConfigPaths({
+  scope,
+  paths,
+  project,
+}: Pick<PlanInput, 'scope' | 'paths' | 'project'>): McpConfigPaths | null {
+  if (scope === 'global') {
+    return {
+      json: [
+        join(paths.geminiHome, 'config', 'mcp_config.json'),
+        join(paths.home, '.claude.json'),
+        join(paths.geminiHome, 'settings.json'),
+        join(paths.copilotHome, 'mcp-config.json'),
+      ],
+      toml: [join(paths.codexHome, 'config.toml')],
+    };
+  }
+  if (!project) return null;
+  return {
+    json: [
+      join(project.dir, '.agents', 'mcp_config.json'),
+      join(project.dir, '.mcp.json'),
+      join(project.dir, '.gemini', 'settings.json'),
+    ],
+    toml: [join(project.dir, '.codex', 'config.toml')],
   };
 }

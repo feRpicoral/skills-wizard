@@ -87,7 +87,26 @@ async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
   const skills = plan.manifest.skills.filter((name) =>
     recordedSkills.has(name),
   );
-  const manifest = { ...plan.manifest, skills, entries };
+  const skippedMcp = plan.actions.some(
+    (action) =>
+      !applied.has(action) &&
+      (action.entry?.kind === 'mcp-json' ||
+        action.entry?.kind === 'mcp-toml' ||
+        action.previous?.kind === 'mcp-json' ||
+        action.previous?.kind === 'mcp-toml' ||
+        action.label.endsWith('MCP servers')),
+  );
+  const recordedMcp = new Set(
+    entries.flatMap((entry) =>
+      entry.kind === 'mcp-json' || entry.kind === 'mcp-toml'
+        ? entry.servers
+        : [],
+    ),
+  );
+  const mcp = skippedMcp
+    ? plan.manifest.mcp.filter((name) => recordedMcp.has(name))
+    : plan.manifest.mcp;
+  const manifest = { ...plan.manifest, skills, mcp, entries };
   const existing = await readTextIfExists(plan.manifestPath);
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
     await writeManifest({

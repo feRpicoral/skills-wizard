@@ -1,6 +1,7 @@
 import { requiredVariables, selectBlocks } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import {
+  checkMcpEntries,
   checkSkillEntries,
   type Manifest,
   MANIFEST_VERSION,
@@ -22,6 +23,8 @@ import { planSkill, planSymlink } from './skill-actions.ts';
 import { stageAction, type StagedContents } from './staged.ts';
 import {
   keyOf,
+  mcpConfigPaths,
+  mcpWarningsForPlan,
   type PlanInput,
   type ProjectContext,
   type Selection,
@@ -40,6 +43,7 @@ export interface Plan {
   manifestPath: string;
   manifestStatus: ManifestStatus;
   projectDir?: string;
+  warnings?: string[];
 }
 
 interface DispatchTargetParams {
@@ -48,6 +52,7 @@ interface DispatchTargetParams {
   scope: Scope;
   staged: StagedContents;
   boundary?: string;
+  pathCreated?: boolean;
 }
 
 function dispatchTarget({
@@ -56,6 +61,7 @@ function dispatchTarget({
   scope,
   staged,
   boundary,
+  pathCreated,
 }: DispatchTargetParams): Promise<PlannedAction> {
   const location = boundary ? { boundary } : {};
   switch (target.kind) {
@@ -64,7 +70,13 @@ function dispatchTarget({
     case 'skill':
       return planSkill({ target, previous, scope, ...location });
     default:
-      return planFile({ target, previous, staged, ...location });
+      return planFile({
+        target,
+        previous,
+        staged,
+        ...location,
+        ...(pathCreated !== undefined ? { pathCreated } : {}),
+      });
   }
 }
 
@@ -120,6 +132,11 @@ async function planTargetActions({
   const actions: PlannedAction[] = [];
   const plannedKeys = new Set<string>();
   const blockedSkills = new Set<string>();
+  const createdPaths = new Set(
+    [...previousEntries.values()].flatMap((entry) =>
+      'createdFile' in entry && entry.createdFile ? [entry.path] : [],
+    ),
+  );
   for (const target of targets) {
     const key = keyOf(target);
     plannedKeys.add(key);
@@ -146,6 +163,7 @@ async function planTargetActions({
           scope,
           staged,
           ...(boundary ? { boundary } : {}),
+          pathCreated: createdPaths.has(target.path),
         }),
     });
     if (target.kind === 'skill' && action.status === 'conflict') {
@@ -213,6 +231,7 @@ function composeManifestMetadata({
     tools: [...selection.tools],
     blocks: blocks.map((block) => block.id),
     skills: [...selection.skills],
+    mcp: [...(selection.mcp ?? [])],
     variables,
     options:
       scope === 'global'
@@ -283,7 +302,16 @@ export async function buildPlan({
       scope,
     });
   }
+  const mcpPaths = mcpConfigPaths(input);
+  if (previous && mcpPaths) {
+    checkMcpEntries({
+      file: manifestPath,
+      entries: previous.entries,
+      mcpPaths,
+    });
+  }
 
+  const warnings = mcpWarningsForPlan(input);
   const previousEntries = new Map(
     (previous?.entries ?? []).map((entry) => [keyOf(entry), entry]),
   );
@@ -321,5 +349,6 @@ export async function buildPlan({
     manifestPath,
     manifestStatus,
     ...(project ? { projectDir: project.dir } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

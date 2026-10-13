@@ -1,6 +1,7 @@
 import { basename, dirname, resolve } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
+import { ensureMcpJsonServers, upsertMcpTomlServers } from '../mcp/install.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import {
   lstatIfExists,
@@ -32,6 +33,8 @@ import type {
   FileTarget,
   JsonArrayTarget,
   LineTarget,
+  McpJsonTarget,
+  McpTomlTarget,
   RegionTarget,
 } from './targets.ts';
 
@@ -73,11 +76,19 @@ function writeAction({
   };
 }
 
-function wasCreated(
-  existing: string | null,
-  previous: ManifestEntry | null,
-): boolean {
+interface WasCreatedParams {
+  existing: string | null;
+  previous: ManifestEntry | null;
+  pathCreated?: boolean;
+}
+
+function wasCreated({
+  existing,
+  previous,
+  pathCreated,
+}: WasCreatedParams): boolean {
   if (existing === null) return true;
+  if (pathCreated) return true;
   return previous !== null && 'createdFile' in previous
     ? previous.createdFile
     : false;
@@ -265,11 +276,84 @@ function planJsonArray({
   }
 }
 
+function planMcpJson({
+  target,
+  file,
+  previous,
+}: FileActionParams<McpJsonTarget>): PlannedAction {
+  try {
+    const earlier = previous?.kind === 'mcp-json' ? previous : null;
+    const result = ensureMcpJsonServers({
+      existing: file.existing,
+      servers: target.servers,
+      ownedServers: earlier?.servers ?? [],
+    });
+    const createdMcpServers =
+      Boolean(earlier?.createdMcpServers) || result.createdMcpServers;
+    const original = earlier ? earlier.original : result.original;
+    const wasEmpty = earlier ? earlier.wasEmpty : result.wasEmpty;
+    const blankText = earlier ? earlier.blankText : result.blankText;
+    return writeAction({
+      target,
+      file,
+      next: result.content,
+      entry: {
+        kind: 'mcp-json',
+        path: target.path,
+        servers: result.servers,
+        ...(createdMcpServers ? { createdMcpServers: true } : {}),
+        ...(original !== undefined ? { original } : {}),
+        ...(wasEmpty ? { wasEmpty: true } : {}),
+        ...(blankText !== undefined ? { blankText } : {}),
+        createdFile: file.createdFile,
+      },
+      previous,
+    });
+  } catch (error) {
+    if (error instanceof JsonMergeError) {
+      return conflict({ target, previous, reason: error.message });
+    }
+    throw error;
+  }
+}
+
+function planMcpToml({
+  target,
+  file,
+  previous,
+}: FileActionParams<McpTomlTarget>): PlannedAction {
+  try {
+    const next = upsertMcpTomlServers({
+      existing: file.existing,
+      body: target.body,
+      serverNames: target.serverNames,
+    });
+    return writeAction({
+      target,
+      file,
+      next,
+      entry: {
+        kind: 'mcp-toml',
+        path: target.path,
+        servers: [...target.serverNames],
+        createdFile: file.createdFile,
+      },
+      previous,
+    });
+  } catch (error) {
+    if (error instanceof ManagedRegionError) {
+      return conflict({ target, previous, reason: error.message });
+    }
+    throw error;
+  }
+}
+
 export interface PlanFileParams {
   target: FileTarget;
   previous: ManifestEntry | null;
   staged: StagedContents;
   boundary?: string;
+  pathCreated?: boolean;
 }
 
 async function resolveTargetFile({
@@ -277,6 +361,7 @@ async function resolveTargetFile({
   previous,
   staged,
   boundary,
+  pathCreated,
 }: PlanFileParams): Promise<PlannedAction | ResolvedTargetFile> {
   let writePath = target.path;
   const stats = await lstatIfExists(target.path);
@@ -310,7 +395,13 @@ async function resolveTargetFile({
   return {
     writePath,
     existing: current,
-    createdFile: writePath === target.path && wasCreated(onDisk, previous),
+    createdFile:
+      writePath === target.path &&
+      wasCreated({
+        existing: onDisk,
+        previous,
+        ...(pathCreated !== undefined ? { pathCreated } : {}),
+      }),
   };
 }
 
@@ -406,5 +497,9 @@ export async function planFile({
       return planLine({ target, file: resolved, previous });
     case 'json-array':
       return planJsonArray({ target, file: resolved, previous });
+    case 'mcp-json':
+      return planMcpJson({ target, file: resolved, previous });
+    case 'mcp-toml':
+      return planMcpToml({ target, file: resolved, previous });
   }
 }
