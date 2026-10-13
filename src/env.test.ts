@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 
 import { gitEnvironment, resolveAgyConfig, resolvePaths } from './env.ts';
 import { EnvironmentError } from './errors.ts';
+import { tempDir } from './test-support/fixtures.ts';
+import { isolatedGitEnv } from './test-support/git.ts';
+
+const run = promisify(execFile);
 
 test('resolvePaths honors tool home overrides', () => {
   const paths = resolvePaths({
@@ -90,4 +96,68 @@ test('resolveAgyConfig rejects invalid AGY_EXTRA_ARGS JSON or non-string arrays'
     () => resolveAgyConfig({ AGY_EXTRA_ARGS: '[123]' }),
     EnvironmentError,
   );
+});
+
+test('gitEnvironment drops variables that point git at another repository', () => {
+  const env = gitEnvironment({
+    PATH: '/bin',
+    GIT_DIR: '/work/app/.git',
+    GIT_WORK_TREE: '/work/app',
+    GIT_INDEX_FILE: '/work/app/.git/index',
+    GIT_OBJECT_DIRECTORY: '/work/app/.git/objects',
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: '/work/other/.git/objects',
+    GIT_COMMON_DIR: '/work/app/.git',
+    GIT_NAMESPACE: 'ns',
+    GIT_PREFIX: 'src/',
+    GIT_CONFIG_NOSYSTEM: '1',
+  });
+
+  assert.deepEqual(env, {
+    PATH: '/bin',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+  });
+});
+
+test('gitEnvironment drops repository config, grafts, replacements and shallow files', () => {
+  const env = gitEnvironment({
+    PATH: '/bin',
+    GIT_CONFIG: '/work/app/.git/config',
+    GIT_CONFIG_PARAMETERS: "'core.hooksPath'='/tmp/hooks'",
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.fsmonitor',
+    GIT_CONFIG_VALUE_0: '/tmp/run.sh',
+    GIT_GRAFT_FILE: '/work/app/.git/info/grafts',
+    GIT_IMPLICIT_WORK_TREE: '0',
+    GIT_NO_REPLACE_OBJECTS: '1',
+    GIT_REPLACE_REF_BASE: 'refs/other/',
+    GIT_SHALLOW_FILE: '/work/app/.git/shallow',
+    GIT_CONFIG_GLOBAL: '/home/me/.gitconfig',
+    GIT_CONFIG_SYSTEM: '/etc/gitconfig',
+    GIT_SSH_COMMAND: 'ssh -i key',
+  });
+
+  assert.deepEqual(env, {
+    PATH: '/bin',
+    GIT_CONFIG_GLOBAL: '/home/me/.gitconfig',
+    GIT_CONFIG_SYSTEM: '/etc/gitconfig',
+    GIT_SSH_COMMAND: 'ssh -i key',
+    GIT_TERMINAL_PROMPT: '0',
+  });
+});
+
+test('gitEnvironment drops every variable git lists as local to a repository', async (t) => {
+  const home = await tempDir(t);
+  const { stdout } = await run('git', ['rev-parse', '--local-env-vars'], {
+    cwd: home,
+    env: isolatedGitEnv(home),
+  });
+  const names = stdout.split('\n').filter(Boolean);
+
+  const env = gitEnvironment(
+    Object.fromEntries(names.map((name) => [name, 'set'])),
+  );
+
+  assert.ok(names.includes('GIT_DIR'));
+  assert.deepEqual(env, { GIT_TERMINAL_PROMPT: '0' });
 });

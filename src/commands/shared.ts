@@ -29,12 +29,14 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
+import { skillFolders } from '../install/targets.ts';
 import { confirmApply } from '../prompts/selection.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
 import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import { readSkillLock, skillLockPath } from '../skills/lock.ts';
 import type { SourceCache } from '../skills/sources.ts';
 import {
+  checkSkillEntries,
   globalManifestPath,
   type Manifest,
   projectManifestPath,
@@ -152,6 +154,30 @@ export async function resolveLocation({
 }
 
 export async function readLocationManifest(
+  ctx: Context,
+  prompting: boolean,
+  location: Location,
+): Promise<Manifest | null> {
+  const manifest = await readRecordedManifest(ctx, prompting, location);
+  const folders = manifest
+    ? skillFolders({
+        scope: location.scope,
+        paths: ctx.paths,
+        ...(location.project ? { project: location.project } : {}),
+      })
+    : null;
+  if (manifest && folders) {
+    checkSkillEntries({
+      file: location.manifestPath,
+      entries: manifest.entries,
+      folders,
+      scope: location.scope,
+    });
+  }
+  return manifest;
+}
+
+async function readRecordedManifest(
   ctx: Context,
   prompting: boolean,
   { manifestPath, project }: Location,
@@ -326,6 +352,7 @@ export async function warnTrackedFiles({
 export interface ConfirmOptions {
   yes: boolean;
   dryRun: boolean;
+  beforeApply?: () => Promise<void>;
 }
 
 async function trackProject(
@@ -356,7 +383,7 @@ async function trackProject(
 export async function confirmAndApply(
   ctx: Context,
   plan: Plan,
-  { yes, dryRun }: ConfirmOptions,
+  { yes, dryRun, beforeApply }: ConfirmOptions,
 ): Promise<{ code: number; applied: boolean }> {
   const prompting = ctx.interactive && !yes;
   const lines = describePlan(plan, ctx.paths.home);
@@ -386,6 +413,7 @@ export async function confirmAndApply(
     return { code: 1, applied: false };
   }
 
+  await beforeApply?.();
   const outcome = await applyPlan(plan);
   await trackProject(ctx, prompting, plan);
   const changed = outcome.applied.filter(
