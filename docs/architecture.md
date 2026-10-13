@@ -42,8 +42,8 @@ The system-wide file is the global header plus the selected blocks joined by bla
 
 When initializing a project (`agents-config init --project <dir>`), `detectProject` (`src/project/detect.ts`) inspects regular files inside the project boundary (`package.json`, `nx.json`, `pyproject.toml`, `.nvmrc`, `prisma/schema.prisma`, `prisma.config.ts`, `supabase/config.toml`, `components.json`, lockfiles and workspace packages under `apps/*`, `packages/*`, `libs/*`) to:
 
-1. Select a matching preset (or union workspace sub-app/lib stacks for `nx-monorepo`) and additive blocks/skills (`stack/prisma`, `stack/supabase-prisma`, `supabase-prisma`, `stack/llm-apps`, `ai-sdk`, `claude-api`, `playwright-cli`).
-2. Resolve the block selection in either `lean` style (default: only `stack/*` blocks, assuming global `AGENTS.md` is installed) or `self-contained` style (global-default project-scoped blocks plus `stack/*` blocks).
+1. Select a matching preset (or union workspace sub-app/lib stacks for `nx-monorepo`) and additive blocks/skills (`stack/prisma` + `prisma-*`, `stack/supabase-prisma` + `supabase-prisma`/`supabase`/`supabase-postgres-best-practices`, `stack/tanstack-query` + `tanstack-query-expert`, `stack/tailwind-shadcn` + `tailwind-patterns`, `stack/llm-apps` + `ai-sdk`/`claude-api`, `playwright-cli`).
+2. Resolve the block selection in either `lean` style (default when a system-wide install exists: only `stack/*` blocks, assuming global `AGENTS.md` is installed) or `self-contained` style (default when no system-wide install exists: project-default core, engineering and git blocks plus `stack/*` blocks).
 3. Synthesize the initial project seed preamble (`src/project/seed.ts`) with `# <name>`, description, `## Commands` and `## Workspaces` (falling back to `# <name>` when no scripts or workspaces exist).
 
 ## Skills and the source cache

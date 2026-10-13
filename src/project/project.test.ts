@@ -90,19 +90,19 @@ test('resolvePresetSelection returns only stack blocks in lean style and include
     'stack/node-yarn',
     'stack/lint-format',
     'stack/nestjs',
-    'stack/prisma',
     'stack/supabase-prisma',
   ]);
   assert.deepEqual(lean.skills, [
-    'nestjs-module',
     'eslint-configuration',
     'prettier-configuration',
+    'nestjs-module',
     'supabase-prisma',
   ]);
   assert.equal(selfContained.blocks.includes('engineering/testing'), true);
   assert.equal(selfContained.blocks.includes('git/commits'), true);
   assert.equal(selfContained.blocks.includes('stack/nestjs'), true);
   assert.equal(selfContained.blocks.includes('core/identity'), false);
+  assert.equal(selfContained.blocks.includes('tooling/mermaid'), false);
 });
 
 test('detectProject identifies nextjs-app, nestjs-api, expo-app, vite-spa, python-service, and node-tool', async (t) => {
@@ -212,7 +212,28 @@ test('detectProject unions workspace stacks in nx-monorepo and detects additive 
   );
   assert.equal(detection.detectedBlocks.includes('stack/llm-apps'), true);
   assert.equal(detection.detectedSkills.includes('nestjs-module'), true);
+  assert.equal(detection.detectedSkills.includes('prisma-cli'), true);
+  assert.equal(detection.detectedSkills.includes('prisma-client-api'), true);
+  assert.equal(detection.detectedSkills.includes('prisma-orm-setup'), true);
+  assert.equal(detection.detectedSkills.includes('prisma-upgrade-v7'), true);
   assert.equal(detection.detectedSkills.includes('supabase-prisma'), true);
+  assert.equal(detection.detectedSkills.includes('supabase'), true);
+  assert.equal(
+    detection.detectedSkills.includes('supabase-postgres-best-practices'),
+    true,
+  );
+  assert.equal(
+    detection.detectedSkills.includes('tanstack-query-expert'),
+    true,
+  );
+  assert.equal(
+    detection.detectedSkills.includes('vercel-composition-patterns'),
+    true,
+  );
+  assert.equal(
+    detection.detectedSkills.includes('web-design-guidelines'),
+    true,
+  );
   assert.equal(detection.detectedSkills.includes('ai-sdk'), true);
   assert.equal(detection.detectedSkills.includes('claude-api'), true);
   assert.equal(detection.detectedSkills.includes('playwright-cli'), true);

@@ -9,8 +9,7 @@ blocks:
   - stack/tailwind-shadcn
   - stack/tanstack-query
 skills:
-  - vercel-react-best-practices
-  - shadcn
-  - frontend-design
   - eslint-configuration
   - prettier-configuration
+  - vercel-react-best-practices
+  - web-design-guidelines

@@ -190,7 +190,7 @@ export function resolvePresetSelection({
   if (style === 'self-contained') {
     for (const block of blockLibrary.blocks) {
       if (
-        block.defaults.includes('global') &&
+        block.defaults.includes('project') &&
         block.scopes.includes('project')
       ) {
         wantedBlocks.add(block.id);
