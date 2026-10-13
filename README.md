@@ -19,19 +19,19 @@ Without a terminal, commands print the plan and only write when you pass `--yes`
 
 ## Commands
 
-| Command                                   | What it does                                                                                   |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `agents-config init --global`             | Install instructions and skills for the selected tools                                         |
-| `agents-config init --project <dir>`      | Write a project `AGENTS.md`, project skills, `CLAUDE.md` and Gemini CLI settings               |
-| `agents-config sync [--project <dir>]`    | Re-render everything recorded in the manifest                                                  |
-| `agents-config update`                    | Fetch upstream skill updates, show changed files and risk flags, and refresh recorded installs |
-| `agents-config adopt [skill...]`          | Back up and take over existing unmanaged skills (after `init --global`)                        |
-| `agents-config doctor [--project <dir>]`  | Report drift, conflicts, skill name clashes and tool-specific problems                         |
-| `agents-config skill validate [path...]`  | Validate skill directories against the Agent Skills spec (`--catalog` checks `catalog.yaml`)   |
-| `agents-config skill new <name>`          | Scaffold a first-party skill in `skills/<name>` (`--template`, `--with-evals`)                 |
-| `agents-config skill eval <name>`         | Benchmark a skill (`with_skill` vs `without_skill` baseline and optional `--compare <ref>`)    |
-| `agents-config skill triggers <name>`     | Measure trigger precision, recall and false positive rate on `evals/trigger_queries.json`      |
-| `agents-config skill report <name> [dir]` | Regenerate `report.md` from an existing evaluation iteration directory                         |
+| Command                                             | What it does                                                                                                           |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `agents-config init --global`                       | Install instructions and skills for the selected tools                                                                 |
+| `agents-config init --project <dir>`                | Write a project `AGENTS.md`, project skills, `CLAUDE.md` and Gemini CLI settings                                       |
+| `agents-config sync [--project <dir>]`              | Re-render everything recorded in the manifest                                                                          |
+| `agents-config update`                              | Fetch upstream skill updates, show changed files and risk flags, and refresh recorded installs                         |
+| `agents-config adopt [skill...]`                    | Back up and take over existing unmanaged skills (after `init --global`)                                                |
+| `agents-config doctor [--project <dir>]`            | Report drift, conflicts, skill name clashes and tool-specific problems                                                 |
+| `agents-config skill validate [path...]`            | Validate skill directories against the Agent Skills spec (`--catalog` checks `catalog.yaml`)                           |
+| `agents-config skill new <name>`                    | Scaffold a first-party skill in `skills/<name>` (`--template`, `--with-evals`)                                         |
+| `agents-config skill eval <name>`                   | Benchmark a skill (`with_skill` vs the `without_skill` baseline or `--baseline <ref>`, and optional `--compare <ref>`) |
+| `agents-config skill triggers <name>`               | Measure trigger precision, recall and false positive rate on `evals/trigger_queries.json`                              |
+| `agents-config skill report <name> [iteration-dir]` | Regenerate `report.md` for the latest iteration, a named one (`iteration-<N>`) or a run directory                      |
 
 Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
 
@@ -66,5 +66,5 @@ flowchart LR
 ## Adding and evaluating a skill
 
 - **First-party skill:** scaffold `skills/<name>` with `yarn agents-config skill new <name> --with-evals` (or use the `skill-author` skill), author `SKILL.md` with spec-compliant frontmatter (`name` matching `<name>` and `description` stating when to use the skill), and run `yarn agents-config skill validate skills/<name>`.
-- **Benchmarking and triggers:** define test cases in `skills/<name>/evals/evals.json` and trigger queries in `skills/<name>/evals/trigger_queries.json`, then run `yarn agents-config skill eval <name>` and `yarn agents-config skill triggers <name>` (or use the `skill-evaluator` skill). Reports and `benchmark.json` artifacts are written to `~/.agents/agents-config/evals/<name>/`.
+- **Benchmarking and triggers:** define test cases in `skills/<name>/evals/evals.json` and trigger queries in `skills/<name>/evals/trigger_queries.json`, then run `yarn agents-config skill eval <name>` and `yarn agents-config skill triggers <name>` (or use the `skill-evaluator` skill). Reports and `benchmark.json` artifacts are written to `~/.agents/agents-config/evals/<name>/`. Eval runs start the real agent CLIs with your home directory, settings and credentials, and they are not confined: `--sandbox` reaches only runners that support it (the CLI warns otherwise), so review eval prompts and fixtures before running them, or dry-run a suite with `--runner fake`. [docs/tools.md](docs/tools.md#skill-evaluation) lists the runner settings.
 - **Third-party skill:** add an entry to `catalog.yaml` (`name`, `repo`, `path`, `category`, `scopes`, optional `ref` (a branch, tag or full commit SHA), `defaults`, `setup`, `note`) and run `yarn agents-config skill validate --catalog`.

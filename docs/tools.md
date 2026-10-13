@@ -17,6 +17,17 @@ Gemini CLI also reads `~/.gemini/skills/` and Copilot also reads `$COPILOT_HOME/
 
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` and `XDG_CACHE_HOME` must be absolute paths when set. `GEMINI_CLI_HOME` is not supported: the shared file always lives in `~/.gemini`, because Antigravity reads it from there.
 
+## Skill evaluation
+
+`agents-config skill eval` and `skill triggers` drive one agent CLI per run (`--runner agy|claude|codex|gemini`, auto-detected on `PATH` in that order, or `fake` for a dry run that calls no agent). `--binary <path>` overrides the runner's executable.
+
+| Variable         | Used by     | Meaning                                                                                                                          |
+| ---------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `AGY_BIN`        | `agy` evals | Absolute path to the `agy` binary. When it names an existing file, auto-detection picks `agy`. `--binary` wins over it.          |
+| `AGY_EXTRA_ARGS` | `agy` evals | JSON array of strings appended to every `agy` task and grader invocation, for example `["--model=…"]`. Read only for `agy` runs. |
+
+Eval runs use your real home directory, so each agent CLI reads its usual settings, credentials and system-wide skills. They are not confined to the temporary workspace: `--sandbox` is passed only to runners that support it, and the CLI prints a warning when the selected runner cannot honor it.
+
 ## Sources
 
 - [AGENTS.md](https://agents.md)
