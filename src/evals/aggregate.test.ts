@@ -217,7 +217,9 @@ test('aggregateBenchmark and renderBenchmarkReport classify non-discriminating, 
   assert.match(markdown, /possibly contaminated/);
   assert.match(markdown, /Non-Discriminating Assertions/);
   assert.match(markdown, /Assertion Analysis/);
-  assert.match(markdown, /Flaky \(1\)/);
+  assert.match(markdown, /Flaky \(vs baseline\) \(1\)/);
+  assert.match(markdown, /- \*\*`with_skill` status:\*\* clean/);
+  assert.equal(benchmark.metadata.with_skill_contaminated, false);
   assert.equal(markdown.includes('—'), false);
 });
 
@@ -492,14 +494,14 @@ test('aggregateBenchmark classifies against without_skill and old_skill separate
     markdown,
     /Regressing \(vs baseline\) \(1\):\*\* `case-1: Assertion 2`/,
   );
-  assert.match(markdown, /Regressing \(vs old_skill\) \(1\)/);
+  assert.match(markdown, /Regressing \(vs `old_skill`\) \(1\)/);
   assert.match(
     markdown,
     /\| \*\*Delta \(vs old_skill\)\*\* \| \*\*-50\.0 pp\*\* \|/,
   );
   assert.match(
     markdown,
-    /\| Assertion \| Kind \| `with_skill` \| `without_skill` \| `old_skill` \| Classification \| vs `old_skill` \|/,
+    /\| Assertion \| Kind \| `with_skill` \| `without_skill` \| `old_skill` \| Classification \(vs baseline\) \| Classification \(vs `old_skill`\) \|/,
   );
 });
 
@@ -701,4 +703,65 @@ test('aggregateTriggerRuns leaves failed runs out of trigger rates and metrics',
     /\| \*\*ERROR\*\* \| `no-trigger` \| 0\/0 \(n\/a, 2 failed\) \| broken \|/,
   );
   assert.match(markdown, /Queries with only failed runs \(excluded\) \| 1\/2/);
+});
+
+test('old-ref-only reports label old_skill as the reference', () => {
+  const benchmark = aggregateBenchmark({
+    ...baseParams,
+    baselineEnabled: false,
+    compareRef: 'v1',
+    runs: [
+      makeRun({ variant: 'with_skill', passed: [true, true] }),
+      makeRun({ variant: 'old_skill', passed: [false, true] }),
+    ],
+  });
+  const markdown = renderBenchmarkReport(benchmark);
+
+  assert.match(
+    markdown,
+    /These assertions passed 100% in both `with_skill` and `old_skill` runs:/,
+  );
+  assert.match(
+    markdown,
+    /- \*\*Pass only with skill \(vs `old_skill`\) \(1\):\*\* `case-1: Assertion 1`/,
+  );
+  assert.match(markdown, /- \*\*Pass in both \(vs `old_skill`\) \(1\):\*\*/);
+  assert.equal(markdown.includes('baseline runs'), false);
+  assert.equal(markdown.includes('(vs baseline)'), false);
+  assert.ok(
+    markdown
+      .split('\n')
+      .includes(
+        '| Assertion | Kind | `with_skill` | `old_skill` | Classification (vs `old_skill`) |',
+      ),
+  );
+  assert.ok(
+    markdown
+      .split('\n')
+      .includes(
+        '| Assertion 1 | `string` | 100.0% | 0.0% | `differentiating` |',
+      ),
+  );
+});
+
+test('with_skill shadowing is reported apart from the baseline status', () => {
+  const benchmark = aggregateBenchmark({
+    ...baseParams,
+    baselineEnabled: true,
+    possiblyContaminated: false,
+    withSkillContaminated: true,
+    runs: [
+      makeRun({ variant: 'with_skill', passed: [true, true] }),
+      makeRun({ variant: 'without_skill', passed: [false, true] }),
+    ],
+  });
+  const markdown = renderBenchmarkReport(benchmark);
+
+  assert.equal(benchmark.metadata.baseline_status, 'clean');
+  assert.equal(benchmark.metadata.with_skill_contaminated, true);
+  assert.match(markdown, /- \*\*Baseline status:\*\* clean/);
+  assert.match(
+    markdown,
+    /- \*\*`with_skill` status:\*\* possibly contaminated/,
+  );
 });

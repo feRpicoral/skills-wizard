@@ -114,7 +114,7 @@ test('renderBenchmarkReport keeps tables and lists intact for hostile text', () 
   );
   assert.ok(
     lines.includes(
-      '- **Pass only with skill (1):** `` case-1: Output has a | pipe and a `tick` ``',
+      '- **Pass only with skill (vs baseline) (1):** `` case-1: Output has a | pipe and a `tick` ``',
     ),
   );
   assert.ok(

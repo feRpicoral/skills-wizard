@@ -105,7 +105,13 @@ export interface BenchmarkMetadata {
   timestamp: string;
   runs_per_configuration: number;
   compare_ref?: string;
+  /** Status of the `without_skill` runs only. */
   baseline_status: BaselineStatus;
+  /**
+   * True when `with_skill` or `old_skill` runs may have loaded another copy of
+   * the skill (such as a personal Claude skill) instead of the staged one.
+   */
+  with_skill_contaminated: boolean;
   warnings: string[];
 }
 
@@ -362,7 +368,10 @@ export interface AggregateBenchmarkParams {
   cases: readonly EvalCase[];
   runs: readonly EvalRunRecord[];
   baselineEnabled: boolean;
+  /** From `without_skill` workspaces only (`PreparedWorkspace.possiblyContaminated`). */
   possiblyContaminated?: boolean;
+  /** From `with_skill`/`old_skill` workspaces (`PreparedWorkspace.skillShadowed`). */
+  withSkillContaminated?: boolean;
   compareRef?: string;
   warnings?: readonly string[];
   timestamp?: string;
@@ -377,6 +386,7 @@ export function aggregateBenchmark({
   runs,
   baselineEnabled,
   possiblyContaminated = false,
+  withSkillContaminated = false,
   compareRef,
   warnings = [],
   timestamp = new Date().toISOString(),
@@ -463,6 +473,7 @@ export function aggregateBenchmark({
       runs_per_configuration: runsPerConfig,
       ...(compareRef ? { compare_ref: compareRef } : {}),
       baseline_status: baselineStatus,
+      with_skill_contaminated: withSkillContaminated,
       warnings: [...warnings],
     },
     run_summary: {
@@ -691,6 +702,7 @@ const benchmarkSummarySchema = z.looseObject({
     runs_per_configuration: z.number().int(),
     compare_ref: z.string().optional(),
     baseline_status: z.enum(['clean', 'possibly contaminated', 'skipped']),
+    with_skill_contaminated: z.boolean().default(false),
     warnings: z.array(z.string()),
   }),
   run_summary: z.looseObject({
