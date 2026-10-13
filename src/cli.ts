@@ -6,6 +6,7 @@ import { parseArgs, styleText } from 'node:util';
 import * as clack from '@clack/prompts';
 
 import type { Scope } from './blocks/library.ts';
+import { runAdd } from './commands/add.ts';
 import { runAdopt } from './commands/adopt.ts';
 import { runDoctor } from './commands/doctor.ts';
 import { runInit } from './commands/init.ts';
@@ -28,6 +29,12 @@ import {
   PROJECT_STYLES,
   type ProjectStyle,
 } from './project/presets.ts';
+import { isGitRef } from './skills/catalog.ts';
+import {
+  DISCOVER_SOURCES,
+  type DiscoverSource,
+  isDiscoverSource,
+} from './skills/discover.ts';
 import { SKILL_MODES, type SkillMode } from './skills/install.ts';
 import { isToolId, TOOL_IDS, type ToolId } from './tools/registry.ts';
 
@@ -37,6 +44,7 @@ const HELP = `Usage: agents-config [command] [options]
 
 Commands:
   init                      Install instructions and skills system-wide or into a project
+  add [query|url]           Search or resolve a third-party skill and add it to catalog.yaml
   sync                      Re-apply everything recorded in a manifest
   update                    Fetch skill updates, show changes and risk flags, and refresh installs
   adopt [skill...]          Take over existing unmanaged skills after backing them up
@@ -62,6 +70,11 @@ Options:
   --preset <id>         Project preset: ${PRESET_IDS.join(', ')}
   --style <mode>        Project instructions style: lean (default with a system-wide install)
                         or self-contained
+  --source <kind>       add: search source (${DISCOVER_SOURCES.join(', ')}; default: all)
+  --category <name>     add: catalog category (and filter for awesome index search)
+  --ref <ref>           add: pin repository branch, tag, or commit SHA
+  --include-offensive   add: include offensive security skills in awesome index search
+  --install             add: also install the skill after adding it to catalog.yaml
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -99,6 +112,11 @@ const OPTIONS = {
   'skill-mode': { type: 'string' },
   preset: { type: 'string' },
   style: { type: 'string' },
+  source: { type: 'string' },
+  category: { type: 'string' },
+  ref: { type: 'string' },
+  'include-offensive': { type: 'boolean' },
+  install: { type: 'boolean' },
   catalog: { type: 'boolean' },
   template: { type: 'string' },
   'with-evals': { type: 'boolean' },
@@ -134,6 +152,7 @@ const STRING_OPTIONS = new Set<string>(
 
 const COMMANDS = [
   'init',
+  'add',
   'sync',
   'update',
   'adopt',
@@ -156,6 +175,18 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'var',
     'link-command',
     'local',
+    'yes',
+    'dry-run',
+  ],
+  add: [
+    'source',
+    'category',
+    'ref',
+    'include-offensive',
+    'install',
+    'global',
+    'project',
+    'tools',
     'yes',
     'dry-run',
   ],
@@ -382,6 +413,37 @@ function parseProjectStyle(
   return value;
 }
 
+function parseDiscoverSource(
+  value: string | undefined,
+): DiscoverSource | undefined {
+  if (value === undefined) return undefined;
+  if (!isDiscoverSource(value)) {
+    throw new UsageError(
+      `--source must be one of ${DISCOVER_SOURCES.join(', ')}, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+function parseRefFlag(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isGitRef(value)) {
+    throw new UsageError(
+      `--ref must be a valid branch, tag or commit SHA, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+function parseCategoryFlag(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    throw new UsageError('--category must not be empty');
+  }
+  return trimmed;
+}
+
 function parseVariables(values: string[] | undefined): Record<string, string> {
   const variables: Record<string, string> = {};
   for (const entry of values ?? []) {
@@ -528,7 +590,12 @@ async function main(argv: string[]): Promise<number> {
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
   }
-  if (command !== 'adopt' && command !== 'skill' && positionals.length > 1) {
+  if (
+    command !== 'add' &&
+    command !== 'adopt' &&
+    command !== 'skill' &&
+    positionals.length > 1
+  ) {
     throw new UsageError(
       `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
     );
@@ -581,6 +648,29 @@ async function main(argv: string[]): Promise<number> {
           ? { linkCommand: values['link-command'] }
           : {}),
         ...(values.local !== undefined ? { keepLocal: values.local } : {}),
+      });
+    }
+    case 'add': {
+      if (terminal && !yes) clack.intro('agents-config');
+      const tools = parseTools(values.tools);
+      const source = parseDiscoverSource(values.source);
+      const category = parseCategoryFlag(values.category);
+      const ref = parseRefFlag(values.ref);
+      const target = positionals.slice(1).join(' ').trim();
+      return runAdd(ctx, {
+        ...(target ? { target } : {}),
+        ...(source ? { source } : {}),
+        ...(category ? { category } : {}),
+        ...(ref ? { ref } : {}),
+        ...(values['include-offensive'] !== undefined
+          ? { includeOffensive: values['include-offensive'] }
+          : {}),
+        ...(values.install !== undefined ? { install: values.install } : {}),
+        ...(scope ? { scope } : {}),
+        ...projectDir,
+        ...(tools ? { tools } : {}),
+        yes,
+        dryRun,
       });
     }
     case 'sync':

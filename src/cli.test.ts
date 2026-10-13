@@ -1119,3 +1119,33 @@ test('re-running init with --style or --preset preserves recorded stack blocks a
   assert.equal(sync.code, 0);
   assert.match(sync.stdout, /Preset "retired-preset" is no longer recognized/);
 });
+
+test('add rejects invalid --source, --ref, --category, and disallowed flags', async (t) => {
+  const { cli } = await sandbox(t);
+
+  const [badSource, badRef, emptyCategory, badFlag, missingTarget] =
+    await Promise.all([
+      cli(['add', 'react', '--source', 'npm']),
+      cli(['add', 'owner/repo', '--ref=-bad-ref']),
+      cli(['add', 'owner/repo', '--category', '   ']),
+      cli(['add', 'owner/repo', '--preset', 'node-tool']),
+      cli(['add', '--yes']),
+    ]);
+
+  assert.equal(badSource.code, 2);
+  assert.match(
+    badSource.stderr,
+    /--source must be one of skills-sh, awesome, all/,
+  );
+  assert.equal(badRef.code, 2);
+  assert.match(badRef.stderr, /--ref must be a valid branch, tag or commit/);
+  assert.equal(emptyCategory.code, 2);
+  assert.match(emptyCategory.stderr, /--category must not be empty/);
+  assert.equal(badFlag.code, 2);
+  assert.match(badFlag.stderr, /--preset does not apply to add/);
+  assert.equal(missingTarget.code, 2);
+  assert.match(
+    missingTarget.stderr,
+    /Pass a search query, owner\/repo\[@skill\], or GitHub URL/,
+  );
+});

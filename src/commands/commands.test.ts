@@ -9,6 +9,8 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 
@@ -16,6 +18,7 @@ import type { Context } from '../context.ts';
 import { CatalogError, EnvironmentError, UsageError } from '../errors.ts';
 import { createFakeRunner } from '../evals/runners/index.ts';
 import { loadCatalog } from '../skills/catalog.ts';
+import { AWESOME_INDEX_FILE } from '../skills/discover.ts';
 import { sourceCommit } from '../skills/sources.ts';
 import { readProjects, recordProject } from '../state/projects.ts';
 import {
@@ -26,6 +29,7 @@ import {
   writeFiles,
 } from '../test-support/fixtures.ts';
 import { createUpstream, isolatedGitEnv } from '../test-support/git.ts';
+import { runAdd } from './add.ts';
 import { runAdopt } from './adopt.ts';
 import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
@@ -1325,4 +1329,152 @@ test('doctor still reports outdated skills when a block gained a variable with n
   assert.match(printed, /no recorded value: teamName/);
   assert.match(printed, /skills\/notes is out of date/);
   assert.doesNotMatch(printed, /AGENTS\.md is out of date/);
+});
+
+test('runAdd validates and scans risks, honors --dry-run, appends to catalog.yaml with --yes, and rejects duplicates', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/query-advisor/SKILL.md': `${skillSource('query-advisor', {
+      license: 'MIT',
+    })}\nRun \`npx --yes create-db@latest\`.\n`,
+  });
+  const { ctx, repoRoot, output } = await testContext(t, {
+    url: () => upstream.url,
+  });
+  await writeFiles(repoRoot, {
+    'skills/local-only/SKILL.md': skillSource('local-only'),
+  });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+
+  const dryRunCode = await runAdd(ctx, {
+    target: 'https://github.com/owner/db-skills/tree/main/skills/query-advisor',
+    category: 'database',
+    yes: false,
+    dryRun: true,
+  });
+  const afterDryRun = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+  const applyCode = await runAdd(ctx, {
+    target: 'owner/db-skills@query-advisor',
+    category: 'database',
+    yes: true,
+    dryRun: false,
+  });
+  const catalog = await loadCatalog(join(repoRoot, 'catalog.yaml'));
+
+  assert.equal(dryRunCode, 0);
+  assert.equal(afterDryRun, catalogBefore);
+  assert.equal(applyCode, 0);
+  assert.match(output.join('\n'), /Skill: query-advisor/);
+  assert.match(output.join('\n'), /License: MIT/);
+  assert.match(output.join('\n'), /runs npx with --yes/);
+  assert.ok(
+    catalog.skills.some(
+      (entry) =>
+        entry.name === 'query-advisor' &&
+        entry.repo === 'owner/db-skills' &&
+        entry.path === 'skills/query-advisor' &&
+        entry.category === 'database',
+    ),
+  );
+  await assert.rejects(
+    runAdd(ctx, {
+      target: 'owner/db-skills@query-advisor',
+      yes: true,
+      dryRun: false,
+    }),
+    CatalogError,
+  );
+  await assert.rejects(
+    runAdd(ctx, {
+      target: 'https://github.com/owner/db-skills/tree/v2/skills/other',
+      yes: true,
+      dryRun: false,
+    }),
+    CatalogError,
+  );
+});
+
+test('runAdd searches skills.sh and awesome index and installs the skill when --install is set', async (t) => {
+  const skillUpstream = await createUpstream(t, {
+    'packages/tanstack/SKILL.md': skillSource('tanstack-query', {
+      license: 'MIT',
+    }),
+  });
+  const awesomeUpstream = await createUpstream(t, {
+    [AWESOME_INDEX_FILE]: JSON.stringify([
+      {
+        id: 'awesome-linter',
+        path: 'skills/awesome-linter',
+        category: 'workflow',
+        name: 'awesome-linter',
+        description: 'Lint rules from awesome index',
+        risk: 'low',
+      },
+    ]),
+    'skills/awesome-linter/SKILL.md': skillSource('awesome-linter'),
+  });
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        skills: [
+          {
+            id: '1',
+            skillId: 'tanstack-query',
+            name: 'tanstack-query',
+            installs: 850,
+            source: 'tanstack/agent-skills',
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const { ctx, repoRoot } = await testContext(t, {
+    url: (repo) =>
+      repo === 'tanstack/agent-skills'
+        ? skillUpstream.url
+        : awesomeUpstream.url,
+  });
+  ctx.sources.skillsShUrl = `http://127.0.0.1:${port}`;
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['claude-code'],
+    blocks: ['core/identity'],
+    skills: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+
+  const skillsShCode = await runAdd(ctx, {
+    target: 'tanstack query',
+    source: 'skills-sh',
+    install: true,
+    yes: true,
+    dryRun: false,
+  });
+  const awesomeCode = await runAdd(ctx, {
+    target: 'awesome linter',
+    source: 'awesome',
+    yes: true,
+    dryRun: false,
+  });
+  const catalog = await loadCatalog(join(repoRoot, 'catalog.yaml'));
+
+  assert.equal(skillsShCode, 0);
+  assert.equal(awesomeCode, 0);
+  assert.ok(
+    (
+      await lstat(join(ctx.paths.skillsDir, 'tanstack-query', 'SKILL.md'))
+    ).isFile(),
+  );
+  assert.ok(
+    (
+      await lstat(join(ctx.paths.claudeHome, 'skills', 'tanstack-query'))
+    ).isSymbolicLink(),
+  );
+  assert.ok(catalog.skills.some((entry) => entry.name === 'tanstack-query'));
+  assert.ok(catalog.skills.some((entry) => entry.name === 'awesome-linter'));
 });
