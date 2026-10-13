@@ -7,6 +7,8 @@ export class AgentsConfigError extends Error {
 
 export class UsageError extends AgentsConfigError {}
 
+export class MissingVariablesError extends UsageError {}
+
 export class CancelledError extends AgentsConfigError {}
 
 export class EnvironmentError extends AgentsConfigError {}

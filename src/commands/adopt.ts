@@ -33,16 +33,18 @@ import {
   type SkillLibrary,
 } from '../skills/library.ts';
 import { type LockedSkill, readSkillLock } from '../skills/lock.ts';
+import { readGlobalManifest } from '../state/manifest.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   dropUnknownSkills,
   fetchSkills,
   loadLibrary,
   notify,
   readLocationManifest,
   resolveLocation,
+  resolveVariables,
 } from './shared.ts';
 
 export interface AdoptOptions {
@@ -212,12 +214,33 @@ async function appendEntries(
   }
 }
 
-async function restoreCatalog(
-  file: string,
-  original: string | null,
-): Promise<void> {
+interface RestoreCatalogParams {
+  file: string;
+  original: string | null;
+  entries: readonly CatalogEntry[];
+  manifestPath: string;
+}
+
+// A failed apply may still have recorded some adopted skills in the manifest
+// (actions that ran are kept), so only the entries it does not reference are
+// taken back out of catalog.yaml.
+async function restoreCatalog({
+  file,
+  original,
+  entries,
+  manifestPath,
+}: RestoreCatalogParams): Promise<void> {
+  let recorded: ReadonlySet<string>;
+  try {
+    recorded = new Set((await readGlobalManifest(manifestPath))?.skills ?? []);
+  } catch {
+    return;
+  }
+  const kept = entries.filter((entry) => recorded.has(entry.name));
+  if (kept.length === entries.length) return;
   if (original === null) await removePath(file);
   else await writeTextAtomic({ path: file, content: original });
+  if (kept.length > 0) await appendCatalogEntries(file, kept);
 }
 
 export async function runAdopt(
@@ -331,13 +354,22 @@ export async function runAdopt(
       'No tools recorded; pass --tools <ids> or run agents-config init --global.',
     );
   }
-  const knownBlocks = dropUnknownBlocks({
+  const knownBlocks = dropUnavailableBlocks({
     ctx,
     prompting,
     library,
     ids: previous.blocks,
+    scope: 'global',
   });
   const { ids: blocks } = withRequirements(library, knownBlocks);
+  const variables = await resolveVariables({
+    ctx,
+    prompting,
+    library,
+    blocks,
+    location,
+    recorded: previous.variables,
+  });
   const priorSkills = dropUnknownSkills({
     ctx,
     prompting,
@@ -360,7 +392,7 @@ export async function runAdopt(
       tools,
       blocks,
       skills,
-      variables: previous.variables,
+      variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: false,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
@@ -390,7 +422,12 @@ export async function runAdopt(
     });
   } catch (error) {
     if (catalogBefore !== undefined) {
-      await restoreCatalog(file, catalogBefore);
+      await restoreCatalog({
+        file,
+        original: catalogBefore,
+        entries: newCatalogEntries,
+        manifestPath: location.manifestPath,
+      });
     }
     throw error;
   }

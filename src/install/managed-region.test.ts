@@ -94,6 +94,24 @@ test('exclude markers are scoped to one project', () => {
   );
 });
 
+test('exclude markers for an id ending in whitespace find their own region', () => {
+  const markers = excludeMarkers('app ');
+  const first = upsertRegion({
+    existing: '*.log\n',
+    body: '/app /AGENTS.md',
+    markers,
+  });
+
+  const again = upsertRegion({
+    existing: first,
+    body: '/app /AGENTS.md',
+    markers,
+  });
+
+  assert.equal(again, first);
+  assert.equal(removeRegion(again, markers), '*.log\n');
+});
+
 test('removeRegion keeps surrounding content and drops the separator', () => {
   const content = removeRegion(`mine\n\n${BEGIN}\nrules\n${END}\n`);
 
@@ -120,4 +138,19 @@ test('removing an appended region restores a mixed-ending file', () => {
   const restored = removeRegion(upsertRegion({ existing, body: 'rules' }));
 
   assert.equal(restored, existing);
+});
+
+test('upsertRegion keeps a byte order mark when the region starts the file', () => {
+  const content = upsertRegion({
+    existing: `\uFEFF${BEGIN}\nold\n${END}\n`,
+    body: 'new',
+  });
+
+  assert.equal(content, `\uFEFF${BEGIN}\nnew\n${END}\n`);
+});
+
+test('removeRegion keeps a byte order mark when the region starts the file', () => {
+  const content = removeRegion(`\uFEFF${BEGIN}\nrules\n${END}\n\n# Team\n`);
+
+  assert.equal(content, '\uFEFF# Team\n');
 });

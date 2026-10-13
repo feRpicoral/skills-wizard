@@ -8,7 +8,7 @@ import {
   serializeManifest,
 } from '../state/manifest.ts';
 import { planFile } from './file-actions.ts';
-import { readTextIfExists } from './fs.ts';
+import { readTextIfExists, realLocation } from './fs.ts';
 import { planRemoval } from './removal.ts';
 import {
   type ActionStatus,
@@ -19,6 +19,7 @@ import {
   REMOVAL_LABEL,
 } from './safety.ts';
 import { planSkill, planSymlink } from './skill-actions.ts';
+import { stageAction, type StagedContents } from './staged.ts';
 import {
   keyOf,
   type PlanInput,
@@ -45,6 +46,7 @@ interface DispatchTargetParams {
   target: Target;
   previous: ManifestEntry | null;
   scope: Scope;
+  staged: StagedContents;
   boundary?: string;
 }
 
@@ -52,6 +54,7 @@ function dispatchTarget({
   target,
   previous,
   scope,
+  staged,
   boundary,
 }: DispatchTargetParams): Promise<PlannedAction> {
   const location = boundary ? { boundary } : {};
@@ -61,14 +64,46 @@ function dispatchTarget({
     case 'skill':
       return planSkill({ target, previous, scope, ...location });
     default:
-      return planFile({ target, previous, ...location });
+      return planFile({ target, previous, staged, ...location });
   }
+}
+
+function entryDetail(entry: ManifestEntry): string {
+  switch (entry.kind) {
+    case 'exclude-region':
+      return entry.id;
+    case 'line':
+      return entry.line;
+    case 'json-array':
+      return entry.key;
+    default:
+      return '';
+  }
+}
+
+async function ownershipKey(entry: ManifestEntry): Promise<string | null> {
+  if (entry.kind === 'symlink') return null;
+  const real = await realLocation(entry.path);
+  return real === null ? null : `${entry.kind}:${real}:${entryDetail(entry)}`;
+}
+
+async function ownersByRealLocation(
+  actions: readonly PlannedAction[],
+): Promise<Map<string, string>> {
+  const owners = new Map<string, string>();
+  for (const action of actions) {
+    if (!action.entry) continue;
+    const key = await ownershipKey(action.entry);
+    if (key !== null && !owners.has(key)) owners.set(key, action.label);
+  }
+  return owners;
 }
 
 interface PlanTargetActionsParams {
   targets: readonly Target[];
   previousEntries: ReadonlyMap<string, ManifestEntry>;
   scope: Scope;
+  staged: StagedContents;
   boundary?: string;
 }
 
@@ -76,6 +111,7 @@ async function planTargetActions({
   targets,
   previousEntries,
   scope,
+  staged,
   boundary,
 }: PlanTargetActionsParams): Promise<{
   actions: PlannedAction[];
@@ -108,12 +144,14 @@ async function planTargetActions({
           target,
           previous,
           scope,
+          staged,
           ...(boundary ? { boundary } : {}),
         }),
     });
     if (target.kind === 'skill' && action.status === 'conflict') {
       blockedSkills.add(target.name);
     }
+    await stageAction({ staged, action });
     actions.push(action);
   }
   return { actions, plannedKeys };
@@ -122,28 +160,37 @@ async function planTargetActions({
 interface PlanRemovalActionsParams {
   previousEntries: ReadonlyMap<string, ManifestEntry>;
   plannedKeys: ReadonlySet<string>;
+  owners: ReadonlyMap<string, string>;
+  staged: StagedContents;
   boundary?: string;
 }
 
 async function planRemovalActions({
   previousEntries,
   plannedKeys,
+  owners,
+  staged,
   boundary,
 }: PlanRemovalActionsParams): Promise<PlannedAction[]> {
   const actions: PlannedAction[] = [];
   for (const [key, entry] of previousEntries) {
     if (plannedKeys.has(key)) continue;
-    actions.push(
-      await guarded({
-        target: { path: entry.path, label: REMOVAL_LABEL },
-        previous: entry,
-        plan: () =>
-          planRemoval({
-            entry,
-            ...(boundary ? { boundary } : {}),
-          }),
-      }),
-    );
+    const action = await guarded({
+      target: { path: entry.path, label: REMOVAL_LABEL },
+      previous: entry,
+      plan: async () => {
+        const owner = await ownershipKey(entry);
+        const sharedWith = owner === null ? undefined : owners.get(owner);
+        return planRemoval({
+          entry,
+          staged,
+          ...(sharedWith ? { sharedWith } : {}),
+          ...(boundary ? { boundary } : {}),
+        });
+      },
+    });
+    await stageAction({ staged, action });
+    actions.push(action);
   }
   return actions;
 }
@@ -232,15 +279,19 @@ export async function buildPlan({
   const previousEntries = new Map(
     (previous?.entries ?? []).map((entry) => [keyOf(entry), entry]),
   );
+  const staged: StagedContents = new Map();
   const { actions: targetActions, plannedKeys } = await planTargetActions({
     targets: targetsForPlan(input),
     previousEntries,
     scope,
+    staged,
     ...(boundary ? { boundary } : {}),
   });
   const removalActions = await planRemovalActions({
     previousEntries,
     plannedKeys,
+    owners: await ownersByRealLocation(targetActions),
+    staged,
     ...(boundary ? { boundary } : {}),
   });
   const actions = [...targetActions, ...removalActions];

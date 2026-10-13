@@ -4,6 +4,7 @@ summary: Branch, PR and push rules
 group: git
 scopes: [global, project]
 defaults: [global, project]
+requires: [git/pr-reviews]
 ---
 
 ## Branching and pull requests

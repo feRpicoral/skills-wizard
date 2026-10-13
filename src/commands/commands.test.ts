@@ -27,6 +27,7 @@ import {
 } from '../test-support/fixtures.ts';
 import { createUpstream, isolatedGitEnv } from '../test-support/git.ts';
 import { runAdopt } from './adopt.ts';
+import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
 import { runSkill, warnUnsupportedSandbox } from './skill.ts';
 import { runUpdate } from './update.ts';
@@ -1088,4 +1089,240 @@ test('skill report <name> <dir> rejects a directory that holds another skill ben
     }),
     0,
   );
+});
+
+test('adopt keeps the catalog entry when a failed apply already recorded the skill', async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip('permissions do not apply to root');
+    return;
+  }
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await initGlobal(ctx);
+  await lockedDeploy({ ctx });
+  const linkDir = join(ctx.paths.claudeHome, 'skills');
+  await writeFiles(linkDir, { '.keep': '' });
+
+  await chmod(linkDir, 0o555);
+  try {
+    await assert.rejects(
+      runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
+    );
+  } finally {
+    await chmod(linkDir, 0o755);
+  }
+
+  const manifest = JSON.parse(
+    await readFile(join(ctx.paths.stateDir, 'manifest.json'), 'utf8'),
+  ) as { skills: string[] };
+  assert.ok(manifest.skills.includes('deploy'));
+  assert.match(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    /- name: deploy\n\s+repo: owner\/tools/,
+  );
+});
+
+interface ExtraBlockParams {
+  repoRoot: string;
+  scopes: string[];
+  variables?: string[];
+  body?: string;
+}
+
+async function writeExtraBlock({
+  repoRoot,
+  scopes,
+  variables = [],
+  body = 'Extra rules.',
+}: ExtraBlockParams): Promise<void> {
+  await writeFiles(repoRoot, {
+    'blocks/index.yaml': [
+      'headers:',
+      '  global: "# Instructions"',
+      'groups:',
+      '  core: Core',
+      'order:',
+      '  - core/identity',
+      '  - core/extra',
+      '',
+    ].join('\n'),
+    'blocks/core/extra.md': blockSource(body, {
+      title: 'Extra',
+      group: 'core',
+      scopes,
+      defaults: [],
+      variables,
+    }),
+  });
+}
+
+async function initGlobalWithExtra(ctx: Context): Promise<void> {
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['claude-code'],
+    blocks: ['core/identity', 'core/extra'],
+    skills: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+}
+
+async function recordedBlocks(ctx: Context): Promise<string[]> {
+  const manifest = JSON.parse(
+    await readFile(join(ctx.paths.stateDir, 'manifest.json'), 'utf8'),
+  ) as { blocks: string[] };
+  return manifest.blocks;
+}
+
+test('update drops recorded blocks that are no longer available for the scope', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeExtraBlock({ repoRoot, scopes: ['global', 'project'] });
+  await initGlobalWithExtra(ctx);
+  await writeExtraBlock({ repoRoot, scopes: ['project'] });
+
+  const code = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Blocks no longer available for global scope were dropped: core\/extra/,
+  );
+  assert.deepEqual(await recordedBlocks(ctx), ['core/identity']);
+  assert.doesNotMatch(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Extra rules\./,
+  );
+});
+
+test('update skips an install whose blocks gained a variable with no value and updates the others', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeExtraBlock({ repoRoot, scopes: ['global'] });
+  await initGlobalWithExtra(ctx);
+  const project = await realpath(await tempDir(t));
+  await initProject({ ctx, projectDir: project });
+  await writeExtraBlock({
+    repoRoot,
+    scopes: ['global'],
+    variables: ['teamName'],
+    body: 'Team: {{teamName}}',
+  });
+  await writeFiles(repoRoot, {
+    'blocks/core/identity.md': blockSource('Follow the new rules.', {
+      title: 'Identity',
+      group: 'core',
+    }),
+  });
+
+  const code = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Skipping the system-wide install: The blocks now use variables with no recorded value: teamName\. Set them with agents-config init --global --var teamName=<value>/,
+  );
+  assert.match(
+    await readFile(join(project, 'AGENTS.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+  assert.doesNotMatch(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+});
+
+test('adopt drops recorded blocks that are no longer available for the scope', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot, output } = await testContext(t, {
+    url: () => upstream.url,
+  });
+  await writeExtraBlock({ repoRoot, scopes: ['global', 'project'] });
+  await initGlobalWithExtra(ctx);
+  await lockedDeploy({ ctx });
+  await writeExtraBlock({ repoRoot, scopes: ['project'] });
+
+  const code = await runAdopt(ctx, {
+    names: ['deploy'],
+    yes: true,
+    dryRun: false,
+  });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Blocks no longer available for global scope were dropped: core\/extra/,
+  );
+  assert.deepEqual(await recordedBlocks(ctx), ['core/identity']);
+  assert.doesNotMatch(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Extra rules\./,
+  );
+});
+
+test('adopt asks for a variable a block gained before changing anything', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await writeExtraBlock({ repoRoot, scopes: ['global'] });
+  await initGlobalWithExtra(ctx);
+  await lockedDeploy({ ctx });
+  await writeExtraBlock({
+    repoRoot,
+    scopes: ['global'],
+    variables: ['teamName'],
+    body: 'Team: {{teamName}}',
+  });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+
+  await assert.rejects(
+    runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /teamName\. Set them with agents-config init --global --var teamName=<value>/.test(
+        error.message,
+      ),
+  );
+
+  await adoptedNothing(ctx);
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    catalogBefore,
+  );
+});
+
+test('doctor still reports outdated skills when a block gained a variable with no value', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeFiles(repoRoot, { 'skills/notes/SKILL.md': skillSource('notes') });
+  await writeExtraBlock({ repoRoot, scopes: ['global'] });
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['codex'],
+    blocks: ['core/identity', 'core/extra'],
+    skills: ['notes'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  await writeFiles(repoRoot, {
+    'skills/notes/SKILL.md': `${skillSource('notes')}\nMore steps.\n`,
+  });
+  await writeExtraBlock({
+    repoRoot,
+    scopes: ['global'],
+    variables: ['teamName'],
+    body: 'Team: {{teamName}}',
+  });
+
+  const code = await runDoctor(ctx, { scope: 'global' });
+
+  assert.equal(code, 1);
+  const printed = output.join('\n');
+  assert.match(printed, /no recorded value: teamName/);
+  assert.match(printed, /skills\/notes is out of date/);
+  assert.doesNotMatch(printed, /AGENTS\.md is out of date/);
 });

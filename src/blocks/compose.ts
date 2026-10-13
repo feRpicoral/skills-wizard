@@ -22,6 +22,16 @@ export function unknownBlockIds(
   return ids.filter((id) => !known.has(id));
 }
 
+export function outOfScopeBlockIds(
+  library: BlockLibrary,
+  ids: readonly string[],
+  scope: Scope,
+): string[] {
+  return library.blocks
+    .filter((block) => ids.includes(block.id) && !block.scopes.includes(scope))
+    .map((block) => block.id);
+}
+
 export function withRequirements(
   library: BlockLibrary,
   ids: readonly string[],
@@ -55,14 +65,15 @@ export function selectBlocks(
     throw new CompositionError(`Unknown blocks: ${unknown.join(', ')}`);
   }
 
-  const wanted = new Set(ids);
-  const selected = library.blocks.filter((block) => wanted.has(block.id));
-  const outOfScope = selected.filter((block) => !block.scopes.includes(scope));
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
   if (outOfScope.length > 0) {
     throw new CompositionError(
-      `Blocks not available for ${scope} scope: ${outOfScope.map((block) => block.id).join(', ')}`,
+      `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
+
+  const wanted = new Set(ids);
+  const selected = library.blocks.filter((block) => wanted.has(block.id));
   for (const block of selected) {
     const missing = block.requires.filter((required) => !wanted.has(required));
     if (missing.length > 0) {

@@ -12,7 +12,7 @@ import {
   symlink,
 } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { promisify } from 'node:util';
 
 import type { BlockLibrary } from '../blocks/library.ts';
@@ -894,7 +894,7 @@ test('a copy recorded before the setup flag keeps what setup created', async (t)
   assert.ok((await stat(join(canonical, 'node_modules/dep/x.js'))).isFile());
 });
 
-test('a setup copy recorded before the setup flag is removed when deselected', async (t) => {
+async function legacySetupInstall(t: TestContext) {
   const paths = await tempPaths(t);
   const skill: SkillSource = {
     ...(await localSkill({ root: await tempDir(t), name: 'notes' })),
@@ -911,7 +911,28 @@ test('a setup copy recorded before the setup flag is removed when deselected', a
   await writeFiles(dirname(manifestPath), {
     [basename(manifestPath)]: JSON.stringify(stored),
   });
-  const canonical = join(paths.skillsDir, 'notes');
+  return { paths, skill, canonical: join(paths.skillsDir, 'notes') };
+}
+
+test('a legacy setup copy deselected before any sync is left in place', async (t) => {
+  const { paths, skill, canonical } = await legacySetupInstall(t);
+
+  const { plan } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [skill],
+    selected: [],
+  });
+
+  assert.equal(
+    plan.actions.find((action) => action.path === canonical)?.reason,
+    'changed outside agents-config, left in place',
+  );
+  assert.ok((await stat(join(canonical, 'node_modules/dep/x.js'))).isFile());
+});
+
+test('a legacy setup copy is removable once a sync records the setup flag', async (t) => {
+  const { paths, skill, canonical } = await legacySetupInstall(t);
+  await installGlobal(paths, { tools: ['codex'], skills: [skill] });
 
   const { plan } = await installGlobal(paths, {
     tools: ['codex'],
