@@ -273,3 +273,20 @@ test('links that stay inside the skill folder are allowed', async (t) => {
 
   assert.deepEqual(report.errors, []);
 });
+
+test('a link chain that leaves the skill folder is an error', async (t) => {
+  const root = await tempDir(t);
+  const dir = await skillDir({
+    root,
+    folder: 'linked',
+    files: { 'SKILL.md': skillSource('linked'), 'deep/file.md': 'f\n' },
+  });
+  await symlink('..', join(dir, 'deep', 'up'));
+  await symlink('deep/up/../../secret.txt', join(dir, 'leak'));
+
+  const report = await validateSkill(dir, { strict: false });
+
+  assert.deepEqual(report.errors, [
+    'leak links outside the skill folder (deep/up/../../secret.txt); links must be relative and stay inside it',
+  ]);
+});

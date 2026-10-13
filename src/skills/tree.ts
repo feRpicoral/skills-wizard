@@ -12,15 +12,7 @@ import {
   rm,
   symlink,
 } from 'node:fs/promises';
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { UnsafeWriteError } from '../errors.ts';
 import { lstatIfExists } from '../install/fs.ts';
@@ -43,6 +35,7 @@ const NOT_COPIED_AT_ROOT: ReadonlySet<string> = new Set(['evals']);
 const EXECUTABLE_BITS = 0o111;
 const PERMISSION_BITS = 0o777;
 const HASH_PREFIX = 'sha256:';
+const MAX_LINK_HOPS = 40;
 
 export interface TreeFile {
   path: string;
@@ -158,19 +151,34 @@ export async function hashInstalledCopy({
   return hashFiles(await snapshotEntries(entries));
 }
 
-interface LinkTargetParams {
+interface LinkInTreeParams {
   root: string;
   path: string;
-  target: string;
 }
 
-function linkEscapes({ root, path, target }: LinkTargetParams): boolean {
-  if (isAbsolute(target)) return true;
-  const inside = relative(
-    root,
-    resolve(root, ...path.split('/').slice(0, -1), target),
-  );
-  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside);
+// Resolves the link one component at a time, following every link it meets
+// inside the tree, so a chain such as `up -> ..` plus `leak -> up/../x` is
+// caught. Components that do not exist are taken as they are written.
+async function linkEscapes({ root, path }: LinkInTreeParams): Promise<boolean> {
+  const resolved: string[] = [];
+  const pending = path.split('/');
+  let hops = 0;
+  for (let part = pending.shift(); part !== undefined; part = pending.shift()) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (resolved.pop() === undefined) return true;
+      continue;
+    }
+    resolved.push(part);
+    const location = join(root, ...resolved);
+    if (!(await lstatIfExists(location))?.isSymbolicLink()) continue;
+    hops += 1;
+    const target = await readlink(location);
+    if (hops > MAX_LINK_HOPS || isAbsolute(target)) return true;
+    resolved.pop();
+    pending.unshift(...target.split('/'));
+  }
+  return false;
 }
 
 export interface EscapingLink {
@@ -182,9 +190,8 @@ export async function escapingLinks(root: string): Promise<EscapingLink[]> {
   const links: EscapingLink[] = [];
   for (const entry of await walk(root, notCopied)) {
     if (!entry.link) continue;
-    const target = await readlink(entry.absolute);
-    if (linkEscapes({ root, path: entry.path, target })) {
-      links.push({ path: entry.path, target });
+    if (await linkEscapes({ root, path: entry.path })) {
+      links.push({ path: entry.path, target: await readlink(entry.absolute) });
     }
   }
   return links;
@@ -205,7 +212,7 @@ export async function copySkillTree({
     await mkdir(dirname(target), { recursive: true });
     if (entry.link) {
       const linked = await readlink(entry.absolute);
-      if (linkEscapes({ root: source, path: entry.path, target: linked })) {
+      if (await linkEscapes({ root: source, path: entry.path })) {
         throw new UnsafeWriteError(
           `refusing to copy ${entry.path}: it links outside the skill (${linked})`,
         );

@@ -111,6 +111,37 @@ test('escapingLinks reports absolute links and links that leave the skill', asyn
   ]);
 });
 
+test('escapingLinks follows links inside the skill to see where a chain ends', async (t) => {
+  const root = await tempDir(t);
+  const skill = join(root, 'skill');
+  await writeFiles(root, { 'secret.txt': 'secret\n' });
+  await writeFiles(skill, { 'SKILL.md': 'skill\n', 'docs/guide.md': 'g\n' });
+  await symlink('..', join(skill, 'docs', 'up'));
+  await symlink('docs/up/../secret.txt', join(skill, 'leak'));
+  await symlink('docs/up/docs/guide.md', join(skill, 'guide.md'));
+  await symlink('loop-b', join(skill, 'loop-a'));
+  await symlink('loop-a', join(skill, 'loop-b'));
+
+  assert.deepEqual(await escapingLinks(skill), [
+    { path: 'leak', target: 'docs/up/../secret.txt' },
+    { path: 'loop-a', target: 'loop-b' },
+    { path: 'loop-b', target: 'loop-a' },
+  ]);
+});
+
+test('copySkillTree refuses a link chain that leaves the skill', async (t) => {
+  const root = await tempDir(t);
+  const source = join(root, 'source');
+  await writeFiles(source, { 'SKILL.md': 'skill\n', 'deep/file.md': 'f\n' });
+  await symlink('..', join(source, 'deep', 'up'));
+  await symlink('deep/up/../../secret.txt', join(source, 'leak'));
+
+  await assert.rejects(
+    copySkillTree({ source, destination: join(root, 'copy') }),
+    /leak: it links outside the skill/,
+  );
+});
+
 test('copySkillTree refuses links that leave the skill', async (t) => {
   const root = await tempDir(t);
   const source = join(root, 'source');
