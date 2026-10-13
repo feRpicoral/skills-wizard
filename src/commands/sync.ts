@@ -49,21 +49,19 @@ async function resolveVariables({
   if (missing.length === 0) return { ...recorded };
 
   const found = await lookupVariables(missing, recorded);
-  const variables = prompting
-    ? { ...recorded, ...(await promptVariables(missing, found)) }
-    : found;
-  const unresolved = missing.filter((name) => !variables[name]?.trim());
+  if (prompting) {
+    return { ...recorded, ...(await promptVariables(missing, found)) };
+  }
+  const unresolved = missing.filter((name) => !found[name]?.trim());
   if (unresolved.length > 0) {
     throw new UsageError(
       `The blocks now use variables with no recorded value: ${unresolved.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolved })}`,
     );
   }
-  notify({
-    ctx,
-    prompting,
-    message: `Recorded values for new variables: ${missing.map((name) => `${name}=${variables[name] ?? ''}`).join(', ')}`,
-  });
-  return variables;
+  ctx.print(
+    `Using looked-up values for new variables: ${missing.map((name) => `${name}=${found[name] ?? ''}`).join(', ')}`,
+  );
+  return found;
 }
 
 interface SyncOptions {
