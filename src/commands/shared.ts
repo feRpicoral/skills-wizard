@@ -176,13 +176,27 @@ interface SetVariablesCommandParams {
   names: readonly string[];
 }
 
+const SHELL_SAFE = /^[\w@%+=:,./-]+$/;
+
+function shellQuote(value: string): string {
+  return SHELL_SAFE.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+// A leading ~ stays unquoted so the shell still expands it.
+function shellPath(path: string): string {
+  if (path === '~') return path;
+  return path.startsWith('~/')
+    ? `~/${shellQuote(path.slice(2))}`
+    : shellQuote(path);
+}
+
 export function setVariablesCommand({
   ctx,
   location,
   names,
 }: SetVariablesCommandParams): string {
   const target = location.project
-    ? `--project ${displayPath({ path: location.project.dir, home: ctx.paths.home })}`
+    ? `--project ${shellPath(displayPath({ path: location.project.dir, home: ctx.paths.home }))}`
     : '--global';
   const variables = names.map((name) => `--var ${name}=<value>`).join(' ');
   return `agents-config init ${target} ${variables}`;
