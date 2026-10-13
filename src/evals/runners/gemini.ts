@@ -52,6 +52,20 @@ export function buildGeminiGraderArgs(prompt: string): string[] {
   ];
 }
 
+/**
+ * The child environment for every gemini run. With `security.folderTrust`
+ * enabled, a headless run in an untrusted folder (every fresh eval workspace)
+ * exits with FatalUntrustedWorkspaceError. The Gemini CLI trusted folders docs
+ * document `GEMINI_CLI_TRUST_WORKSPACE=true` (what `--skip-trust` sets) to
+ * trust the current workspace for one session. The variable is used rather
+ * than the flag because older versions reject unknown flags but ignore an
+ * unknown variable. Trust only lets the CLI load the workspace's own settings
+ * (the baseline's `skills.disabled`); it does not change the approval mode.
+ */
+export function buildGeminiEnv(env: Environment): Environment {
+  return { ...env, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
+}
+
 export interface ParseGeminiStreamParams {
   stdout: string;
   skillName: string;
@@ -201,6 +215,7 @@ export function createGeminiRunner({
   env,
 }: CreateGeminiRunnerParams): EvalRunner {
   const resolvedBin = binary ?? 'gemini';
+  const childEnv = buildGeminiEnv(env);
 
   return {
     name: 'gemini',
@@ -223,7 +238,7 @@ export function createGeminiRunner({
         cwd: workdir,
         runDir,
         timeoutSeconds,
-        env,
+        env: childEnv,
       });
       const parsed = parseGeminiStreamJson({
         stdout: proc.stdout,
@@ -250,7 +265,7 @@ export function createGeminiRunner({
         cwd: workdir,
         runDir,
         timeoutSeconds,
-        env,
+        env: childEnv,
         logPrefix: 'grader',
       });
       return parseGraderProcess({
