@@ -1,7 +1,11 @@
 import { join } from 'node:path';
 import { styleText } from 'node:util';
 
-import { unknownBlockIds, withRequirements } from '../blocks/compose.ts';
+import {
+  outOfScopeBlockIds,
+  unknownBlockIds,
+  withRequirements,
+} from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath, planPath } from '../install/describe.ts';
@@ -151,9 +155,18 @@ export async function runDoctor(
       message: `Blocks no longer in the library: ${unknown.join(', ')}; agents-config sync will drop them`,
     });
   }
+  const outOfScope = outOfScopeBlockIds(library, manifest.blocks, scope);
+  if (outOfScope.length > 0) {
+    findings.push({
+      level: 'warn',
+      message: `Blocks no longer available for ${scope} scope: ${outOfScope.join(', ')}; agents-config sync will drop them`,
+    });
+  }
   const { ids: blocks, added } = withRequirements(
     library,
-    manifest.blocks.filter((id) => !unknown.includes(id)),
+    manifest.blocks.filter(
+      (id) => !unknown.includes(id) && !outOfScope.includes(id),
+    ),
   );
   if (added.length > 0) {
     findings.push({

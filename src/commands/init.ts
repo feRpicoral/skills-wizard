@@ -1,5 +1,6 @@
 import {
   defaultBlockIds,
+  outOfScopeBlockIds,
   requiredVariables,
   selectBlocks,
   unknownBlockIds,
@@ -24,7 +25,7 @@ import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   confirmAndApply,
-  dropUnknownBlocks,
+  dropUnavailableBlocks,
   loadLibrary,
   notify,
   notifyLeftGit,
@@ -54,12 +55,10 @@ function checkExplicitBlocks(
   if (unknown.length > 0) {
     throw new UsageError(`Unknown blocks: ${unknown.join(', ')}`);
   }
-  const outOfScope = library.blocks.filter(
-    (block) => ids.includes(block.id) && !block.scopes.includes(scope),
-  );
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
   if (outOfScope.length > 0) {
     throw new UsageError(
-      `Blocks not available for ${scope} scope: ${outOfScope.map((block) => block.id).join(', ')}`,
+      `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
 }
@@ -131,11 +130,12 @@ export async function runInit(
   const initialBlocks =
     requestedBlocks ??
     (previous
-      ? dropUnknownBlocks({
+      ? dropUnavailableBlocks({
           ctx,
           prompting,
           library,
           ids: previous.blocks,
+          scope,
         })
       : defaultBlockIds(library, scope));
   const chosen = prompting

@@ -32,7 +32,7 @@ sequenceDiagram
 - placeholders that are not declared as variables, and declared variables that are never used
 - `requires` entries that name an unknown block, a block later in the order, or a block missing one of the scopes
 
-Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library are dropped with a warning.
+Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library, or no longer available for the manifest's scope, are dropped with a warning, and `doctor` reports them.
 
 The system-wide file is the global header plus the selected blocks joined by blank lines. A project file gets the selected blocks inside a managed region, below a `# <project name>` heading that is written once.
 
