@@ -19,7 +19,7 @@ Gemini CLI also reads `~/.gemini/skills/` and Copilot also reads `$COPILOT_HOME/
 
 ## Skill evaluation
 
-`agents-config skill eval` and `skill triggers` drive one agent CLI per run (`--runner agy|claude|codex|gemini`, auto-detected on `PATH` in that order, or `fake` for a dry run that calls no agent). `--binary <path>` overrides the runner's executable.
+`agents-config skill eval` and `skill triggers` drive one agent CLI per run (`--runner agy|claude|codex|gemini`, auto-detected on `PATH` in that order, or `fake` for a structural dry run that calls no agent and whose results and trigger decisions are synthetic). `--binary <path>` overrides the runner's executable.
 
 | Variable                     | Used by        | Meaning                                                                                                                                             |
 | ---------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
