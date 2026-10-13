@@ -45,6 +45,8 @@ const entrySchema = z.discriminatedUnion('kind', [
     added: z.array(z.string()),
     wasString: z.boolean(),
     createdKeys: z.number().int().min(0).optional(),
+    original: z.string().optional(),
+    wasEmpty: z.boolean().optional(),
     createdFile: z.boolean(),
   }),
   z.object({

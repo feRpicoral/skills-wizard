@@ -177,38 +177,116 @@ export function setJsonValue({
   });
 }
 
-interface RemoveJsonPropertyParams {
+interface RemoveChildParams {
   text: string;
-  keys: JSONPath;
+  container: Node;
+  child: Node;
 }
 
-export function removeJsonProperty({
-  text,
-  keys,
-}: RemoveJsonPropertyParams): string {
-  const property = findNodeAtLocation(rootObject(text), keys)?.parent;
-  const object = property?.parent;
-  if (!property || !object) return text;
-
-  const siblings = object.children ?? [];
-  const index = siblings.indexOf(property);
+function removeChild({ text, container, child }: RemoveChildParams): string {
+  const siblings = container.children ?? [];
+  const index = siblings.indexOf(child);
   const previous = siblings[index - 1];
   const next = siblings[index + 1];
-  const end = property.offset + property.length;
+  const end = child.offset + child.length;
   if (previous) {
     const start = previous.offset + previous.length;
     return splice(text, { offset: start, length: end - start, content: '' });
   }
   if (next) {
     return splice(text, {
-      offset: property.offset,
-      length: next.offset - property.offset,
+      offset: child.offset,
+      length: next.offset - child.offset,
       content: '',
     });
   }
   return splice(text, {
-    offset: object.offset + 1,
-    length: object.length - 2,
+    offset: container.offset + 1,
+    length: container.length - 2,
     content: '',
+  });
+}
+
+interface JsonLocationParams {
+  text: string;
+  keys: JSONPath;
+}
+
+export function removeJsonProperty({ text, keys }: JsonLocationParams): string {
+  const property = findNodeAtLocation(rootObject(text), keys)?.parent;
+  const container = property?.parent;
+  if (!property || !container) return text;
+  return removeChild({ text, container, child: property });
+}
+
+interface ArrayElementsParams extends JsonLocationParams {
+  values: readonly string[];
+}
+
+export function appendArrayElements({
+  text,
+  keys,
+  values,
+}: ArrayElementsParams): string {
+  const array = findNodeAtLocation(rootObject(text), keys);
+  if (array?.type !== 'array') {
+    throw new JsonMergeError('expected a list to append to');
+  }
+  const items = values.map((value) => JSON.stringify(value));
+  const [first] = array.children ?? [];
+  const last = array.children?.at(-1);
+  if (!first || !last) {
+    return splice(text, {
+      offset: array.offset + 1,
+      length: array.length - 2,
+      content: items.join(', '),
+    });
+  }
+  const separator = text.slice(array.offset, first.offset).includes('\n')
+    ? `,${layoutOf(text).eol}${lineIndent(text, first.offset)}`
+    : ', ';
+  return splice(text, {
+    offset: last.offset + last.length,
+    length: 0,
+    content: items.map((item) => `${separator}${item}`).join(''),
+  });
+}
+
+export function removeArrayElements({
+  text,
+  keys,
+  values,
+}: ArrayElementsParams): string {
+  let result = text;
+  for (const value of values) {
+    const array = findNodeAtLocation(rootObject(result), keys);
+    const child = array?.children?.find(
+      (item) => item.type === 'string' && item.value === value,
+    );
+    if (array && child)
+      result = removeChild({ text: result, container: array, child });
+  }
+  return result;
+}
+
+export function rawJson({
+  text,
+  keys,
+}: JsonLocationParams): string | undefined {
+  const node = findNodeAtLocation(rootObject(text), keys);
+  return node && text.slice(node.offset, node.offset + node.length);
+}
+
+interface ReplaceRawParams extends JsonLocationParams {
+  raw: string;
+}
+
+export function replaceRawJson({ text, keys, raw }: ReplaceRawParams): string {
+  const node = findNodeAtLocation(rootObject(text), keys);
+  if (!node) return text;
+  return splice(text, {
+    offset: node.offset,
+    length: node.length,
+    content: raw,
   });
 }
