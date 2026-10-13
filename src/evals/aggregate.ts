@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { EvalError } from '../errors.ts';
@@ -31,7 +30,7 @@ export interface DeltaSummary {
 }
 
 export type AssertionClassification =
-  'differentiating' | 'non-discriminating' | 'regressing' | 'failing';
+  'differentiating' | 'non-discriminating' | 'regressing' | 'failing' | 'flaky';
 
 export interface AssertionAggregate {
   text: string;
@@ -40,6 +39,13 @@ export interface AssertionAggregate {
   baseline_pass_rate?: number;
   old_skill_pass_rate?: number;
   classification: AssertionClassification;
+}
+
+export interface AssertionAnalysis {
+  pass_only_with_skill: string[];
+  pass_in_both: string[];
+  fail_in_both: string[];
+  flaky: string[];
 }
 
 export interface EvalRunRecord {
@@ -86,6 +92,7 @@ export interface BenchmarkSummary {
   run_summary: BenchmarkRunSummary;
   cases: CaseBenchmarkSummary[];
   non_discriminating_assertions: string[];
+  assertion_analysis: AssertionAnalysis;
 }
 
 export interface TriggerQueryRunResult {
@@ -222,10 +229,17 @@ interface ClassifyAssertionParams {
   baselineRate?: number;
 }
 
+function isPartialRate(rate: number | undefined): boolean {
+  return rate !== undefined && rate > 0 && rate < 1;
+}
+
 function classifyAssertion({
   withSkillRate,
   baselineRate,
 }: ClassifyAssertionParams): AssertionClassification {
+  if (isPartialRate(withSkillRate) || isPartialRate(baselineRate)) {
+    return 'flaky';
+  }
   if (baselineRate === undefined) {
     return withSkillRate === 1 ? 'differentiating' : 'failing';
   }
@@ -346,10 +360,23 @@ export function aggregateBenchmark({
   });
 
   const nonDiscriminating: string[] = [];
+  const passOnlyWithSkill: string[] = [];
+  const passInBoth: string[] = [];
+  const failInBoth: string[] = [];
+  const flaky: string[] = [];
+
   for (const caseSummary of caseSummaries) {
     for (const assertion of caseSummary.assertions) {
+      const entry = `${caseSummary.case_id}: ${assertion.text}`;
       if (assertion.classification === 'non-discriminating') {
-        nonDiscriminating.push(`${caseSummary.case_id}: ${assertion.text}`);
+        nonDiscriminating.push(entry);
+        passInBoth.push(entry);
+      } else if (assertion.classification === 'differentiating') {
+        passOnlyWithSkill.push(entry);
+      } else if (assertion.classification === 'failing') {
+        failInBoth.push(entry);
+      } else if (assertion.classification === 'flaky') {
+        flaky.push(entry);
       }
     }
   }
@@ -394,6 +421,12 @@ export function aggregateBenchmark({
     },
     cases: caseSummaries,
     non_discriminating_assertions: nonDiscriminating,
+    assertion_analysis: {
+      pass_only_with_skill: passOnlyWithSkill,
+      pass_in_both: passInBoth,
+      fail_in_both: failInBoth,
+      flaky,
+    },
   };
 }
 
@@ -493,19 +526,8 @@ export async function loadBenchmarkFromIteration(
     throw new EvalError(`Missing benchmark.json in ${iterationDir}`);
   }
   try {
-    return JSON.parse(readFileSyncOrText(content)) as BenchmarkSummary;
+    return JSON.parse(content) as BenchmarkSummary;
   } catch (error) {
     throw new EvalError(`Invalid JSON in ${benchmarkPath}`, { cause: error });
   }
-}
-
-function readFileSyncOrText(content: string): string {
-  return content;
-}
-
-export async function readBenchmarkJsonFile(
-  filePath: string,
-): Promise<BenchmarkSummary> {
-  const raw = await readFile(filePath, 'utf8');
-  return JSON.parse(raw) as BenchmarkSummary;
 }

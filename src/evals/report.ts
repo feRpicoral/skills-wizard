@@ -81,6 +81,38 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     lines.push('');
   }
 
+  const analysis = benchmark.assertion_analysis;
+  if (
+    analysis &&
+    (analysis.pass_only_with_skill.length > 0 ||
+      analysis.pass_in_both.length > 0 ||
+      analysis.fail_in_both.length > 0 ||
+      analysis.flaky.length > 0)
+  ) {
+    lines.push('## Assertion Analysis', '');
+    if (analysis.pass_only_with_skill.length > 0) {
+      lines.push(
+        `- **Pass only with skill (${analysis.pass_only_with_skill.length}):** ${analysis.pass_only_with_skill.map((item) => `\`${item}\``).join(', ')}`,
+      );
+    }
+    if (analysis.pass_in_both.length > 0) {
+      lines.push(
+        `- **Pass in both (${analysis.pass_in_both.length}):** ${analysis.pass_in_both.map((item) => `\`${item}\``).join(', ')}`,
+      );
+    }
+    if (analysis.fail_in_both.length > 0) {
+      lines.push(
+        `- **Fail in both (${analysis.fail_in_both.length}):** ${analysis.fail_in_both.map((item) => `\`${item}\``).join(', ')}`,
+      );
+    }
+    if (analysis.flaky.length > 0) {
+      lines.push(
+        `- **Flaky (${analysis.flaky.length}):** ${analysis.flaky.map((item) => `\`${item}\``).join(', ')}`,
+      );
+    }
+    lines.push('');
+  }
+
   lines.push('## Eval Cases', '');
   for (const evalCase of cases) {
     lines.push(
@@ -113,12 +145,12 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
 
     for (const run of evalCase.runs) {
       lines.push(
-        `#### \`${run.variant}\` — Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds}s, ${run.timing.total_tokens} tokens)`,
+        `#### \`${run.variant}\` - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds}s, ${run.timing.total_tokens} tokens)`,
         '',
       );
       for (const exp of run.grading.expectations) {
         const badge = exp.passed ? 'PASS' : 'FAIL';
-        lines.push(`- **[${badge}]** ${exp.text} — ${exp.evidence}`);
+        lines.push(`- **[${badge}]** ${exp.text}: ${exp.evidence}`);
       }
       lines.push('');
     }

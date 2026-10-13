@@ -278,10 +278,15 @@ export async function evaluateScriptedAssertion({
   };
 }
 
-async function listWorkspaceSummary(
-  workdir: string,
-  segments: readonly string[] = [],
-): Promise<string[]> {
+interface ListWorkspaceSummaryParams {
+  workdir: string;
+  segments?: readonly string[];
+}
+
+async function listWorkspaceSummary({
+  workdir,
+  segments = [],
+}: ListWorkspaceSummaryParams): Promise<string[]> {
   const dir = join(workdir, ...segments);
   const entries = await readdir(dir, { withFileTypes: true });
   entries.sort((left, right) => left.name.localeCompare(right.name));
@@ -293,7 +298,9 @@ async function listWorkspaceSummary(
     const relPath = relSegments.join('/');
     const fullPath = join(workdir, ...relSegments);
     if (entry.isDirectory()) {
-      lines.push(...(await listWorkspaceSummary(workdir, relSegments)));
+      lines.push(
+        ...(await listWorkspaceSummary({ workdir, segments: relSegments })),
+      );
     } else if (entry.isFile()) {
       const info = await stat(fullPath);
       const preview =
@@ -424,9 +431,25 @@ export async function gradeEvalRun({
   timing: TimingReport;
 }> {
   await mkdir(runDir, { recursive: true });
-  const stringAssertions = evalCase.assertions.filter(
-    (item): item is string => typeof item === 'string',
-  );
+  const scriptedByIndex = new Map<number, GradedExpectation>();
+  const stringAssertions: string[] = [];
+
+  for (let index = 0; index < evalCase.assertions.length; index++) {
+    const assertion = evalCase.assertions[index];
+    if (assertion === undefined) continue;
+    if (typeof assertion === 'string') {
+      stringAssertions.push(assertion);
+    } else {
+      scriptedByIndex.set(
+        index,
+        await evaluateScriptedAssertion({
+          assertion,
+          workdir,
+          env,
+        }),
+      );
+    }
+  }
 
   let gradedStrings = new Map<string, GradedExpectation>();
   if (stringAssertions.length > 0) {
@@ -435,7 +458,7 @@ export async function gradeEvalRun({
       schemaPath,
       `${JSON.stringify(GRADER_JSON_SCHEMA, null, 2)}\n`,
     );
-    const workspaceSummary = await listWorkspaceSummary(workdir);
+    const workspaceSummary = await listWorkspaceSummary({ workdir });
     const prompt = buildBlindGraderPrompt({
       evalCase,
       response: taskResult.response,
@@ -457,27 +480,28 @@ export async function gradeEvalRun({
     gradedStrings = new Map(normalized.map((item) => [item.text, item]));
   }
 
-  const expectations: GradedExpectation[] = [];
-  for (const assertion of evalCase.assertions) {
-    if (typeof assertion === 'string') {
-      expectations.push(
-        gradedStrings.get(assertion) ?? {
-          text: assertion,
-          kind: 'string',
+  const expectations: GradedExpectation[] = evalCase.assertions.map(
+    (assertion, index) => {
+      if (typeof assertion === 'string') {
+        return (
+          gradedStrings.get(assertion) ?? {
+            text: assertion,
+            kind: 'string',
+            passed: false,
+            evidence: 'Grader did not return a result for this assertion.',
+          }
+        );
+      }
+      return (
+        scriptedByIndex.get(index) ?? {
+          text: formatAssertionLabel(assertion),
+          kind: assertion.type,
           passed: false,
-          evidence: 'Grader did not return a result for this assertion.',
-        },
+          evidence: 'Scripted assertion was not evaluated.',
+        }
       );
-    } else {
-      expectations.push(
-        await evaluateScriptedAssertion({
-          assertion,
-          workdir,
-          env,
-        }),
-      );
-    }
-  }
+    },
+  );
 
   const passed = expectations.filter((item) => item.passed).length;
   const total = expectations.length;
