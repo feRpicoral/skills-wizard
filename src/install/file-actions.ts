@@ -127,15 +127,18 @@ function wasCreated(
 
 interface RegionPreambleParams {
   target: RegionTarget;
-  existing: string | null;
+  file: ResolvedTargetFile;
   previous: ManifestEntry | null;
 }
 
 function regionPreamble({
   target,
-  existing,
+  file,
   previous,
 }: RegionPreambleParams): string | undefined {
+  // A file reached through a link is not the CLI's, so neither is its heading.
+  if (file.writePath !== target.path) return undefined;
+  const { existing } = file;
   if (existing === null || isBlank(existing)) return target.preamble;
   const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
   return preamble && existing.trimStart().startsWith(preamble)
@@ -161,11 +164,7 @@ function planRegion({
       markers: MARKDOWN_MARKERS,
       ...(target.preamble ? { preamble: target.preamble } : {}),
     });
-    const preamble = regionPreamble({
-      target,
-      existing: file.existing,
-      previous,
-    });
+    const preamble = regionPreamble({ target, file, previous });
     const entry: ManifestEntry = {
       kind: 'region',
       path: target.path,

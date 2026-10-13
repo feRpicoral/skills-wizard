@@ -150,10 +150,12 @@ function planRegionRemoval(
       entry.kind === 'region' ? MARKDOWN_MARKERS : excludeMarkers(entry.id);
     const preamble = entry.kind === 'region' ? entry.preamble : undefined;
     const remaining = removeRegion(file.existing, markers);
+    // Through a link the file is not the CLI's, so a heading it once wrote stays.
+    const strip = preamble && !file.viaLink && remaining.trim() === preamble;
     return rewriteOrDelete({
       entry,
       file,
-      next: preamble && remaining.trim() === preamble ? '' : remaining,
+      next: strip ? '' : remaining,
       emptyWhen: (next) => next === '',
     });
   } catch (error) {
