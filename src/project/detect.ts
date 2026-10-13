@@ -329,19 +329,26 @@ function collectAdditiveSelections({
     if (allDeps.has('next')) {
       blocks.add('stack/nextjs');
       blocks.add('stack/tailwind-shadcn');
-      blocks.add('stack/tanstack-query');
       skills.add('vercel-react-best-practices');
-      skills.add('shadcn');
-      skills.add('frontend-design');
+      skills.add('vercel-composition-patterns');
+      skills.add('web-design-guidelines');
     }
     if (allDeps.has('@nestjs/core') || allDeps.has('@nestjs/common')) {
       blocks.add('stack/nestjs');
-      blocks.add('stack/prisma');
       skills.add('nestjs-module');
     }
     if (allDeps.has('expo') || allDeps.has('react-native')) {
       blocks.add('stack/expo-react-native');
       blocks.add('stack/tanstack-query');
+      skills.add('eas-workflows');
+      skills.add('eas-update');
+      skills.add('expo-dev-client');
+      skills.add('expo-upgrade');
+      skills.add('expo-module');
+      skills.add('react-native-best-practices');
+      skills.add('react-navigation');
+      skills.add('react-native-testing');
+      skills.add('upgrading-react-native');
       skills.add('vercel-react-native-skills');
     }
     if (
@@ -352,8 +359,7 @@ function collectAdditiveSelections({
       blocks.add('stack/tailwind-shadcn');
       blocks.add('stack/tanstack-query');
       skills.add('vercel-react-best-practices');
-      skills.add('shadcn');
-      skills.add('frontend-design');
+      skills.add('web-design-guidelines');
     }
   }
 
@@ -361,6 +367,10 @@ function collectAdditiveSelections({
     hasPrismaFiles || allDeps.has('prisma') || allDeps.has('@prisma/client');
   if (hasPrisma) {
     blocks.add('stack/prisma');
+    skills.add('prisma-cli');
+    skills.add('prisma-client-api');
+    skills.add('prisma-orm-setup');
+    skills.add('prisma-upgrade-v7');
   }
 
   const hasSupabase =
@@ -370,10 +380,13 @@ function collectAdditiveSelections({
   if (hasSupabase) {
     blocks.add('stack/supabase-prisma');
     skills.add('supabase-prisma');
+    skills.add('supabase');
+    skills.add('supabase-postgres-best-practices');
   }
 
   if (allDeps.has('@tanstack/react-query')) {
     blocks.add('stack/tanstack-query');
+    skills.add('tanstack-query-expert');
   }
 
   if (
@@ -383,13 +396,11 @@ function collectAdditiveSelections({
     allDeps.has('@tailwindcss/postcss')
   ) {
     blocks.add('stack/tailwind-shadcn');
-    skills.add('shadcn');
+    skills.add('tailwind-patterns');
   }
 
   const hasAiSdk =
-    allDeps.has('ai') ||
-    allDeps.has('@ai-sdk/openai') ||
-    allDeps.has('@ai-sdk/anthropic');
+    allDeps.has('ai') || [...allDeps].some((dep) => dep.startsWith('@ai-sdk/'));
   const hasAnthropicSdk = allDeps.has('@anthropic-ai/sdk');
   const hasLlm =
     hasAiSdk ||

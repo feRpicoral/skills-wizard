@@ -401,9 +401,10 @@ test('cli rejects invalid numeric flags and accepts --baseline none and --cases 
   assert.match(evalNoBaseline.stdout, /Evaluated skill-author with fake/);
 });
 
-test('init with --preset and lean style writes project seed, stack blocks, skills, and passes doctor', async (t) => {
+test('init with --preset defaults to lean style when a global install exists and passes doctor', async (t) => {
   const home = await tempDir(t);
   const project = await tempDir(t);
+  await cli(home, INSTALL);
   await writeFile(
     join(project, 'package.json'),
     JSON.stringify({
@@ -446,13 +447,13 @@ test('init with --preset and lean style writes project seed, stack blocks, skill
   assert.equal(manifest.options.preset, 'nestjs-api');
   assert.equal(manifest.options.style, 'lean');
   assert.deepEqual(manifest.skills, [
-    'nestjs-module',
     'eslint-configuration',
     'prettier-configuration',
+    'nestjs-module',
   ]);
 });
 
-test('init with --style self-contained includes engineering blocks and sync preserves edited seed preamble', async (t) => {
+test('init without a global install defaults to self-contained style and sync preserves edited seed preamble', async (t) => {
   const home = await tempDir(t);
   const project = await tempDir(t);
   await writeFile(
@@ -466,8 +467,6 @@ test('init with --style self-contained includes engineering blocks and sync pres
     project,
     '--preset',
     'node-tool',
-    '--style',
-    'self-contained',
     '--skills',
     '',
     '--tools',
@@ -482,9 +481,13 @@ test('init with --style self-contained includes engineering blocks and sync pres
   await writeFile(join(project, 'AGENTS.md'), customPreamble);
   const syncResult = await cli(home, ['sync', '--project', project, '--yes']);
   const afterSync = await readFile(join(project, 'AGENTS.md'), 'utf8');
+  const manifest = JSON.parse(
+    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+  ) as { options: { style?: string } };
 
   assert.equal(initResult.code, 0);
   assert.equal(syncResult.code, 0);
+  assert.equal(manifest.options.style, 'self-contained');
   assert.match(
     afterSync,
     /Custom architecture notes preserved outside managed region\./,

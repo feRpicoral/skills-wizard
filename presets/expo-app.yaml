@@ -8,6 +8,15 @@ blocks:
   - stack/expo-react-native
   - stack/tanstack-query
 skills:
-  - vercel-react-native-skills
   - eslint-configuration
   - prettier-configuration
+  - eas-workflows
+  - eas-update
+  - expo-dev-client
+  - expo-upgrade
+  - expo-module
+  - react-native-best-practices
+  - react-navigation
+  - react-native-testing
+  - upgrading-react-native
+  - vercel-react-native-skills

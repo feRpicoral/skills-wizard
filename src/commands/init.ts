@@ -10,7 +10,7 @@ import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
-import { isDirectory } from '../install/fs.ts';
+import { isDirectory, lstatIfExists } from '../install/fs.ts';
 import { buildPlan } from '../install/plan.ts';
 import type { ProjectDetection } from '../project/detect.ts';
 import {
@@ -44,7 +44,7 @@ import {
   type SkillLibrary,
   unknownSkillNames,
 } from '../skills/library.ts';
-import type { Manifest } from '../state/manifest.ts';
+import { globalManifestPath, type Manifest } from '../state/manifest.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
@@ -158,6 +158,7 @@ async function loadPresetsIfAvailable(
 interface ResolveProjectPresetParams {
   scope: Scope;
   prompting: boolean;
+  hasGlobalInstall: boolean;
   presets: readonly PresetDefinition[];
   detection: ProjectDetection | undefined;
   previous: Manifest | null;
@@ -168,6 +169,7 @@ interface ResolveProjectPresetParams {
 async function resolveProjectPresetAndStyle({
   scope,
   prompting,
+  hasGlobalInstall,
   presets,
   detection,
   previous,
@@ -195,15 +197,18 @@ async function resolveProjectPresetAndStyle({
   const hasAdditive =
     (detection?.detectedBlocks.length ?? 0) > 0 ||
     (detection?.detectedSkills.length ?? 0) > 0;
+  const defaultStyle: ProjectStyle = hasGlobalInstall
+    ? 'lean'
+    : 'self-contained';
   let style: ProjectStyle | undefined;
   if (requestedStyle !== undefined) {
     style = requestedStyle;
   } else if (previous !== null && previous.options.style !== undefined) {
     style = previous.options.style;
   } else if (prompting) {
-    style = await promptProjectStyle('lean');
+    style = await promptProjectStyle(defaultStyle);
   } else if (preset !== undefined || hasAdditive) {
-    style = 'lean';
+    style = defaultStyle;
   }
 
   return { preset, style };
@@ -268,9 +273,13 @@ export async function runInit(
           skillLibrary,
         })
       : [];
+  const hasGlobalInstall =
+    scope === 'project' &&
+    (await lstatIfExists(globalManifestPath(ctx.paths))) !== null;
   const { preset, style } = await resolveProjectPresetAndStyle({
     scope,
     prompting,
+    hasGlobalInstall,
     presets,
     detection: location.detection,
     previous,
@@ -290,7 +299,7 @@ export async function runInit(
   const presetSelection = usePresetDefaults
     ? resolvePresetSelection({
         preset: preset ? findPreset(presets, preset) : undefined,
-        style: style ?? 'lean',
+        style: style ?? (hasGlobalInstall ? 'lean' : 'self-contained'),
         blockLibrary: library,
         skillLibrary,
         detectedBlocks: location.detection?.detectedBlocks ?? [],
