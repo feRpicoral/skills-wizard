@@ -49,6 +49,20 @@ export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
 }
 
+const REPOSITORY_GIT_VARIABLES = new Set([
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_NAMESPACE',
+  'GIT_PREFIX',
+]);
+
 export function gitEnvironment(env: Environment = process.env): Environment {
-  return { ...env, GIT_TERMINAL_PROMPT: '0' };
+  const kept = Object.entries(env).filter(
+    ([name]) => !REPOSITORY_GIT_VARIABLES.has(name),
+  );
+  return { ...Object.fromEntries(kept), GIT_TERMINAL_PROMPT: '0' };
 }

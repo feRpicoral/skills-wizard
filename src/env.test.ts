@@ -57,3 +57,24 @@ test('gitEnvironment keeps the environment and turns off credential prompts', ()
 
   assert.deepEqual(env, { PATH: '/bin', GIT_TERMINAL_PROMPT: '0' });
 });
+
+test('gitEnvironment drops variables that point git at another repository', () => {
+  const env = gitEnvironment({
+    PATH: '/bin',
+    GIT_DIR: '/work/app/.git',
+    GIT_WORK_TREE: '/work/app',
+    GIT_INDEX_FILE: '/work/app/.git/index',
+    GIT_OBJECT_DIRECTORY: '/work/app/.git/objects',
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: '/work/other/.git/objects',
+    GIT_COMMON_DIR: '/work/app/.git',
+    GIT_NAMESPACE: 'ns',
+    GIT_PREFIX: 'src/',
+    GIT_CONFIG_NOSYSTEM: '1',
+  });
+
+  assert.deepEqual(env, {
+    PATH: '/bin',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+  });
+});
