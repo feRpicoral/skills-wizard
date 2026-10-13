@@ -9,8 +9,6 @@ type JsonObject = Record<string, unknown>;
 
 const DEFAULT_INDENT = 2;
 
-export const LEGACY_CREATED_KEYS = 1;
-
 function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -163,6 +161,18 @@ export function removeArrayValues({
     content = removeKey({ existing: content, keys: ancestorPath });
   }
   return content;
+}
+
+interface LegacyCreatedKeysParams {
+  keyPath: string;
+  createdFile: boolean;
+}
+
+export function legacyCreatedKeys({
+  keyPath,
+  createdFile,
+}: LegacyCreatedKeysParams): number {
+  return createdFile ? parsePath(keyPath).length : 1;
 }
 
 export function isEmptyJsonObject(content: string): boolean {

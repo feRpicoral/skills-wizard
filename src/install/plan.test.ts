@@ -10,7 +10,7 @@ import {
   rm,
   symlink,
 } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
@@ -259,6 +259,51 @@ test('deselecting Gemini CLI keeps other settings and parents as written', async
     await readFile(join(paths.geminiHome, 'settings.json'), 'utf8'),
     settings,
   );
+});
+
+async function legacySettingsInstall(paths: Paths): Promise<string> {
+  const settings = join(paths.geminiHome, 'settings.json');
+  await writeFiles(paths.home, {
+    '.gemini/settings.json':
+      '{\n  "context": {\n    "fileName": [\n      "AGENTS.md",\n      "GEMINI.md"\n    ]\n  }\n}\n',
+    [relative(paths.home, globalManifestPath(paths))]: JSON.stringify({
+      version: 1,
+      scope: 'global',
+      tools: ['gemini-cli'],
+      blocks: [],
+      variables: {},
+      entries: [
+        {
+          kind: 'json-array',
+          path: settings,
+          key: 'context.fileName',
+          added: ['AGENTS.md', 'GEMINI.md'],
+          wasString: false,
+          createdFile: true,
+        },
+      ],
+    }),
+  });
+  return settings;
+}
+
+test('a settings file created before parents were recorded is deleted on removal', async (t) => {
+  const paths = await tempPaths(t);
+  const settings = await legacySettingsInstall(paths);
+
+  await installGlobal(paths, []);
+
+  await assert.rejects(lstat(settings), { code: 'ENOENT' });
+});
+
+test('a sync keeps an unrecorded parent count unknown instead of guessing', async (t) => {
+  const paths = await tempPaths(t);
+  const settings = await legacySettingsInstall(paths);
+  await installGlobal(paths, ['gemini-cli']);
+
+  await installGlobal(paths, []);
+
+  await assert.rejects(lstat(settings), { code: 'ENOENT' });
 });
 
 test('keeps the shared Gemini file while another tool still uses it', async (t) => {
