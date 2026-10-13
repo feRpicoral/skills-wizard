@@ -1,6 +1,6 @@
 import { join, posix } from 'node:path';
 
-import { parse, stringify } from 'yaml';
+import { Document, isMap, isSeq, parse, parseDocument } from 'yaml';
 import { z } from 'zod';
 
 import { SCOPES } from '../blocks/library.ts';
@@ -12,6 +12,7 @@ const CATALOG_FILE = 'catalog.yaml';
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/(?!\.\.?$)[A-Za-z0-9._-]+$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const REF_FORBIDDEN = new Set(['~', '^', ':', '?', '*', '[', '\\']);
+const YAML_OUTPUT = { lineWidth: 0, flowCollectionPadding: false } as const;
 export const WHOLE_REPOSITORY = '.';
 
 export function isRepository(repo: string): boolean {
@@ -112,6 +113,15 @@ function checkEntries(catalog: Catalog, file: string): void {
   }
 }
 
+function parseCatalog(raw: unknown, file: string): Catalog {
+  const result = catalogSchema.safeParse(raw);
+  if (!result.success) {
+    throw new CatalogError(`${file}: ${z.prettifyError(result.error)}`);
+  }
+  checkEntries(result.data, file);
+  return result.data;
+}
+
 export async function loadCatalog(file: string): Promise<Catalog> {
   const source = await readTextIfExists(file);
   if (source === null) return { categories: {}, skills: [] };
@@ -122,12 +132,7 @@ export async function loadCatalog(file: string): Promise<Catalog> {
   } catch (error) {
     throw new CatalogError(`${file} is not valid YAML`, { cause: error });
   }
-  const result = catalogSchema.safeParse(raw);
-  if (!result.success) {
-    throw new CatalogError(`${file}: ${z.prettifyError(result.error)}`);
-  }
-  checkEntries(result.data, file);
-  return result.data;
+  return parseCatalog(raw, file);
 }
 
 export function repositoryPaths(catalog: Catalog, repo: string): string[] {
@@ -137,31 +142,83 @@ export function repositoryPaths(catalog: Catalog, repo: string): string[] {
   return [...new Set(paths)].sort();
 }
 
-export async function appendCatalogEntries(
-  file: string,
-  entries: readonly CatalogEntry[],
-): Promise<Catalog> {
-  const current = await loadCatalog(file);
-  const categories = { ...current.categories };
+interface ExtendCatalogParams {
+  catalog: Catalog;
+  entries: readonly CatalogEntry[];
+  file: string;
+}
+
+export function extendCatalog({
+  catalog,
+  entries,
+  file,
+}: ExtendCatalogParams): Catalog {
+  const categories = { ...catalog.categories };
   for (const entry of entries) {
     if (!Object.hasOwn(categories, entry.category)) {
       categories[entry.category] = entry.category;
     }
   }
-  const next: Catalog = {
-    categories,
-    skills: [
-      ...current.skills,
-      ...entries.map((entry) => entrySchema.parse(entry)),
-    ],
-  };
-  checkEntries(next, file);
-  const serialized = {
-    categories: next.categories,
-    skills: next.skills.map(({ defaults, ...rest }) =>
-      defaults.length > 0 ? { ...rest, defaults } : rest,
-    ),
-  };
-  await writeTextAtomic({ path: file, content: stringify(serialized) });
+  return parseCatalog(
+    { categories, skills: [...catalog.skills, ...entries] },
+    file,
+  );
+}
+
+function entryNode(doc: Document, entry: CatalogEntry) {
+  const { defaults, ...rest } = entry;
+  const node = doc.createNode(
+    defaults.length > 0 ? { ...rest, defaults } : rest,
+  );
+  for (const key of ['scopes', 'defaults']) {
+    const list = node.get(key, true);
+    if (isSeq(list)) list.flow = true;
+  }
+  return node;
+}
+
+function catalogDocument(source: string | null, file: string): Document {
+  if (source === null || source.trim() === '') {
+    return new Document({ categories: {}, skills: [] });
+  }
+  const doc = parseDocument(source);
+  if (doc.errors.length > 0) {
+    throw new CatalogError(`${file} is not valid YAML`, {
+      cause: doc.errors[0],
+    });
+  }
+  return doc;
+}
+
+export async function appendCatalogEntries(
+  file: string,
+  entries: readonly CatalogEntry[],
+): Promise<Catalog> {
+  const source = await readTextIfExists(file);
+  const doc = catalogDocument(source, file);
+  const current = parseCatalog(doc.toJS(), file);
+  const next = extendCatalog({ catalog: current, entries, file });
+
+  const categories = doc.get('categories', true);
+  const skills = doc.get('skills', true);
+  if (!isMap(categories) || !isSeq(skills)) {
+    throw new CatalogError(
+      `${file}: categories must be a map and skills a list`,
+    );
+  }
+  for (const [key, label] of Object.entries(next.categories)) {
+    if (!Object.hasOwn(current.categories, key)) categories.set(key, label);
+  }
+  if (skills.items.length === 0) skills.flow = false;
+  let previousRepo = current.skills.at(-1)?.repo;
+  for (const entry of next.skills.slice(current.skills.length)) {
+    const node = entryNode(doc, entry);
+    node.spaceBefore =
+      previousRepo !== undefined && previousRepo !== entry.repo;
+    skills.items.push(node);
+    previousRepo = entry.repo;
+  }
+
+  await writeTextAtomic({ path: file, content: doc.toString(YAML_OUTPUT) });
   return next;
 }
