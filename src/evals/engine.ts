@@ -31,6 +31,7 @@ import {
   prepareTriggerWorkspace,
   resolveSkillRepository,
   verifySkillAtRef,
+  validateEvalSuiteFileDestinations,
 } from './workspace.ts';
 
 interface BoundedConcurrencyParams<T, R> {
@@ -226,6 +227,7 @@ export async function runSkillEval({
   if (selectedCases.length === 0) {
     throw new EvalError(`No eval cases found in ${skillName}`);
   }
+  validateEvalSuiteFileDestinations({ cases: selectedCases, skillName });
 
   const variants: EvalVariant[] = ['with_skill'];
   if (baseline) variants.push('without_skill');
