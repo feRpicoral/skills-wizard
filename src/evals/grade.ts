@@ -66,6 +66,10 @@ export interface TimingReport {
   triggered: boolean;
   exit_code: number;
   timed_out: boolean;
+  /** False when the runner reported no token usage; token fields are then 0. */
+  usage_reported?: boolean;
+  /** Why the agent run failed, when it did. */
+  error?: string;
 }
 
 export function formatAssertionLabel(assertion: EvalAssertion): string {
