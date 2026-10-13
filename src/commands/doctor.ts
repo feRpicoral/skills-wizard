@@ -18,6 +18,7 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan, type PlannedAction } from '../install/plan.ts';
+import { isPresetId, type PresetId } from '../project/presets.ts';
 import { scanInstalledSkills } from '../skills/collisions.ts';
 import {
   DEFAULT_SKILL_MODE,
@@ -31,6 +32,7 @@ import {
   loadLibrary,
   type Location,
   readLocationManifest,
+  replacementSkillHint,
   resolveLocation,
   setVariablesCommand,
   sourceCache,
@@ -143,6 +145,7 @@ interface PlanFindingsParams {
   skills: string[];
   skillSources: ReadonlyMap<string, SkillSource>;
   keepLocal: boolean;
+  preset: PresetId | undefined;
   reportOutdated: boolean;
 }
 
@@ -163,6 +166,7 @@ async function planFindings({
   skills,
   skillSources,
   keepLocal,
+  preset,
   reportOutdated,
 }: PlanFindingsParams): Promise<Finding[]> {
   const findings: Finding[] = [];
@@ -177,9 +181,7 @@ async function planFindings({
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
       skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
-      ...(manifest.options.preset !== undefined
-        ? { preset: manifest.options.preset }
-        : {}),
+      ...(preset !== undefined ? { preset } : {}),
       ...(manifest.options.style !== undefined
         ? { style: manifest.options.style }
         : {}),
@@ -278,18 +280,27 @@ export async function runDoctor(
 
   const library = await loadLibrary(ctx);
   const findings: Finding[] = [];
+  const rawPreset = manifest.options.preset;
+  const preset =
+    rawPreset !== undefined && isPresetId(rawPreset) ? rawPreset : undefined;
+  if (rawPreset !== undefined && preset === undefined) {
+    findings.push({
+      level: 'warn',
+      message: `Preset "${rawPreset}" is no longer recognized; agents-config sync will drop it`,
+    });
+  }
   const unknown = unknownBlockIds(library, manifest.blocks);
   if (unknown.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Blocks no longer in the library: ${unknown.join(', ')}; agents-config sync will drop them`,
+      message: `Blocks no longer in the library: ${unknown.join(', ')}; agents-config sync will drop them${replacementSkillHint(unknown)}`,
     });
   }
   const outOfScope = outOfScopeBlockIds(library, manifest.blocks, scope);
   if (outOfScope.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Blocks no longer available for ${scope} scope: ${outOfScope.join(', ')}; agents-config sync will drop them`,
+      message: `Blocks no longer available for ${scope} scope: ${outOfScope.join(', ')}; agents-config sync will drop them${replacementSkillHint(outOfScope)}`,
     });
   }
   const { ids: blocks, added } = withRequirements(
@@ -369,6 +380,7 @@ export async function runDoctor(
       skills,
       skillSources: resolution.sources,
       keepLocal,
+      preset,
       reportOutdated: unresolved.length === 0,
     })),
   );

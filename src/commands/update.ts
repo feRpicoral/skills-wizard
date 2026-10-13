@@ -48,6 +48,7 @@ import { type Manifest, projectManifestPath } from '../state/manifest.ts';
 import { forgetProject, readProjects } from '../state/projects.ts';
 import {
   dropUnavailableBlocks,
+  dropUnknownPreset,
   dropUnknownSkills,
   loadLibrary,
   notify,
@@ -330,6 +331,11 @@ async function planUpdateTarget({
   if (location.project && recordedLocal && !keepLocal) {
     notifyLeftGit(ctx, prompting, location.project.dir);
   }
+  const preset = dropUnknownPreset({
+    ctx,
+    prompting,
+    preset: previous.options.preset,
+  });
   return buildPlan({
     scope: location.scope,
     selection: {
@@ -340,9 +346,7 @@ async function planUpdateTarget({
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
-      ...(previous.options.preset !== undefined
-        ? { preset: previous.options.preset }
-        : {}),
+      ...(preset !== undefined ? { preset } : {}),
       ...(previous.options.style !== undefined
         ? { style: previous.options.style }
         : {}),
