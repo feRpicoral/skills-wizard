@@ -44,7 +44,7 @@ interface RawEntry {
   name: string;
   folder: string;
   path: string;
-  rootKind: SkillRoot['kind'];
+  root: SkillRoot;
   real: string;
 }
 
@@ -160,7 +160,7 @@ async function scanRoot(
       name,
       folder: child.name,
       path,
-      rootKind: root.kind,
+      root,
       real: await locate(path),
     });
   }
@@ -184,13 +184,21 @@ export async function scanInstalledSkills(
     rawEntries.push(...(await scanRoot(root, skipped)));
   }
 
+  const readOnly = new Set(
+    rawEntries
+      .filter(({ root }) => root.kind === 'external' || root.kind === 'plugin')
+      .map((entry) => entry.real),
+  );
   const byLocation = new Map<string, DiscoveredSkill>();
+  const rootsOf = new Map<DiscoveredSkill, Set<SkillRoot>>();
   const skills: DiscoveredSkill[] = [];
 
   for (const entry of rawEntries) {
     const known = byLocation.get(entry.real);
-    if (known) {
+    const knownRoots = known ? rootsOf.get(known) : undefined;
+    if (known && knownRoots && !knownRoots.has(entry.root)) {
       known.locations.push(entry.path);
+      knownRoots.add(entry.root);
       continue;
     }
     const skill: DiscoveredSkill = {
@@ -199,9 +207,10 @@ export async function scanInstalledSkills(
       path: entry.path,
       locations: [entry.path],
       managed: ownedPaths.has(entry.path) && ownedSkills.has(entry.name),
-      readOnly: entry.rootKind === 'external' || entry.rootKind === 'plugin',
+      readOnly: readOnly.has(entry.real),
     };
-    byLocation.set(entry.real, skill);
+    if (!known) byLocation.set(entry.real, skill);
+    rootsOf.set(skill, new Set([entry.root]));
     skills.push(skill);
   }
 
