@@ -44,6 +44,7 @@ import {
   notify,
   readLocationManifest,
   resolveLocation,
+  resolveVariables,
 } from './shared.ts';
 
 export interface AdoptOptions {
@@ -361,6 +362,14 @@ export async function runAdopt(
     scope: 'global',
   });
   const { ids: blocks } = withRequirements(library, knownBlocks);
+  const variables = await resolveVariables({
+    ctx,
+    prompting,
+    library,
+    blocks,
+    location,
+    recorded: previous.variables,
+  });
   const priorSkills = dropUnknownSkills({
     ctx,
     prompting,
@@ -383,7 +392,7 @@ export async function runAdopt(
       tools,
       blocks,
       skills,
-      variables: previous.variables,
+      variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: false,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,

@@ -847,6 +847,42 @@ test('update drops recorded blocks that are no longer available for the scope', 
   );
 });
 
+test('update skips an install whose blocks gained a variable with no value and updates the others', async (t) => {
+  const { ctx, repoRoot, output } = await testContext(t);
+  await writeExtraBlock({ repoRoot, scopes: ['global'] });
+  await initGlobalWithExtra(ctx);
+  const project = await realpath(await tempDir(t));
+  await initProject({ ctx, projectDir: project });
+  await writeExtraBlock({
+    repoRoot,
+    scopes: ['global'],
+    variables: ['teamName'],
+    body: 'Team: {{teamName}}',
+  });
+  await writeFiles(repoRoot, {
+    'blocks/core/identity.md': blockSource('Follow the new rules.', {
+      title: 'Identity',
+      group: 'core',
+    }),
+  });
+
+  const code = await runUpdate(ctx, { yes: true, dryRun: false });
+
+  assert.equal(code, 0);
+  assert.match(
+    output.join('\n'),
+    /Skipping the system-wide install: The blocks now use variables with no recorded value: teamName\. Set them with agents-config init --global --var teamName=<value>/,
+  );
+  assert.match(
+    await readFile(join(project, 'AGENTS.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+  assert.doesNotMatch(
+    await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
+    /Follow the new rules\./,
+  );
+});
+
 test('adopt drops recorded blocks that are no longer available for the scope', async (t) => {
   const upstream = await createUpstream(t, {
     'skills/deploy/SKILL.md': skillSource('deploy'),
@@ -874,5 +910,37 @@ test('adopt drops recorded blocks that are no longer available for the scope', a
   assert.doesNotMatch(
     await readFile(join(ctx.paths.claudeHome, 'CLAUDE.md'), 'utf8'),
     /Extra rules\./,
+  );
+});
+
+test('adopt asks for a variable a block gained before changing anything', async (t) => {
+  const upstream = await createUpstream(t, {
+    'skills/deploy/SKILL.md': skillSource('deploy'),
+  });
+  const { ctx, repoRoot } = await testContext(t, { url: () => upstream.url });
+  await writeExtraBlock({ repoRoot, scopes: ['global'] });
+  await initGlobalWithExtra(ctx);
+  await lockedDeploy({ ctx });
+  await writeExtraBlock({
+    repoRoot,
+    scopes: ['global'],
+    variables: ['teamName'],
+    body: 'Team: {{teamName}}',
+  });
+  const catalogBefore = await readFile(join(repoRoot, 'catalog.yaml'), 'utf8');
+
+  await assert.rejects(
+    runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
+    (error: unknown) =>
+      error instanceof UsageError &&
+      /teamName\. Set them with agents-config init --global --var teamName=<value>/.test(
+        error.message,
+      ),
+  );
+
+  await adoptedNothing(ctx);
+  assert.equal(
+    await readFile(join(repoRoot, 'catalog.yaml'), 'utf8'),
+    catalogBefore,
   );
 });

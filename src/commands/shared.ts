@@ -5,14 +5,25 @@ import { promisify } from 'node:util';
 
 import * as clack from '@clack/prompts';
 
-import { outOfScopeBlockIds, unknownBlockIds } from '../blocks/compose.ts';
+import {
+  outOfScopeBlockIds,
+  requiredVariables,
+  selectBlocks,
+  unknownBlockIds,
+} from '../blocks/compose.ts';
 import {
   type BlockLibrary,
   loadBlockLibrary,
   type Scope,
 } from '../blocks/library.ts';
+import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
-import { AgentsConfigError, isSystemError, UsageError } from '../errors.ts';
+import {
+  AgentsConfigError,
+  isSystemError,
+  MissingVariablesError,
+  UsageError,
+} from '../errors.ts';
 import { applyPlan } from '../install/apply.ts';
 import {
   conflicts,
@@ -31,7 +42,7 @@ import {
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
 import { skillFolders } from '../install/targets.ts';
-import { confirmApply } from '../prompts/selection.ts';
+import { confirmApply, promptVariables } from '../prompts/selection.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
 import { type SkillLibrary, unknownSkillNames } from '../skills/library.ts';
 import { readSkillLock, skillLockPath } from '../skills/lock.ts';
@@ -218,6 +229,47 @@ export function setVariablesCommand({
     : '--global';
   const variables = names.map((name) => `--var ${name}=<value>`).join(' ');
   return `agents-config init ${target} ${variables}`;
+}
+
+interface ResolveVariablesParams {
+  ctx: Context;
+  prompting: boolean;
+  library: BlockLibrary;
+  blocks: readonly string[];
+  location: Location;
+  recorded: Readonly<Record<string, string>>;
+}
+
+// A block edited to use a new variable has no recorded value yet. Look it up
+// (or ask for it) the way init does, and stop with the init command otherwise.
+export async function resolveVariables({
+  ctx,
+  prompting,
+  library,
+  blocks,
+  location,
+  recorded,
+}: ResolveVariablesParams): Promise<Record<string, string>> {
+  const needed = requiredVariables(
+    selectBlocks(library, blocks, location.scope),
+  );
+  const missing = needed.filter((name) => !recorded[name]?.trim());
+  if (missing.length === 0) return { ...recorded };
+
+  const found = await lookupVariables(missing, recorded);
+  if (prompting) {
+    return { ...recorded, ...(await promptVariables(missing, found)) };
+  }
+  const unresolved = missing.filter((name) => !found[name]?.trim());
+  if (unresolved.length > 0) {
+    throw new MissingVariablesError(
+      `The blocks now use variables with no recorded value: ${unresolved.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolved })}`,
+    );
+  }
+  ctx.print(
+    `Using looked-up values for new variables: ${missing.map((name) => `${name}=${found[name] ?? ''}`).join(', ')}`,
+  );
+  return found;
 }
 
 export function notifyLeftGit(
