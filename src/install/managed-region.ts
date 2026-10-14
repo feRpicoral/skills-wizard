@@ -39,6 +39,18 @@ export function excludeMarkers(id: string): Markers {
   };
 }
 
+export function gitignorePattern(path: string): string {
+  if (/[\r\n]/.test(path)) {
+    throw new ManagedRegionError(
+      'git exclude entry path must not contain line breaks',
+    );
+  }
+  const escaped = path
+    .replace(/[[\]*?\\]/g, '\\$&')
+    .replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length));
+  return `/${escaped}`;
+}
+
 interface Bounds {
   begin: number;
   end: number;
@@ -206,9 +218,12 @@ export function planExcludeRegion({
   previous,
 }: FileActionParams<ExcludeRegionTarget>): PlannedAction {
   try {
+    const body = target.paths
+      ? target.paths.map((path) => gitignorePattern(path)).join('\n')
+      : target.body;
     const next = upsertRegion({
       existing: file.existing,
-      body: target.body,
+      body,
       markers: excludeMarkers(target.id),
     });
     const entry: ManifestEntry = {

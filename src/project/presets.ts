@@ -209,10 +209,16 @@ export function findPreset(
   return presets.find((preset) => preset.id === id);
 }
 
+const NON_YARN_NODE_MANAGERS: ReadonlySet<DetectedPackageManager> = new Set([
+  'npm',
+  'pnpm',
+  'bun',
+]);
+
 /**
  * Resolves the project block and skill selection for a stack `preset`,
  * `style` (`lean` vs `self-contained`), detected `packageManager` (omitting
- * `stack/node-yarn` for non-Yarn managers), and additive `detectedBlocks` /
+ * `stack/node-yarn` for non-Yarn Node managers), and additive `detectedBlocks` /
  * `detectedSkills`.
  *
  * Returned `blocks` are ordered according to `blockLibrary.blocks` and filtered
@@ -243,7 +249,7 @@ export function resolvePresetSelection({
     if (
       blockId === 'stack/node-yarn' &&
       packageManager !== undefined &&
-      packageManager !== 'yarn'
+      NON_YARN_NODE_MANAGERS.has(packageManager)
     ) {
       continue;
     }
@@ -287,6 +293,10 @@ export interface ResolveProjectPresetParams {
   previousPreset: PresetChoice | undefined;
   requestedPreset: PresetChoice | undefined;
   requestedStyle: ProjectStyle | undefined;
+  prompts?: {
+    promptPreset?: typeof promptPreset;
+    promptProjectStyle?: typeof promptProjectStyle;
+  };
 }
 
 /**
@@ -304,6 +314,7 @@ export async function resolveProjectPresetAndStyle({
   previousPreset,
   requestedPreset,
   requestedStyle,
+  prompts,
 }: ResolveProjectPresetParams): Promise<{
   preset: PresetChoice | undefined;
   style: ProjectStyle | undefined;
@@ -311,14 +322,20 @@ export async function resolveProjectPresetAndStyle({
   if (scope !== 'project') {
     return { preset: undefined, style: undefined };
   }
+  const askPreset = prompts?.promptPreset ?? promptPreset;
+  const askStyle = prompts?.promptProjectStyle ?? promptProjectStyle;
 
   let preset: PresetChoice | undefined;
   if (requestedPreset !== undefined) {
     preset = requestedPreset;
+  } else if (prompting && presets.length > 0) {
+    preset = await askPreset(
+      presets,
+      previousPreset ?? detection?.preset,
+      detection?.preset,
+    );
   } else if (previous !== null) {
     preset = previousPreset;
-  } else if (prompting && presets.length > 0) {
-    preset = await promptPreset(presets, detection?.preset);
   } else if (presets.length > 0) {
     preset = detection?.preset;
   }
@@ -332,10 +349,10 @@ export async function resolveProjectPresetAndStyle({
   let style: ProjectStyle | undefined;
   if (requestedStyle !== undefined) {
     style = requestedStyle;
+  } else if (prompting) {
+    style = await askStyle(previous?.options.style ?? defaultStyle);
   } else if (previous !== null) {
     style = previous.options.style;
-  } else if (prompting) {
-    style = await promptProjectStyle(defaultStyle);
   } else if ((preset !== undefined && preset !== 'none') || hasAdditive) {
     style = defaultStyle;
   }

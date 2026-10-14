@@ -20,6 +20,7 @@ import {
   PRESET_IDS,
   presetsPath,
   resolvePresetSelection,
+  resolveProjectPresetAndStyle,
 } from './presets.ts';
 import { buildProjectSeed, formatCodeSpan } from './seed.ts';
 
@@ -590,4 +591,125 @@ test('detectProject and buildProjectSeed handle workspace glob prefixes/exclusio
   );
   assert.equal(polyglotSeed.includes('- Run tests: `uv run pytest`'), true);
   assert.equal(polyglotSeed.includes('ruff check'), false);
+});
+
+test('resolveProjectPresetAndStyle prompts on interactive re-runs with detected hint, and polyglot repos preserve yarn and poetry', async (t) => {
+  const blockLibrary = await loadBlockLibrary(join(REPO_ROOT, 'blocks'));
+  const skillLibrary = await loadSkillLibrary(REPO_ROOT);
+  const presets = await loadPresets(presetsPath(REPO_ROOT), {
+    blockLibrary,
+    skillLibrary,
+  });
+  const nextPreset = findPreset(presets, 'nextjs-app');
+
+  const uvNext = resolvePresetSelection({
+    preset: nextPreset,
+    style: 'lean',
+    blockLibrary,
+    skillLibrary,
+    packageManager: 'uv',
+  });
+  assert.equal(uvNext.blocks.includes('stack/node-yarn'), true);
+
+  let receivedDetected: unknown;
+  let receivedDefault: unknown;
+  const interactive = await resolveProjectPresetAndStyle({
+    scope: 'project',
+    prompting: true,
+    hasGlobalInstall: false,
+    presets,
+    detection: {
+      name: 'demo',
+      preset: 'nextjs-app',
+      packageManager: 'yarn',
+      scripts: {},
+      hasNx: false,
+      hasPyproject: false,
+      detectedBlocks: [],
+      detectedSkills: [],
+      workspaces: [],
+    },
+    previous: {
+      version: 1,
+      scope: 'project',
+      tools: ['claude-code'],
+      blocks: [],
+      skills: [],
+      variables: {},
+      options: { preset: 'node-tool', style: 'lean' },
+      entries: [],
+    },
+    previousPreset: 'node-tool',
+    requestedPreset: undefined,
+    requestedStyle: undefined,
+    prompts: {
+      promptPreset: (_presets, defaultPreset, detectedPreset) => {
+        receivedDefault = defaultPreset;
+        receivedDetected = detectedPreset;
+        return Promise.resolve('nextjs-app');
+      },
+      promptProjectStyle: () => Promise.resolve('self-contained'),
+    },
+  });
+  assert.equal(receivedDefault, 'node-tool');
+  assert.equal(receivedDetected, 'nextjs-app');
+  assert.equal(interactive.preset, 'nextjs-app');
+  assert.equal(interactive.style, 'self-contained');
+
+  const root = await tempDir(t);
+  await writeFiles(root, {
+    'polyglot-poetry/package.json': JSON.stringify({
+      name: 'polyglot-poetry',
+      scripts: { build: 'tsc' },
+    }),
+    'polyglot-poetry/yarn.lock': '# yarn\n',
+    'polyglot-poetry/pyproject.toml': [
+      '[project]',
+      'description = """',
+      '[not-a-section] inside multiline string',
+      '"""',
+      'name = "kept-after-multiline-bracket"',
+      '',
+      '[tool.poetry]',
+      'name = "poetry-sub"',
+      '',
+      '[tool.pytest.ini_options]',
+      'testpaths = ["tests"]',
+      '',
+    ].join('\n'),
+    'polyglot-poetry/poetry.lock': '# poetry\n',
+    'char-globs/package.json': JSON.stringify({
+      name: 'char-globs',
+      workspaces: ['packages/pkg-[ab]', 'packages/*/*', '!packages/internal-*'],
+    }),
+    'char-globs/packages/pkg-a/package.json': JSON.stringify({
+      name: '@cg/a',
+    }),
+    'char-globs/packages/pkg-c/package.json': JSON.stringify({
+      name: '@cg/c',
+    }),
+    'char-globs/packages/internal-tools/sub/package.json': JSON.stringify({
+      name: '@cg/internal-sub',
+    }),
+  });
+
+  const [polyglotPoetry, charGlobs] = await Promise.all([
+    detectProject(join(root, 'polyglot-poetry')),
+    detectProject(join(root, 'char-globs')),
+  ]);
+
+  assert.equal(polyglotPoetry.packageManager, 'yarn');
+  assert.equal(polyglotPoetry.pythonPackageManager, 'poetry');
+  const poetrySeed = buildProjectSeed(polyglotPoetry);
+  assert.equal(
+    poetrySeed.includes('- Install dependencies: `poetry install`'),
+    true,
+  );
+  assert.equal(poetrySeed.includes('- Run tests: `poetry run pytest`'), true);
+  assert.equal(poetrySeed.includes('uv sync'), false);
+
+  assert.deepEqual(
+    charGlobs.workspaces.map((ws) => ws.relativePath),
+    ['packages/pkg-a'],
+  );
 });
