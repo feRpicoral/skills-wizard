@@ -65,7 +65,6 @@ export function selection(
     blocks: ['core/identity', 'core/style'],
     skills: [],
     variables: { githubUsername: 'octocat' },
-    linkCommand: false,
     keepLocal: false,
     skillMode: 'copy',
     ...overrides,

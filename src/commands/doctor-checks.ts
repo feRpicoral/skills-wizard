@@ -218,7 +218,6 @@ export async function planFindings({
       skills,
       mcp,
       variables,
-      linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
       skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
       preset,

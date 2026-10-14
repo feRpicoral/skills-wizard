@@ -61,7 +61,6 @@ function selection(
     blocks: [],
     skills,
     variables: {},
-    linkCommand: false,
     keepLocal: false,
     skillMode: 'copy',
     ...overrides,

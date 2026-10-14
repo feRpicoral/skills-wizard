@@ -53,44 +53,6 @@ test('init without a terminal and without --yes writes nothing', async (t) => {
   await assert.rejects(lstat(join(home, '.codex')), { code: 'ENOENT' });
 });
 
-test('init warns when ~/.local/bin is not on PATH after linking the command', async (t) => {
-  const { createCtx } = await commandSandbox(t);
-  const { ctx, output } = createCtx();
-
-  const code = await runInit(ctx, {
-    scope: 'global',
-    tools: ['codex'],
-    skills: [],
-    variables: { githubUsername: 'octocat' },
-    linkCommand: true,
-    yes: true,
-    dryRun: false,
-  });
-
-  assert.equal(code, 0);
-  assert.match(output(), /\.local\/bin is not on your PATH/);
-});
-
-test('init accepts ~/.local/bin on PATH written with a trailing slash', async (t) => {
-  const { home, createCtx } = await commandSandbox(t);
-  const { ctx, output } = createCtx({
-    extraPath: `${join(home, '.local', 'bin')}/`,
-  });
-
-  const code = await runInit(ctx, {
-    scope: 'global',
-    tools: ['codex'],
-    skills: [],
-    variables: { githubUsername: 'octocat' },
-    linkCommand: true,
-    yes: true,
-    dryRun: false,
-  });
-
-  assert.equal(code, 0);
-  assert.doesNotMatch(output(), /not on your PATH/);
-});
-
 test('an empty tool list removes everything that was installed', async (t) => {
   const { home, createCtx } = await commandSandbox(t);
   await runInit(createCtx().ctx, {

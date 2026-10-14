@@ -113,7 +113,6 @@ Options:
   --split <name>        skill triggers: train, validation, or all (default: all)
   --threshold <0..1>    skill triggers: pass threshold for positive queries (default: 0.5)
   --var <name=value>    Block variable, repeatable
-  --link-command        Link the skills-wizard command into ~/.local/bin
   --local               Project scope: keep the files out of git
   -y, --yes             Apply without asking (required without a terminal)
   --dry-run             Show the plan without writing anything
@@ -175,9 +174,6 @@ function dispatchCommand({
         ...(skillMode ? { skillMode } : {}),
         ...(preset ? { preset } : {}),
         ...(style ? { style } : {}),
-        ...(values['link-command'] !== undefined
-          ? { linkCommand: values['link-command'] }
-          : {}),
         ...(values.local !== undefined ? { keepLocal: values.local } : {}),
       });
     }

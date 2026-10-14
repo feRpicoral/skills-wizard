@@ -190,7 +190,6 @@ async function planUpdateTarget({
       skills: reconciled.skills,
       mcp: reconciled.mcp,
       variables: reconciled.variables,
-      linkCommand: previous.options.linkCommand ?? false,
       keepLocal: reconciled.keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
       ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),

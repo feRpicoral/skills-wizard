@@ -15,7 +15,6 @@ export interface Paths {
   codexHome: string;
   geminiHome: string;
   copilotHome: string;
-  localBin: string;
   applicationsDir: string;
 }
 
@@ -54,7 +53,6 @@ export function resolvePaths(env: Environment = process.env): Paths {
     codexHome: directory(env, 'CODEX_HOME') ?? join(home, '.codex'),
     geminiHome: join(home, '.gemini'),
     copilotHome: directory(env, 'COPILOT_HOME') ?? join(home, '.copilot'),
-    localBin: join(home, '.local', 'bin'),
     applicationsDir: '/Applications',
   };
 }

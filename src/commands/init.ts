@@ -1,9 +1,6 @@
-import { resolve } from 'node:path';
-
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { ManifestError, UsageError } from '../errors.ts';
-import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
 import {
   findPreset,
@@ -58,20 +55,12 @@ export interface InitOptions {
   preset?: PresetChoice;
   style?: ProjectStyle;
   variables: Record<string, string>;
-  linkCommand?: boolean;
   keepLocal?: boolean;
   yes: boolean;
   dryRun: boolean;
 }
 
-function isOnSearchPath(ctx: Context, dir: string): boolean {
-  const wanted = resolve(dir);
-
-  return ctx.searchPath.some((entry) => resolve(ctx.cwd, entry) === wanted);
-}
-
 interface ScopeSpecificOptions {
-  linkCommand?: boolean | undefined;
   skillMode?: SkillMode | undefined;
   keepLocal?: boolean | undefined;
   preset?: PresetChoice | undefined;
@@ -80,14 +69,8 @@ interface ScopeSpecificOptions {
 
 function checkScopeOptions(
   scope: Scope,
-  { linkCommand, skillMode, keepLocal, preset, style }: ScopeSpecificOptions,
+  { skillMode, keepLocal, preset, style }: ScopeSpecificOptions,
 ): void {
-  if (scope === 'project' && linkCommand !== undefined) {
-    throw new UsageError(
-      '--link-command only applies to system-wide installs.',
-    );
-  }
-
   if (scope === 'project' && skillMode !== undefined) {
     throw new UsageError('--skill-mode only applies to system-wide installs.');
   }
@@ -269,7 +252,6 @@ export async function runInit(
     preset: requestedPreset,
     style: requestedStyle,
     variables: givenVariables,
-    linkCommand: requestedLinkCommand,
     keepLocal: requestedKeepLocal,
     ...confirmOptions
   }: InitOptions,
@@ -280,7 +262,6 @@ export async function runInit(
   if (!scope) throw new UsageError('Pass --global or --project <dir>.');
 
   checkScopeOptions(scope, {
-    linkCommand: requestedLinkCommand,
     skillMode: requestedSkillMode,
     keepLocal: requestedKeepLocal,
     preset: requestedPreset,
@@ -382,12 +363,11 @@ export async function runInit(
     location,
     previous,
   });
-  const { linkCommand, keepLocal } = await resolveInstallOptions({
+  const { keepLocal } = await resolveInstallOptions({
     ctx,
     scope,
     location,
     prompting,
-    requestedLinkCommand,
     requestedKeepLocal,
     previous,
     reconciled,
@@ -411,7 +391,6 @@ export async function runInit(
       skills,
       mcp,
       variables,
-      linkCommand,
       keepLocal,
       skillMode,
       preset,
@@ -437,19 +416,6 @@ export async function runInit(
   }
 
   const result = await confirmAndApply(ctx, plan, confirmOptions);
-
-  if (
-    result.applied &&
-    linkCommand &&
-    !isOnSearchPath(ctx, ctx.paths.localBin)
-  ) {
-    notify({
-      ctx,
-      prompting,
-      message: `${displayPath({ path: ctx.paths.localBin, home: ctx.paths.home })} is not on your PATH; add it to run skills-wizard from any directory.`,
-      level: 'warn',
-    });
-  }
 
   return result.code;
 }

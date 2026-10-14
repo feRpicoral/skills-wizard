@@ -137,7 +137,6 @@ const manifestSchema = z.object({
   variables: z.record(z.string(), z.string()),
   options: z
     .object({
-      linkCommand: z.boolean().optional(),
       keepLocal: z.boolean().optional(),
       skillMode: z.enum(SKILL_MODES).optional(),
       preset: z.string().min(1).optional(),

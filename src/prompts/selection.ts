@@ -255,18 +255,6 @@ export async function promptVariables(
   return values;
 }
 
-export async function promptLinkCommand(
-  initial: boolean,
-  paths: Paths,
-): Promise<boolean> {
-  return unwrap(
-    await clack.confirm({
-      message: `Link the skills-wizard command into ${displayPath({ path: paths.localBin, home: paths.home })}?`,
-      initialValue: initial,
-    }),
-  );
-}
-
 export async function promptKeepLocal(initial: boolean): Promise<boolean> {
   const choice = unwrap(
     await clack.select<'commit' | 'local'>({
