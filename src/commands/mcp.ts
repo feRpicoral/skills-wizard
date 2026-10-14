@@ -49,6 +49,7 @@ function formatServerLine({ server, status }: FormatServerLineParams): string {
     server.estimatedTools !== undefined
       ? `, ~${server.estimatedTools} tools`
       : '';
+
   return `${server.name}  [${status}]  (${server.transport}, scopes: ${scopes}${tools}) - ${server.description}`;
 }
 
@@ -76,18 +77,22 @@ async function runMcpList({
       prompting: false,
       location,
     });
+
     const installed = new Set(manifest?.mcp ?? []);
     const available = catalog.servers.filter((server) =>
       server.scopes.includes(scope),
     );
+
     if (available.length === 0) {
       ctx.print(`No MCP servers available for ${scope} scope.`);
       return 0;
     }
+
     for (const server of available) {
       const status = installed.has(server.name) ? 'installed' : 'available';
       ctx.print(formatServerLine({ server, status }));
     }
+
     return 0;
   }
 
@@ -125,12 +130,15 @@ async function runMcpList({
     const installedIn: string[] = [];
     if (globalInstalled.has(server.name)) installedIn.push('global');
     if (projectInstalled.has(server.name)) installedIn.push('project');
+
     const status =
       installedIn.length > 0
         ? `installed: ${installedIn.join(', ')}`
         : 'available';
+
     ctx.print(formatServerLine({ server, status }));
   }
+
   return 0;
 }
 
@@ -196,11 +204,13 @@ async function applyMcpSelectionChange({
     const notInstalled = uniqueNames.filter(
       (name) => !previous.mcp.includes(name),
     );
+
     if (notInstalled.length > 0) {
       throw new UsageError(
         `MCP server${notInstalled.length === 1 ? '' : 's'} not installed in ${scope} scope: ${notInstalled.join(', ')}`,
       );
     }
+
     const removeSet = new Set(uniqueNames);
     mcp = dropUnavailableMcpServers({
       ctx,
@@ -260,6 +270,7 @@ export async function runMcp(
         `Unexpected arguments for mcp list: ${args.join(' ')}`,
       );
     }
+
     return runMcpList({
       ctx,
       catalog,
@@ -272,6 +283,7 @@ export async function runMcp(
     if (subcommand === 'remove' && tools !== undefined) {
       throw new UsageError('--tools only applies to mcp add.');
     }
+
     return applyMcpSelectionChange({
       ctx,
       prompting,

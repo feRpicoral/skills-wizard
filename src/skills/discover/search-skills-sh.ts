@@ -39,6 +39,15 @@ const skillsShEnvelopeSchema = z.object({
   skills: z.array(z.unknown()),
 });
 
+function resolveSkillsShName(
+  item: z.infer<typeof skillsShItemSchema>,
+): string | null {
+  if (isSkillName(item.skillId)) return item.skillId;
+  if (isSkillName(item.name)) return item.name;
+
+  return null;
+}
+
 export interface SearchSkillsShParams {
   query: string;
   baseUrl?: string;
@@ -66,6 +75,7 @@ export async function searchSkillsSh({
   const url = new URL('api/search', normalizedBase);
   url.searchParams.set('q', query);
   url.searchParams.set('limit', String(limit));
+
   const endpoint = url.toString();
 
   let response: Response;
@@ -78,11 +88,13 @@ export async function searchSkillsSh({
     const detail = error instanceof Error ? error.message : String(error);
     throw new SourceError(`skills.sh search failed (${endpoint}): ${detail}`);
   }
+
   if (!response.ok) {
     throw new SourceError(
       `skills.sh search failed (${endpoint}): HTTP ${response.status}`,
     );
   }
+
   let text: string;
   try {
     text = await readBoundedResponseText({
@@ -92,11 +104,13 @@ export async function searchSkillsSh({
     });
   } catch (error) {
     if (error instanceof SourceError) throw error;
+
     const detail = error instanceof Error ? error.message : String(error);
     throw new SourceError(
       `skills.sh search response failed (${endpoint}): ${detail}`,
     );
   }
+
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(text);
@@ -105,7 +119,9 @@ export async function searchSkillsSh({
       `skills.sh search returned invalid JSON (${endpoint})`,
     );
   }
+
   const envelope = skillsShEnvelopeSchema.safeParse(parsedJson);
+
   if (!envelope.success) {
     throw new SourceError(
       `skills.sh search response did not match expected schema (${endpoint})`,
@@ -114,15 +130,19 @@ export async function searchSkillsSh({
 
   const seen = new Set<string>();
   const candidates: DiscoveryCandidate[] = [];
+
   for (const rawItem of envelope.data.skills) {
     const itemResult = skillsShItemSchema.safeParse(rawItem);
     if (!itemResult.success) continue;
+
     const item = itemResult.data;
     const sourceSegments = item.source.split('/').filter(Boolean);
     if (sourceSegments.length < 2) continue;
+
     const repo = `${sourceSegments[0]}/${sourceSegments[1]}`;
     const subpath =
       sourceSegments.length > 2 ? sourceSegments.slice(2).join('/') : undefined;
+
     if (
       !isRepository(repo) ||
       (subpath !== undefined &&
@@ -131,14 +151,13 @@ export async function searchSkillsSh({
     ) {
       continue;
     }
-    const candidateName = isSkillName(item.skillId)
-      ? item.skillId
-      : isSkillName(item.name)
-        ? item.name
-        : null;
+
+    const candidateName = resolveSkillsShName(item);
     if (!candidateName) continue;
+
     const dedupeKey = `${repo}@${candidateName}`;
     if (seen.has(dedupeKey)) continue;
+
     seen.add(dedupeKey);
     candidates.push({
       sourceType: 'skills-sh',
@@ -148,5 +167,6 @@ export async function searchSkillsSh({
       installs: item.installs,
     });
   }
+
   return candidates.sort((a, b) => (b.installs ?? 0) - (a.installs ?? 0));
 }

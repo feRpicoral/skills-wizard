@@ -90,7 +90,9 @@ export function deriveShortServerName(registryName: string): string | null {
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+
   if (!normalized || !isMcpServerName(normalized)) return null;
+
   return normalized;
 }
 
@@ -108,13 +110,16 @@ export function toSecretEnvName({
     .replace(/[^A-Za-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
+
   if (cleaned && isEnvVarName(cleaned)) return cleaned;
+
   const rawPrefix = fallbackPrefix
     .replace(/[^A-Za-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
   const prefix = /^[0-9]/.test(rawPrefix) ? `MCP_${rawPrefix}` : rawPrefix;
   const candidate = `${prefix}_${cleaned || 'SECRET'}`;
+
   return isEnvVarName(candidate) ? candidate : 'MCP_SECRET_TOKEN';
 }
 
@@ -122,18 +127,23 @@ export function buildPackageArgs(
   args: readonly z.infer<typeof registryArgSchema>[],
 ): string[] {
   const out: string[] = [];
+
   for (const arg of args) {
     if (arg.isSecret) continue;
+
     const val = arg.value ?? arg.default;
     if (!val || CONTROL_CHAR.test(val)) continue;
+
     if (arg.type === 'named' && arg.name) {
       if (!SAFE_FLAG_NAME.test(arg.name)) continue;
+
       const flag = arg.name.startsWith('-') ? arg.name : `--${arg.name}`;
       out.push(flag, val);
     } else if (!val.startsWith('-')) {
       out.push(val);
     }
   }
+
   return out;
 }
 
@@ -142,11 +152,13 @@ export function buildStdioEnv(
   shortName: string,
 ): Record<string, McpValue> {
   const env: Record<string, McpValue> = {};
+
   for (const item of vars) {
     const key = item.name.trim();
     if (!isEnvVarName(key) || isBlockedEnvVarName(key)) {
       continue;
     }
+
     const literal = item.value ?? item.default;
     if (item.isSecret || !literal) {
       const secretName = toSecretEnvName({
@@ -154,6 +166,7 @@ export function buildStdioEnv(
         fallbackPrefix: shortName,
       });
       if (isBlockedEnvVarName(secretName)) continue;
+
       env[key] = {
         secret: secretName,
         ...(item.isRequired === true ? {} : { optional: true }),
@@ -162,6 +175,7 @@ export function buildStdioEnv(
       env[key] = literal;
     }
   }
+
   return env;
 }
 
@@ -170,6 +184,7 @@ export function buildRemoteHeaders(
   shortName: string,
 ): Record<string, McpValue> {
   const out: Record<string, McpValue> = {};
+
   for (const header of headers) {
     const literal = header.value ?? header.default;
     if (header.isSecret || !literal) {
@@ -180,6 +195,7 @@ export function buildRemoteHeaders(
               fallbackPrefix: 'MCP',
             })
           : toSecretEnvName({ raw: header.name, fallbackPrefix: shortName });
+
       out[header.name] = {
         secret: defaultSecretName,
         ...(header.isRequired === true ? {} : { optional: true }),
@@ -188,6 +204,7 @@ export function buildRemoteHeaders(
       out[header.name] = literal;
     }
   }
+
   return out;
 }
 
@@ -212,19 +229,24 @@ export function disambiguateShortServerName({
   usedNames,
 }: DisambiguateShortServerNameParams): string | null {
   if (!usedNames.has(baseName)) return baseName;
+
   const slashIndex = registryName.lastIndexOf('/');
+
   if (slashIndex > 0) {
     const namespace = registryName.slice(0, slashIndex);
     const ownerRaw =
       namespace.split(/[./]/).filter(Boolean).at(-1) ?? namespace;
     const ownerSlug = deriveShortServerName(ownerRaw);
+
     if (ownerSlug && ownerSlug !== baseName) {
       const ownerCandidate = `${ownerSlug}-${baseName}`;
       if (isMcpServerName(ownerCandidate) && !usedNames.has(ownerCandidate)) {
         return ownerCandidate;
       }
     }
+
     const namespaceSlug = deriveShortServerName(namespace);
+
     if (namespaceSlug && namespaceSlug !== baseName) {
       const namespaceCandidate = `${namespaceSlug}-${baseName}`;
       if (
@@ -235,12 +257,14 @@ export function disambiguateShortServerName({
       }
     }
   }
+
   for (let suffix = 2; suffix < 1000; suffix += 1) {
     const numbered = `${baseName}-${suffix}`;
     if (isMcpServerName(numbered) && !usedNames.has(numbered)) {
       return numbered;
     }
   }
+
   return null;
 }
 
@@ -259,6 +283,7 @@ function buildValidatedCandidate({
     const validated = parseMcpCatalog({ servers: [rawServer] }, 'registry');
     const server = validated.servers[0];
     if (!server) return null;
+
     return {
       name: server.name,
       fullName,
@@ -288,9 +313,13 @@ function packageToCandidate({
   const kind = (pkg.registryType ?? pkg.registry_name ?? '').toLowerCase();
   const hint = (pkg.runtimeHint ?? '').toLowerCase();
   const identifier = (pkg.identifier ?? pkg.name ?? '').trim();
+
   if (!identifier || UNSAFE_SPEC_TOKEN.test(identifier)) return null;
+
   const version = (pkg.version ?? inner.version ?? '').trim();
+
   if (version && UNSAFE_SPEC_TOKEN.test(version)) return null;
+
   const spec =
     version && !identifier.includes('@', 1)
       ? `${identifier}@${version}`
@@ -311,7 +340,7 @@ function packageToCandidate({
         ...(Object.keys(env).length > 0 ? { env } : {}),
       },
       fullName: inner.name,
-      ...(version ? { version } : {}),
+      version: version || undefined,
     });
   }
 
@@ -328,7 +357,7 @@ function packageToCandidate({
         ...(Object.keys(env).length > 0 ? { env } : {}),
       },
       fullName: inner.name,
-      ...(version ? { version } : {}),
+      version: version || undefined,
     });
   }
 
@@ -348,15 +377,12 @@ function remoteToCandidate({
   shortName,
   description,
 }: RemoteToCandidateParams): McpSearchCandidate | null {
-  const rawType = (remote.type ?? remote.transport_type ?? '').toLowerCase();
-  const transport =
-    rawType === 'sse'
-      ? 'sse'
-      : rawType === 'http' || rawType === 'streamable-http'
-        ? 'http'
-        : null;
+  const transport = toRemoteTransport(remote.type ?? remote.transport_type);
+
   if (!transport) return null;
+
   const headers = buildRemoteHeaders(remote.headers ?? [], shortName);
+
   return buildValidatedCandidate({
     rawServer: {
       name: shortName,
@@ -368,8 +394,17 @@ function remoteToCandidate({
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     },
     fullName: inner.name,
-    ...(inner.version ? { version: inner.version } : {}),
+    version: inner.version || undefined,
   });
+}
+
+function toRemoteTransport(raw: string | undefined): 'sse' | 'http' | null {
+  const rawType = (raw ?? '').toLowerCase();
+
+  if (rawType === 'sse') return 'sse';
+  if (rawType === 'http' || rawType === 'streamable-http') return 'http';
+
+  return null;
 }
 
 export interface ToCandidateParams {

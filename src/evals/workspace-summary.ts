@@ -54,13 +54,10 @@ interface CollectWorkspaceFilesParams {
 }
 
 function errorCode(error: unknown): string {
-  return error instanceof Error &&
-    'code' in error &&
-    typeof error.code === 'string'
-    ? error.code
-    : error instanceof Error
-      ? error.message
-      : String(error);
+  if (!(error instanceof Error)) return String(error);
+  if ('code' in error && typeof error.code === 'string') return error.code;
+
+  return error.message;
 }
 
 // Folders or files the agent made unreadable are listed, not fatal.
@@ -80,15 +77,20 @@ async function collectWorkspaceFiles({
     );
     return listing;
   }
+
   entries.sort((left, right) => left.name.localeCompare(right.name));
+
   for (const entry of entries) {
     if (WORKSPACE_SKIP_DIRS.has(entry.name)) continue;
+
     const relSegments = [...segments, entry.name];
+
     if (entry.isDirectory()) {
       await collectWorkspaceFiles({ workdir, segments: relSegments, listing });
     } else if (entry.isFile()) {
       const fullPath = join(workdir, ...relSegments);
       const relPath = relSegments.join('/');
+
       try {
         const info = await stat(fullPath);
         listing.files.push({ relPath, fullPath, size: info.size });
@@ -97,6 +99,7 @@ async function collectWorkspaceFiles({
       }
     }
   }
+
   return listing;
 }
 
@@ -105,6 +108,7 @@ async function readHead(path: string, bytes: number): Promise<Buffer> {
   try {
     const buffer = Buffer.alloc(bytes);
     const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+
     return buffer.subarray(0, bytesRead);
   } finally {
     await handle.close();
@@ -148,12 +152,16 @@ interface ListingSectionParams {
 function listingSection({ title, lines }: ListingSectionParams): string {
   const kept: string[] = [];
   let used = byteLength(title);
+
   for (const line of lines) {
     used += byteLength(line) + 1;
     if (used > LISTING_BUDGET_BYTES) break;
+
     kept.push(line);
   }
+
   const more = lines.length - kept.length;
+
   return [title, ...kept, ...(more > 0 ? [`... and ${more} more`] : [])].join(
     '\n',
   );
@@ -185,7 +193,9 @@ export async function summarizeWorkspace({
       shortened.push(`${file.relPath} (${file.size} bytes, omitted)`);
       continue;
     }
+
     let head: Buffer;
+
     try {
       head = await readHead(
         file.fullPath,
@@ -195,6 +205,7 @@ export async function summarizeWorkspace({
       unreadable.push(`${file.relPath} (${errorCode(error)})`);
       continue;
     }
+
     if (head.includes(0)) {
       const line = `--- ${file.relPath} (binary, ${file.size} bytes) ---`;
       sections.push(line);
@@ -202,14 +213,17 @@ export async function summarizeWorkspace({
       remaining -= byteLength(line) + 2;
       continue;
     }
+
     const preview = utf8Head(head, Math.min(FILE_PREVIEW_BYTES, remaining));
     const truncated = file.size > byteLength(preview);
     const header = truncated
       ? `--- ${file.relPath} (truncated, ${file.size} bytes) ---`
       : `--- ${file.relPath} ---`;
+
     if (truncated) {
       shortened.push(`${file.relPath} (${file.size} bytes, truncated)`);
     }
+
     const section = `${header}\n${preview}`;
     sections.push(section);
     remaining -= byteLength(section) + 2;
@@ -223,6 +237,7 @@ export async function summarizeWorkspace({
       }),
     );
   }
+
   if (unreadable.length > 0) {
     sections.push(
       listingSection({
@@ -245,9 +260,11 @@ export function capResponse(
 ): string {
   const buffer = Buffer.from(response, 'utf8');
   if (buffer.length <= maxBytes) return response;
+
   const half = Math.floor(maxBytes / 2);
   const head = utf8Head(buffer, half);
   const tail = utf8Tail(buffer, half);
   const omitted = buffer.length - byteLength(head) - byteLength(tail);
+
   return `${head}\n\n[... ${omitted} bytes of the response omitted ...]\n\n${tail}`;
 }

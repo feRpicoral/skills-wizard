@@ -225,6 +225,7 @@ export function parseBenchmarkSummary({
       `Invalid benchmark in ${sourcePath}: ${z.prettifyError(result.error)}`,
     );
   }
+
   return result.data;
 }
 
@@ -239,6 +240,7 @@ export function parseTriggerBenchmarkSummary({
       `Invalid trigger summary in ${sourcePath}: ${z.prettifyError(result.error)}`,
     );
   }
+
   return result.data;
 }
 

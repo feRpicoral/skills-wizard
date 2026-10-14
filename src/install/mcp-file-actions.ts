@@ -63,28 +63,32 @@ export function planMcpJson({
       Boolean(earlier?.createdMcpServers) ||
       Boolean(sharedMcp?.createdMcpServers) ||
       result.createdMcpServers;
-    const original = earlier
-      ? earlier.original
-      : (result.original ??
-        sharedMcp?.original ??
-        (createdMcpServers ? emptyJson?.rootOriginal : undefined));
+    const fallbackOriginal =
+      result.original ??
+      sharedMcp?.original ??
+      (createdMcpServers ? emptyJson?.rootOriginal : undefined);
+    const original = earlier ? earlier.original : fallbackOriginal;
     const wasEmpty = earlier
       ? earlier.wasEmpty
       : (emptyJson?.wasEmpty ?? result.wasEmpty);
     const blankText = earlier
       ? earlier.blankText
       : (emptyJson?.blankText ?? result.blankText);
+
     if (sharedMcp) {
       for (const name of result.servers) {
         sharedMcp.stagedServers.add(name);
       }
+
       if (createdMcpServers) {
         sharedMcp.createdMcpServers = true;
       }
+
       if (original !== undefined && sharedMcp.original === undefined) {
         sharedMcp.original = original;
       }
     }
+
     return writeAction({
       target,
       file,
@@ -105,6 +109,7 @@ export function planMcpJson({
     if (error instanceof JsonMergeError) {
       return conflict({ target, previous, reason: error.message });
     }
+
     throw error;
   }
 }
@@ -120,6 +125,7 @@ export function planMcpToml({
       body: target.body,
       serverNames: target.serverNames,
     });
+
     return writeAction({
       target,
       file,
@@ -136,6 +142,7 @@ export function planMcpToml({
     if (error instanceof ManagedRegionError) {
       return conflict({ target, previous, reason: error.message });
     }
+
     throw error;
   }
 }

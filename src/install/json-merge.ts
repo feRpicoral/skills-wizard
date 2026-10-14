@@ -33,12 +33,14 @@ function parseKeyPath(doc: JsonObject, keyPath: string): JSONPath {
   if (keys.length === 0) {
     throw new JsonMergeError(`invalid key path "${keyPath}"`);
   }
+
   for (let depth = 1; depth < keys.length; depth += 1) {
     const ancestor = getProperty(doc, keys.slice(0, depth));
     if (ancestor !== undefined && !isObject(ancestor)) {
       throw new JsonMergeError(`"${String(keys[depth - 1])}" is not an object`);
     }
   }
+
   return keys;
 }
 
@@ -48,6 +50,7 @@ function stringValues(value: unknown, keyPath: string): string[] {
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
     return value;
   }
+
   throw new JsonMergeError(
     `"${keyPath}" must be a string or a list of strings`,
   );
@@ -56,6 +59,7 @@ function stringValues(value: unknown, keyPath: string): string[] {
 function missingKeys(doc: JsonObject, keys: JSONPath): number {
   let depth = keys.length;
   while (depth > 0 && !hasProperty(doc, keys.slice(0, depth))) depth -= 1;
+
   return keys.length - depth;
 }
 
@@ -72,8 +76,10 @@ function setValue({ existing, keys, value }: SetValueParams): string {
       value,
     );
     const text = JSON.stringify(doc, null, DEFAULT_INDENT);
+
     return keepBom(existing ?? '', () => `${text}${lineEnding(existing)}`);
   }
+
   return keepBom(existing, (text) => setJsonValue({ text, keys, value }));
 }
 
@@ -122,20 +128,25 @@ function updateArrayValues({
   appendable,
 }: UpdateArrayValuesParams): string {
   const remaining = current.filter((item) => !stale.includes(item));
+
   if (existing !== null && !isBlank(existing) && appendable) {
     let content = existing;
+
     if (stale.length > 0) {
       content = keepBom(content, (text) =>
         removeArrayElements({ text, keys, values: stale }),
       );
     }
+
     if (added.length > 0) {
       content = keepBom(content, (text) =>
         appendArrayElements({ text, keys, values: added }),
       );
     }
+
     return content;
   }
+
   return setValue({ existing, keys, value: [...remaining, ...added] });
 }
 
@@ -154,8 +165,10 @@ function originalText({
     text: withoutBom(existing),
     keys: keys.slice(0, keys.length - createdKeys),
   });
+
   if (raw === undefined) return undefined;
   if (createdKeys === 0) return raw;
+
   return Object.keys(JSON.parse(raw) as JsonObject).length === 0
     ? raw
     : undefined;
@@ -202,6 +215,7 @@ export function ensureArrayValues({
       ? originalText({ existing, keys, createdKeys })
       : undefined;
   const wasEmpty = added.length > 0 && existing !== null && isBlank(existing);
+
   return {
     content,
     added,
@@ -231,10 +245,12 @@ function restoreOriginal({
   return keepBom(content, (text) => {
     const raw = rawJson({ text, keys });
     if (raw === undefined) return text;
+
     const same = isDeepStrictEqual(
       normalizedValue(JSON.parse(raw)),
       normalizedValue(JSON.parse(original)),
     );
+
     return same ? replaceRawJson({ text, keys, raw: original }) : text;
   });
 }
@@ -251,12 +267,15 @@ interface RemoveArrayValuesParams {
 function pruneCreated({ existing, keys, createdKeys }: OriginalParams): string {
   let content = removeKey({ existing, keys });
   const existingDepth = keys.length - createdKeys;
+
   for (let depth = keys.length - 1; depth > existingDepth; depth -= 1) {
     const ancestorPath = keys.slice(0, depth);
     const ancestor = getProperty(parseJsonObject(content), ancestorPath);
     if (!isObject(ancestor) || Object.keys(ancestor).length > 0) break;
+
     content = removeKey({ existing: content, keys: ancestorPath });
   }
+
   return content;
 }
 
@@ -300,6 +319,7 @@ export function removeArrayValues({
   } else {
     content = setValue({ existing, keys, value: remaining });
   }
+
   return original === undefined
     ? content
     : restoreOriginal({

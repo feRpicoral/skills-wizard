@@ -28,6 +28,7 @@ export async function resolveDoctorMcp(
   const recorded = manifest.mcp ?? [];
 
   const unknownMcp = unknownMcpServerNames(mcpCatalog, recorded);
+
   if (unknownMcp.length > 0) {
     findings.push({
       level: 'warn',
@@ -40,6 +41,7 @@ export async function resolveDoctorMcp(
     names: recorded,
     scope,
   });
+
   if (outOfScopeMcp.length > 0) {
     findings.push({
       level: 'warn',
@@ -88,6 +90,7 @@ export function mcpFindings({
     const missingSecrets = requiredServerSecrets(server).filter(
       (secret) => !(ctx.hasEnvVar?.(secret) ?? false),
     );
+
     if (missingSecrets.length > 0) {
       findings.push({
         level: 'warn',
@@ -101,6 +104,7 @@ export function mcpFindings({
       (server) =>
         server.transport === 'stdio' && allServerSecrets(server).length > 0,
     );
+
     if (stdioSecretServers.length > 0) {
       const names = stdioSecretServers.map((server) => server.name).join(', ');
       findings.push({
@@ -118,6 +122,7 @@ export function mcpFindings({
           'Claude Code requires interactive project approval before loading MCP servers from .mcp.json',
       });
     }
+
     if (usesCodex) {
       findings.push({
         level: 'note',
@@ -125,6 +130,7 @@ export function mcpFindings({
           'Codex loads project .codex/config.toml MCP servers only after the project is marked trusted',
       });
     }
+
     if (usesGeminiCli) {
       findings.push({
         level: 'note',
@@ -147,6 +153,7 @@ export function mcpFindings({
       hasEstimates && totalTools > 0
         ? `~${totalTools} estimated tool${totalTools === 1 ? '' : 's'} across ${serverCountLabel}`
         : serverCountLabel;
+
     findings.push({
       level: 'note',
       message: `Gemini CLI loads all MCP tool schemas into context up front (${detail})`,

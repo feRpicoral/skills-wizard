@@ -130,6 +130,7 @@ export function normalizeGraderResults({
   evidenceText,
 }: NormalizeGraderResultsParams): GradedExpectation[] {
   const envelope = graderOutputEnvelopeSchema.safeParse(output);
+
   if (!envelope.success) {
     return assertions.map((assertion) =>
       failedString(
@@ -138,6 +139,7 @@ export function normalizeGraderResults({
       ),
     );
   }
+
   const rawResults = envelope.data.results;
 
   const items = rawResults.map(parseGraderItem);
@@ -149,14 +151,17 @@ export function normalizeGraderResults({
       (item, position) =>
         item !== null && !used.has(position) && item.assertion === assertion,
     );
+
     if (found !== -1) {
       used.add(found);
       matched[index] = items[found] ?? undefined;
     }
   }
+
   if (items.length === assertions.length) {
     for (const index of assertions.keys()) {
       const item = items[index];
+
       if (matched[index] === undefined && !used.has(index) && item) {
         used.add(index);
         matched[index] = item;
@@ -169,15 +174,18 @@ export function normalizeGraderResults({
 
   return assertions.map((assertion, index) => {
     const item = matched[index];
+
     if (item === undefined) {
       return failedString(
         assertion,
         `${MALFORMED_GRADER_OUTPUT}: no result matched this assertion (${rawResults.length} results for ${assertions.length} assertions).`,
       );
     }
+
     if (!item.evidence) {
       return failedString(assertion, 'Grader provided no supporting evidence.');
     }
+
     if (
       item.passed &&
       item.quote &&
@@ -189,6 +197,7 @@ export function normalizeGraderResults({
         `Unverified evidence: the quoted text was not found in the response or workspace files. ${item.evidence}`,
       );
     }
+
     return {
       text: assertion,
       kind: 'string',

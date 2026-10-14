@@ -15,11 +15,13 @@ export async function copySkillTree({
   destination,
 }: CopySkillTreeParams): Promise<void> {
   const [escaped] = await escapingLinks(source);
+
   if (escaped) {
     throw new UnsafeWriteError(
       `refusing to copy ${escaped.path}: it does not resolve inside the skill (${escaped.target})`,
     );
   }
+
   await mkdir(destination, { recursive: true });
   await cp(source, destination, {
     recursive: true,
@@ -27,8 +29,10 @@ export async function copySkillTree({
     filter: (src) => {
       const rel = relative(source, src);
       if (rel === '') return true;
+
       const parts = rel.split(sep);
       const name = parts.at(-1) ?? '';
+
       return !notCopied(name, parts.slice(0, -1));
     },
   });
@@ -57,10 +61,12 @@ interface MoveParams {
 
 async function move({ from, to }: MoveParams): Promise<void> {
   await mkdir(dirname(to), { recursive: true });
+
   try {
     await rename(from, to);
   } catch (error) {
     if (!isCrossDevice(error)) throw error;
+
     await cp(from, to, { recursive: true, verbatimSymlinks: true });
     await rm(from, { recursive: true, force: true });
   }
@@ -78,17 +84,21 @@ async function swapInto({
   backup,
 }: SwapIntoParams): Promise<void> {
   const existing = await lstatIfExists(destination);
+
   if (existing && backup !== undefined) {
     await move({ from: destination, to: backup });
   }
+
   const previous =
     existing && backup === undefined
       ? sibling({ path: destination, purpose: 'old' })
       : null;
+
   if (previous) {
     await rm(previous, { recursive: true, force: true });
     await rename(destination, previous);
   }
+
   try {
     await rename(staged, destination);
   } catch (error) {
@@ -96,8 +106,10 @@ async function swapInto({
     else if (existing && backup !== undefined) {
       await move({ from: backup, to: destination });
     }
+
     throw error;
   }
+
   if (previous) await rm(previous, { recursive: true, force: true });
 }
 
@@ -115,6 +127,7 @@ export async function replaceWithCopy({
   await mkdir(dirname(destination), { recursive: true });
   const staged = sibling({ path: destination, purpose: 'new' });
   await rm(staged, { recursive: true, force: true });
+
   try {
     await copySkillTree({ source, destination: staged });
     await swapInto({
@@ -143,6 +156,7 @@ export async function replaceWithLink({
   const staged = sibling({ path: destination, purpose: 'new' });
   await rm(staged, { recursive: true, force: true });
   await symlink(target, staged);
+
   try {
     await swapInto({
       staged,

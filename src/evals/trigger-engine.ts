@@ -43,9 +43,12 @@ export async function runWithConcurrency<T, R>({
   async function next(): Promise<void> {
     while (fatal === undefined && nextIndex < items.length) {
       const current = nextIndex;
+
       nextIndex += 1;
       const item = items[current];
+
       if (item === undefined) continue;
+
       try {
         results[current] = await worker(item, current);
       } catch (error) {
@@ -57,8 +60,10 @@ export async function runWithConcurrency<T, R>({
   const workers = Array.from({ length: Math.min(limit, items.length) }, () =>
     next(),
   );
+
   await Promise.all(workers);
   if (fatal !== undefined) throw fatal.error;
+
   return results;
 }
 
@@ -117,9 +122,11 @@ export async function runSkillTriggers({
   const allQueries = await loadTriggerQueries(skillDir);
   const selectedQueries = selectTriggerQueries(allQueries, split);
   const warnings: string[] = [];
+
   if (split !== 'all') {
     warnings.push(...splitTriggerQueries(allQueries).warnings);
   }
+
   // Every trigger workspace stages the same skill, so a personal skill that
   // shadows it affects every run: check once.
   const shadowWarning = await personalSkillShadowWarning({
@@ -127,6 +134,7 @@ export async function runSkillTriggers({
     skillName,
     paths,
   });
+
   if (shadowWarning !== undefined) warnings.push(shadowWarning);
   for (const warning of warnings) onLog?.(`warning: ${warning}`);
   await runner.preflight?.();
@@ -137,6 +145,7 @@ export async function runSkillTriggers({
   });
 
   const jobs: TriggerJob[] = [];
+
   for (const [queryIndex, item] of selectedQueries.entries()) {
     for (let runIndex = 1; runIndex <= runs; runIndex += 1) {
       jobs.push({
@@ -157,6 +166,7 @@ export async function runSkillTriggers({
         `query-${job.queryIndex}`,
         `run-${job.runIndex}`,
       );
+
       await mkdir(runDir, { recursive: true });
       const workdir = await prepareTriggerWorkspace({
         runDir,
@@ -165,11 +175,13 @@ export async function runSkillTriggers({
         runner: runner.name,
         env,
       });
+
       try {
         const startedAt = Date.now();
         let triggered = false;
         let durationMs: number;
         let failure: string | undefined;
+
         try {
           const taskResult = await runner.runTask({
             prompt: job.query,
@@ -179,6 +191,7 @@ export async function runSkillTriggers({
             timeoutSeconds,
             sandbox,
           });
+
           triggered = taskResult.triggered;
           durationMs = taskResult.durationMs;
           failure = runFailure({ taskResult, timeoutSeconds });
@@ -186,6 +199,7 @@ export async function runSkillTriggers({
           durationMs = Date.now() - startedAt;
           failure = error instanceof Error ? error.message : String(error);
         }
+
         const runResult: TriggerQueryRunResult = {
           query: job.query,
           should_trigger: job.shouldTrigger,
@@ -193,9 +207,11 @@ export async function runSkillTriggers({
           duration_ms: durationMs,
           ...(failure !== undefined ? { error: failure } : {}),
         };
+
         onLog?.(
           `[query ${job.queryIndex}] run ${job.runIndex}/${runs}: triggered=${triggered} (expected=${job.shouldTrigger})${failure === undefined ? '' : `; agent run failed: ${failure}`}`,
         );
+
         return runResult;
       } finally {
         if (!keepWorkdirs) {

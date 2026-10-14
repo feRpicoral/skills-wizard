@@ -29,6 +29,7 @@ export function signalProcessTree(
 ): void {
   const pid = child.pid;
   if (pid === undefined) return;
+
   if (USE_PROCESS_GROUPS) {
     try {
       process.kill(-pid, signal);
@@ -37,6 +38,7 @@ export function signalProcessTree(
       // The group is gone; fall back to the direct child.
     }
   }
+
   try {
     child.kill(signal);
   } catch {
@@ -49,6 +51,7 @@ const signalChild = signalProcessTree;
 function groupAlive(child: ChildProcess): boolean {
   const pid = child.pid;
   if (pid === undefined) return false;
+
   try {
     process.kill(USE_PROCESS_GROUPS ? -pid : pid, 0);
     return true;
@@ -71,9 +74,11 @@ function installHandlers(): void {
 
 function terminate(signal: NodeJS.Signals): void {
   removeHandlers();
+
   if (process.listenerCount(signal) === 0) {
     process.kill(process.pid, signal);
   }
+
   // Exit with the conventional status if the signal did not end the process.
   setTimeout(() => {
     process.exit(SIGNAL_EXIT_CODES[signal] ?? 130);
@@ -82,24 +87,29 @@ function terminate(signal: NodeJS.Signals): void {
 
 function onSignal(signal: NodeJS.Signals): void {
   const children = [...live];
+
   if (stopping) {
     // A second interrupt: stop waiting.
     for (const child of children) signalChild(child, 'SIGKILL');
     terminate(signal);
     return;
   }
+
   stopping = true;
   for (const child of children) signalChild(child, 'SIGTERM');
   const deadline = Date.now() + KILL_GRACE_MS;
+
   const poll = (): void => {
     const remaining = [...live].filter(groupAlive);
     if (remaining.length > 0 && Date.now() < deadline) {
       setTimeout(poll, POLL_MS);
       return;
     }
+
     for (const child of live) signalChild(child, 'SIGKILL');
     terminate(signal);
   };
+
   poll();
 }
 
@@ -114,11 +124,15 @@ export function trackChildGroup(child: ChildProcess): () => void {
   if (stopping) {
     signalChild(child, 'SIGKILL');
   }
+
   live.add(child);
   installHandlers();
+
   let tracked = true;
+
   return () => {
     if (!tracked) return;
+
     tracked = false;
     live.delete(child);
     if (live.size === 0 && !stopping) removeHandlers();

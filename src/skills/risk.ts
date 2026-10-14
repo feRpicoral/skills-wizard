@@ -80,25 +80,30 @@ const TEXT_PATTERNS: readonly {
   },
 ];
 
+function toolStrings(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  return [];
+}
+
 function toolList(value: unknown): string | undefined {
-  const tools =
-    typeof value === 'string'
-      ? [value]
-      : Array.isArray(value)
-        ? value.filter((item): item is string => typeof item === 'string')
-        : [];
-  const joined = tools
+  const joined = toolStrings(value)
     .map((tool) => tool.trim())
     .filter(Boolean)
     .join(' ');
+
   return joined || undefined;
 }
 
 function allowedTools(markdown: string | null): string | undefined {
   if (!markdown) return undefined;
+
   try {
     const { data } = parseFrontmatter({ source: markdown, file: SKILL_FILE });
     if (!isRecord(data)) return undefined;
+
     return toolList(data['allowed-tools']);
   } catch {
     return undefined;
@@ -107,6 +112,7 @@ function allowedTools(markdown: string | null): string | undefined {
 
 async function readUtf8IfText(path: string): Promise<string | null> {
   const buffer = await readFile(path);
+
   return buffer.includes(0) ? null : buffer.toString('utf8');
 }
 
@@ -122,11 +128,14 @@ async function allowedToolsRisk({
   ]);
   const before = allowedTools(beforeText);
   const after = allowedTools(afterText);
+
   if (after === undefined || after === before) return [];
+
   const detail =
     before === undefined
       ? `grants allowed-tools "${after}"`
       : `changes allowed-tools from "${before}" to "${after}"`;
+
   return [{ file: SKILL_FILE, kind: 'allowed-tools', detail }];
 }
 
@@ -145,6 +154,7 @@ export async function scanSkillRisks({
   for (const path of changedFiles(diff)) {
     const afterFile = diff.after.get(path);
     const beforeFile = diff.before.get(path);
+
     if (!afterFile) continue;
 
     if (afterFile.executable && !beforeFile?.executable) {
@@ -154,7 +164,9 @@ export async function scanSkillRisks({
         detail: 'new executable file',
       });
     }
+
     const isHookFile = HOOK_PATH.test(path);
+
     if (isHookFile) {
       flags.push({
         file: path,
@@ -162,6 +174,7 @@ export async function scanSkillRisks({
         detail: 'adds or modifies hook configuration',
       });
     }
+
     if (afterFile.link) {
       const target = await readlink(join(nextDir, ...path.split('/')));
       flags.push({
@@ -175,7 +188,9 @@ export async function scanSkillRisks({
     }
 
     const text = await readUtf8IfText(join(nextDir, ...path.split('/')));
+
     if (text === null) continue;
+
     if (!isHookFile && HOOK_EVENTS.test(text)) {
       flags.push({
         file: path,
@@ -183,6 +198,7 @@ export async function scanSkillRisks({
         detail: 'references lifecycle hooks',
       });
     }
+
     for (const rule of TEXT_PATTERNS) {
       if (rule.patterns.some((pattern) => pattern.test(text))) {
         flags.push({ file: path, kind: rule.kind, detail: rule.detail });
@@ -193,5 +209,6 @@ export async function scanSkillRisks({
   if (diff.added.includes(SKILL_FILE) || diff.modified.includes(SKILL_FILE)) {
     flags.push(...(await allowedToolsRisk({ previousDir, nextDir })));
   }
+
   return flags;
 }

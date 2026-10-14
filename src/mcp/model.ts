@@ -58,6 +58,7 @@ function isHttpUrl(value: string): boolean {
     const parsed = new URL(value);
     if (parsed.username !== '' || parsed.password !== '') return false;
     if (parsed.protocol === 'https:') return true;
+
     return parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname);
   } catch {
     return false;
@@ -89,11 +90,13 @@ function collectServerSecrets(
       ? Object.values(server.env)
       : Object.values(server.headers);
   const secrets = new Set<string>();
+
   for (const val of values) {
     if (isSecretValue(val) && (!requiredOnly || !val.optional)) {
       secrets.add(val.secret);
     }
   }
+
   return [...secrets];
 }
 
@@ -175,19 +178,24 @@ export function mcpCatalogPath(repoRoot: string): string {
 
 function checkServers(catalog: McpCatalog, file: string): void {
   const names = new Set<string>();
+
   for (const server of catalog.servers) {
     if (names.has(server.name)) {
       throw new McpError(`${file}: ${server.name} is listed twice`);
     }
+
     names.add(server.name);
+
     const outside = server.defaults.filter(
       (scope) => !server.scopes.includes(scope),
     );
+
     if (outside.length > 0) {
       throw new McpError(
         `${file}: ${server.name} has defaults outside its scopes: ${outside.join(', ')}`,
       );
     }
+
     if (server.transport === 'stdio') {
       for (const envKey of Object.keys(server.env)) {
         if (!isEnvVarName(envKey)) {
@@ -195,6 +203,7 @@ function checkServers(catalog: McpCatalog, file: string): void {
             `${file}: ${server.name} has invalid env variable name "${envKey}"`,
           );
         }
+
         if (isBlockedEnvVarName(envKey)) {
           throw new McpError(
             `${file}: ${server.name} cannot set blocked env variable "${envKey}"`,
@@ -214,10 +223,13 @@ function checkServers(catalog: McpCatalog, file: string): void {
  */
 export function parseMcpCatalog(raw: unknown, file: string): McpCatalog {
   const result = catalogSchema.safeParse(raw);
+
   if (!result.success) {
     throw new McpError(`${file}: ${z.prettifyError(result.error)}`);
   }
+
   checkServers(result.data, file);
+
   return result.data;
 }
 
@@ -231,6 +243,7 @@ export async function loadMcpCatalog(file: string): Promise<McpCatalog> {
   } catch (error) {
     throw new McpError(`${file} is not valid YAML`, { cause: error });
   }
+
   return parseMcpCatalog(raw, file);
 }
 
@@ -255,6 +268,7 @@ export function detectedMcpServerNames(
   detectedKeys: readonly string[],
 ): string[] {
   const keys = new Set(detectedKeys);
+
   return catalog.servers
     .filter(
       (server) =>
@@ -296,16 +310,21 @@ export function selectMcpServers({
   scope,
 }: SelectMcpServersParams): McpServerDefinition[] {
   const unknown = unknownMcpServerNames(catalog, names);
+
   if (unknown.length > 0) {
     throw new McpError(`Unknown MCP servers: ${unknown.join(', ')}`);
   }
+
   const outOfScope = outOfScopeMcpServerNames({ catalog, names, scope });
+
   if (outOfScope.length > 0) {
     throw new McpError(
       `MCP servers not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
   }
+
   const wanted = new Set(names);
+
   return catalog.servers.filter((server) => wanted.has(server.name));
 }
 
@@ -331,52 +350,67 @@ function serializeServerPlain(
     description: server.description,
     scopes: server.scopes,
   };
+
   if (server.defaults.length > 0) {
     record.defaults = server.defaults;
   }
+
   if (server.detect !== undefined) {
     record.detect = server.detect;
   }
+
   record.transport = server.transport;
+
   if (server.transport === 'stdio') {
     record.command = server.command;
+
     if (server.args.length > 0) {
       record.args = server.args;
     }
+
     if (server.cwd !== undefined) {
       record.cwd = server.cwd;
     }
+
     if (Object.keys(server.env).length > 0) {
       record.env = server.env;
     }
   } else {
     record.url = server.url;
+
     if (Object.keys(server.headers).length > 0) {
       record.headers = server.headers;
     }
   }
+
   if (server.tools !== undefined) {
     record.tools = server.tools;
   }
+
   if (server.estimatedTools !== undefined) {
     record.estimatedTools = server.estimatedTools;
   }
+
   return record;
 }
 
 function serverNode(doc: Document, server: McpServerDefinition) {
   const node = doc.createNode(serializeServerPlain(server));
+
   for (const key of ['scopes', 'defaults', 'args']) {
     const list = node.get(key, true);
     if (isSeq(list)) list.flow = true;
   }
+
   const tools = node.get('tools', true);
+
   if (isMap(tools)) {
     for (const key of ['allow', 'deny']) {
       const list = tools.get(key, true);
       if (isSeq(list)) list.flow = true;
     }
   }
+
   return node;
 }
 
@@ -389,12 +423,15 @@ function catalogDocument({ source, file }: CatalogDocumentParams): Document {
   if (source === null || source.trim() === '') {
     return new Document({ servers: [] });
   }
+
   const doc = parseDocument(source);
+
   if (doc.errors.length > 0) {
     throw new McpError(`${file} is not valid YAML`, {
       cause: doc.errors[0],
     });
   }
+
   return doc;
 }
 
@@ -415,10 +452,13 @@ export async function appendMcpServers(
   const next = extendMcpCatalog({ catalog: current, servers, file });
 
   const list = doc.get('servers', true);
+
   if (!isSeq(list)) {
     throw new McpError(`${file}: servers must be a list`);
   }
+
   if (list.items.length === 0) list.flow = false;
+
   for (const server of next.servers.slice(current.servers.length)) {
     const node = serverNode(doc, server);
     node.spaceBefore = list.items.length > 0;
@@ -426,15 +466,18 @@ export async function appendMcpServers(
   }
 
   await writeTextAtomic({ path: file, content: doc.toString(YAML_OUTPUT) });
+
   return next;
 }
 
 export function formatMcpServerYaml(server: McpServerDefinition): string {
   const doc = new Document({ servers: [] });
   const list = doc.get('servers', true);
+
   if (isSeq(list)) {
     list.flow = false;
     list.items.push(serverNode(doc, server));
   }
+
   return doc.toString(YAML_OUTPUT);
 }

@@ -32,10 +32,13 @@ export async function symlinkFindings(
   manifest: Manifest,
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
+
   for (const entry of manifest.entries) {
     if (entry.kind !== 'symlink') continue;
+
     const current = await readSymlink(entry.path);
     if (current !== entry.target) continue;
+
     if (!(await statIfExists(entry.path))) {
       findings.push({
         level: 'error',
@@ -43,6 +46,7 @@ export async function symlinkFindings(
       });
     }
   }
+
   return findings;
 }
 
@@ -52,6 +56,7 @@ async function shadowFindings(
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
   const home = ctx.paths.home;
+
   for (const tool of tools) {
     const shadow = tool.global.shadowedBy?.(ctx.paths);
     if (shadow && (await lstatIfExists(shadow))) {
@@ -61,6 +66,7 @@ async function shadowFindings(
       });
     }
   }
+
   return findings;
 }
 
@@ -82,21 +88,26 @@ async function limitFindings({
   const findings: Finding[] = [];
   const home = ctx.paths.home;
   const checked = new Set<string>();
+
   for (const tool of tools) {
     const path = tool.global.instructions(ctx.paths);
     const limits = tool.global.limits;
     if (!limits || !owned.has(path) || checked.has(path)) continue;
+
     checked.add(path);
     const content = await readTextIfExists(path);
     if (content === null) continue;
+
     const lines = lineCount(content);
     const bytes = Buffer.byteLength(content);
+
     if (limits.lines !== undefined && lines > limits.lines) {
       findings.push({
         level: 'note',
         message: `${displayPath({ path, home })} has ${lines} lines; ${tool.label} recommends keeping memory files under ${limits.lines}`,
       });
     }
+
     if (limits.bytes !== undefined && bytes > limits.bytes) {
       findings.push({
         level: 'warn',
@@ -104,6 +115,7 @@ async function limitFindings({
       });
     }
   }
+
   return findings;
 }
 
@@ -115,10 +127,12 @@ async function extraFileFindings(
   const home = ctx.paths.home;
   const show = (path: string) => displayPath({ path, home });
   const reported = new Set<string>();
+
   for (const tool of tools) {
     const instructions = tool.global.instructions(ctx.paths);
     for (const extra of tool.global.alsoLoads?.(ctx.paths) ?? []) {
       if (reported.has(extra) || !(await lstatIfExists(extra))) continue;
+
       reported.add(extra);
       findings.push({
         level: 'warn',
@@ -126,6 +140,7 @@ async function extraFileFindings(
       });
     }
   }
+
   return findings;
 }
 
@@ -139,6 +154,7 @@ export async function globalFindings(
       .filter((entry) => entry.kind === 'region')
       .map((entry) => entry.path),
   );
+
   return [
     ...(await shadowFindings(ctx, tools)),
     ...(await limitFindings({ ctx, tools, owned })),
@@ -220,6 +236,7 @@ export async function planFindings({
 
   for (const action of plan.actions) {
     const where = planPath({ plan, path: action.path, home });
+
     if (action.status === 'conflict') {
       findings.push({
         level:
@@ -238,6 +255,7 @@ export async function planFindings({
       });
     }
   }
+
   for (const warning of plan.warnings ?? []) {
     findings.push({ level: 'warn', message: warning });
   }
@@ -278,31 +296,37 @@ export function manifestFindings({
       message: `Preset "${unknownPreset}" is no longer recognized; agents-config sync will drop it`,
     });
   }
+
   if (unknownBlocks.length > 0) {
     findings.push({
       level: 'warn',
       message: `Blocks no longer in the library: ${unknownBlocks.join(', ')}; agents-config sync will drop them${replacementSkillHint(unknownBlocks)}`,
     });
   }
+
   if (outOfScopeBlocks.length > 0) {
     findings.push({
       level: 'warn',
       message: `Blocks no longer available for ${scope} scope: ${outOfScopeBlocks.join(', ')}; agents-config sync will drop them${replacementSkillHint(outOfScopeBlocks)}`,
     });
   }
+
   if (addedBlocks.length > 0) {
     findings.push({
       level: 'warn',
       message: `Required blocks missing from the install: ${addedBlocks.join(', ')}; agents-config sync will add them`,
     });
   }
+
   findings.push(...skillResolutionFindings, ...mcpResolutionFindings);
+
   if (leftGit && location.project) {
     findings.push({
       level: 'warn',
       message: `${displayPath({ path: location.project.dir, home: ctx.paths.home })} is no longer in a git repository; agents-config sync will stop keeping its files local`,
     });
   }
+
   for (const name of missingVariables.filter(
     (name) => !unresolvedVariables.includes(name),
   )) {
@@ -311,11 +335,13 @@ export function manifestFindings({
       message: `The blocks now use ${name}, which has no recorded value; agents-config sync will record ${name}=${foundVariables[name] ?? ''}`,
     });
   }
+
   if (unresolvedVariables.length > 0) {
     findings.push({
       level: 'error',
       message: `The blocks now use variables with no recorded value: ${unresolvedVariables.join(', ')}; set them with ${setVariablesCommand({ ctx, location, names: unresolvedVariables })}`,
     });
   }
+
   return findings;
 }

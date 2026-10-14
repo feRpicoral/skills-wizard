@@ -31,9 +31,11 @@ export async function readStaged({
 }: ReadStagedParams): Promise<StagedText> {
   const onDisk = await readTextIfExists(path);
   const location = await realLocation(path);
+
   if (location === null || !staged.has(location)) {
     return { current: onDisk, onDisk };
   }
+
   return { current: staged.get(location) ?? null, onDisk };
 }
 
@@ -56,6 +58,7 @@ export async function stageAction({
   action,
 }: StageActionParams): Promise<void> {
   const { change } = action;
+
   if (change.type === 'write') {
     const location = await realLocation(action.writePath ?? action.path);
     if (location !== null) staged.set(location, change.content);

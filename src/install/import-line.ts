@@ -40,6 +40,7 @@ interface EnsureLineParams {
 export function ensureLine({ existing, line }: EnsureLineParams): string {
   if (existing === null || isBlank(existing)) return `${line}\n`;
   if (hasLine({ content: existing, line })) return existing;
+
   const eol = lineEnding(existing);
   return keepBom(existing, (text) => `${line}${eol}${eol}${text}`);
 }
@@ -61,6 +62,7 @@ function removeLineFrom({ existing, line }: RemoveLineParams): string {
   const removeCount = lines[index + 1]?.text.trim() === '' ? 2 : 1;
   lines.splice(index, removeCount);
   const remaining = joinLines(lines);
+
   return remaining.trim() === '' ? '' : remaining;
 }
 
@@ -73,6 +75,7 @@ export function planLine({
     file.existing !== null &&
     hasLine({ content: file.existing, line: target.line });
   const added = hadLine ? previous?.kind === 'line' && previous.added : true;
+
   return writeAction({
     target,
     file,
@@ -108,8 +111,10 @@ async function sameFileNote({
   other,
 }: SameFileNoteParams): Promise<string> {
   const name = basename(other);
+
   if (await pointsAt({ path, other })) return `links to ${name}`;
   if (await pointsAt({ path: other, other: path })) return `${name} links here`;
+
   return `same file as ${name}`;
 }
 
@@ -127,17 +132,21 @@ export async function planSatisfiedLine({
     entry: null,
     previous,
   };
+
   if (previous?.kind !== 'line' || !previous.added) return unchanged;
 
   const resolved = await resolveTargetFile({ target, previous, ...rest });
   if (!resolved.ok) return resolved.action;
+
   const { file } = resolved;
+
   if (
     file.existing === null ||
     !hasLine({ content: file.existing, line: target.line })
   ) {
     return unchanged;
   }
+
   return {
     ...unchanged,
     ...(file.writePath !== target.path ? { writePath: file.writePath } : {}),

@@ -239,6 +239,7 @@ async function gradeStringAssertions({
     schemaPath,
     `${JSON.stringify(GRADER_JSON_SCHEMA, null, 2)}\n`,
   );
+
   const response = capResponse(rawResponse);
   // Whatever the fixed parts of the prompt leave, up to the summary budget.
   const fixedBytes = byteLength(
@@ -265,10 +266,12 @@ async function gradeStringAssertions({
     workspaceSummary,
     stringAssertions,
   });
+
   // The grader runs in an empty temporary folder whose path names neither
   // the variant nor the run, away from the workspace it could otherwise
   // read (revealing the variant) or change. Its logs stay in runDir.
   const graderDir = await mkdtemp(join(tmpdir(), GRADER_DIR_PREFIX));
+
   try {
     const graderResult = await runner.runGrader({
       prompt,
@@ -278,6 +281,7 @@ async function gradeStringAssertions({
       runDir,
       timeoutSeconds,
     });
+
     return normalizeGraderResults({
       assertions: stringAssertions,
       output: graderResult.output,
@@ -321,6 +325,7 @@ export async function gradeEvalRun({
   await mkdir(runDir, { recursive: true });
 
   const failure = runFailure({ taskResult, timeoutSeconds });
+
   if (failure !== undefined) {
     return writeRunReports({
       runDir,
@@ -354,6 +359,7 @@ export async function gradeEvalRun({
   }
 
   const gradedStrings = new Map<number, GradedExpectation>();
+
   if (stringAssertions.length > 0) {
     const normalized = await gradeStringAssertions({
       evalCase,
@@ -364,6 +370,7 @@ export async function gradeEvalRun({
       runner,
       timeoutSeconds,
     });
+
     for (const [position, item] of normalized.entries()) {
       const index = stringIndexes[position];
       if (index !== undefined) gradedStrings.set(index, item);
@@ -381,6 +388,7 @@ export async function gradeEvalRun({
           )
         );
       }
+
       return (
         scriptedByIndex.get(index) ?? {
           text: formatAssertionLabel(assertion),

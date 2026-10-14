@@ -84,6 +84,7 @@ function emptyOriginal({
   }
 
   const currentServers = doc.mcpServers ?? {};
+
   if (Object.keys(currentServers).length > 0) return undefined;
 
   return rawJson({ text, keys: ['mcpServers'] });
@@ -144,6 +145,7 @@ export function ensureMcpJsonServers({
   });
 
   let content = existing;
+
   for (const owned of ownedServers) {
     if (
       !Object.hasOwn(servers, owned) &&
@@ -160,6 +162,7 @@ export function ensureMcpJsonServers({
     const unchanged =
       Object.hasOwn(currentServers, name) &&
       isDeepStrictEqual(currentServers[name], config);
+
     if (!unchanged) {
       content = keepBom(content, (text) =>
         setJsonValue({ text, keys: ['mcpServers', name], value: config }),
@@ -209,9 +212,11 @@ export function removeMcpJsonServers({
   const toRemove = servers.filter(
     (name) => !retainedSet.has(name) && Object.hasOwn(currentServers, name),
   );
+
   if (toRemove.length === 0) return existing;
 
   let content = existing;
+
   for (const name of toRemove) {
     content = keepBom(content, (text) =>
       removeJsonProperty({ text, keys: ['mcpServers', name] }),
@@ -220,11 +225,13 @@ export function removeMcpJsonServers({
 
   const afterDoc = parseJsonObject(content);
   const afterServers = afterDoc.mcpServers;
+
   if (isObject(afterServers) && Object.keys(afterServers).length === 0) {
     if (createdMcpServers) {
       content = keepBom(content, (text) =>
         removeJsonProperty({ text, keys: ['mcpServers'] }),
       );
+
       if (
         original !== undefined &&
         isEmptyJsonObject(content) &&
@@ -268,6 +275,7 @@ export function hasUnmanagedTomlServer({
       { cause: error },
     );
   }
+
   return (
     isObject(parsed.mcp_servers) && Object.hasOwn(parsed.mcp_servers, name)
   );
@@ -295,6 +303,7 @@ export function upsertMcpTomlServers({
 }: UpsertMcpTomlParams): string {
   if (existing !== null && !isBlank(existing)) {
     const outside = removeRegion(existing, MCP_TOML_MARKERS);
+
     for (const name of serverNames) {
       if (hasUnmanagedTomlServer({ text: outside, name })) {
         throw new ManagedRegionError(
@@ -303,6 +312,7 @@ export function upsertMcpTomlServers({
       }
     }
   }
+
   return upsertRegion({ existing, body, markers: MCP_TOML_MARKERS });
 }
 

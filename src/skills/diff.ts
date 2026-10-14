@@ -36,18 +36,22 @@ export async function diffSkillTrees({
       : Promise.resolve(new Map<string, TreeFile>()),
     snapshotTree(nextDir),
   ]);
+
   const added: string[] = [];
   const modified: string[] = [];
   const removed: string[] = [];
 
   for (const [path, file] of after) {
     const prior = before.get(path);
+
     if (!prior) added.push(path);
     else if (!sameFile({ left: prior, right: file })) modified.push(path);
   }
+
   for (const path of before.keys()) {
     if (!after.has(path)) removed.push(path);
   }
+
   return {
     added: added.sort(),
     modified: modified.sort(),

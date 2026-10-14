@@ -20,12 +20,14 @@ export function mergeCandidateMetadata({
   enrichment,
 }: MergeCandidateMetadataParams): DiscoveryCandidate {
   if (!enrichment || primary === enrichment) return primary;
+
   const sameRepo = primary.repo === enrichment.repo;
   const path = primary.path ?? (sameRepo ? enrichment.path : undefined);
   const description = primary.description ?? enrichment.description;
   const category = primary.category ?? enrichment.category;
   const risk = primary.risk ?? enrichment.risk;
   const tags = primary.tags ?? enrichment.tags;
+
   return {
     ...primary,
     ...(path !== undefined ? { path } : {}),
@@ -63,6 +65,7 @@ export async function searchCandidates({
     (entry) => entry.repo === AWESOME_SKILLS_REPO,
   );
   const awesomePaths = repositoryPaths(catalog, AWESOME_SKILLS_REPO);
+
   if (source === 'awesome') {
     return searchAwesomeIndex({
       cache,
@@ -106,14 +109,18 @@ export async function searchCandidates({
   ) {
     throw skillsShOutcome.reason;
   }
+
   if (skillsShOutcome.status === 'rejected') {
     const reason = skillsShOutcome.reason as unknown;
     if (!(reason instanceof SourceError)) throw reason;
+
     onWarn?.(reason.message);
   }
+
   if (awesomeOutcome.status === 'rejected') {
     const reason = awesomeOutcome.reason as unknown;
     if (!(reason instanceof SourceError)) throw reason;
+
     onWarn?.(reason.message);
   }
 
@@ -123,11 +130,14 @@ export async function searchCandidates({
     awesomeOutcome.status === 'fulfilled' ? awesomeOutcome.value.all : [];
   const awesomeByKey = new Map<string, DiscoveryCandidate>();
   const awesomeByName = new Map<string, DiscoveryCandidate | null>();
+
   for (const item of awesomeAll) {
     awesomeByKey.set(`${item.repo}@${item.name}`, item);
+
     if (item.upstreamRepo) {
       awesomeByKey.set(`${item.upstreamRepo}@${item.name}`, item);
     }
+
     if (awesomeByName.has(item.name)) {
       awesomeByName.set(item.name, null);
     } else {
@@ -142,19 +152,23 @@ export async function searchCandidates({
   const normalizedCategory = category?.trim().toLowerCase();
   const seen = new Set<string>();
   const deduplicated: DiscoveryCandidate[] = [];
+
   for (const item of combined) {
     const key = `${item.repo}@${item.name}`;
     if (seen.has(key)) continue;
+
     const enrichment =
       awesomeByKey.get(key) ?? awesomeByName.get(item.name) ?? undefined;
     const merged = mergeCandidateMetadata({
       primary: item,
       enrichment,
     });
+
     if (!includeOffensive && isOffensiveCandidate(merged)) {
       seen.add(key);
       continue;
     }
+
     if (
       normalizedCategory &&
       merged.category?.toLowerCase() !== normalizedCategory
@@ -162,8 +176,10 @@ export async function searchCandidates({
       seen.add(key);
       continue;
     }
+
     seen.add(key);
     deduplicated.push(merged);
   }
+
   return deduplicated;
 }

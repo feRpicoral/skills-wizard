@@ -21,6 +21,7 @@ export function isRepository(repo: string): boolean {
 
 export function isRepositoryPath(path: string): boolean {
   if (path === WHOLE_REPOSITORY) return true;
+
   return (
     posix.normalize(path) === path &&
     !path.startsWith('/') &&
@@ -41,6 +42,7 @@ export function isCommitSha(ref: string): boolean {
 
 export function isGitRef(ref: string): boolean {
   if (isCommitSha(ref)) return true;
+
   return (
     ref !== '@' &&
     !ref.startsWith('-') &&
@@ -90,29 +92,36 @@ export function catalogPath(repoRoot: string): string {
 function checkEntries(catalog: Catalog, file: string): void {
   const names = new Set<string>();
   const refs = new Map<string, string | undefined>();
+
   for (const entry of catalog.skills) {
     if (names.has(entry.name)) {
       throw new CatalogError(`${file}: ${entry.name} is listed twice`);
     }
+
     names.add(entry.name);
+
     if (!Object.hasOwn(catalog.categories, entry.category)) {
       throw new CatalogError(
         `${file}: ${entry.name} uses the unknown category "${entry.category}"`,
       );
     }
+
     const outside = entry.defaults.filter(
       (scope) => !entry.scopes.includes(scope),
     );
+
     if (outside.length > 0) {
       throw new CatalogError(
         `${file}: ${entry.name} has defaults outside its scopes: ${outside.join(', ')}`,
       );
     }
+
     if (refs.has(entry.repo) && refs.get(entry.repo) !== entry.ref) {
       throw new CatalogError(
         `${file}: every skill from ${entry.repo} must use the same ref`,
       );
     }
+
     refs.set(entry.repo, entry.ref);
   }
 }
@@ -122,7 +131,9 @@ function parseCatalog(raw: unknown, file: string): Catalog {
   if (!result.success) {
     throw new CatalogError(`${file}: ${z.prettifyError(result.error)}`);
   }
+
   checkEntries(result.data, file);
+
   return result.data;
 }
 
@@ -136,6 +147,7 @@ export async function loadCatalog(file: string): Promise<Catalog> {
   } catch (error) {
     throw new CatalogError(`${file} is not valid YAML`, { cause: error });
   }
+
   return parseCatalog(raw, file);
 }
 
@@ -143,6 +155,7 @@ export function repositoryPaths(catalog: Catalog, repo: string): string[] {
   const paths = catalog.skills
     .filter((entry) => entry.repo === repo)
     .map((entry) => entry.path);
+
   return [...new Set(paths)].sort();
 }
 
@@ -158,11 +171,13 @@ export function extendCatalog({
   file,
 }: ExtendCatalogParams): Catalog {
   const categories = { ...catalog.categories };
+
   for (const entry of entries) {
     if (!Object.hasOwn(categories, entry.category)) {
       categories[entry.category] = entry.category;
     }
   }
+
   return parseCatalog(
     { categories, skills: [...catalog.skills, ...entries] },
     file,
@@ -174,10 +189,12 @@ function entryNode(doc: Document, entry: CatalogEntry) {
   const node = doc.createNode(
     defaults.length > 0 ? { ...rest, defaults } : rest,
   );
+
   for (const key of ['scopes', 'defaults']) {
     const list = node.get(key, true);
     if (isSeq(list)) list.flow = true;
   }
+
   return node;
 }
 
@@ -185,12 +202,14 @@ function catalogDocument(source: string | null, file: string): Document {
   if (source === null || source.trim() === '') {
     return new Document({ categories: {}, skills: [] });
   }
+
   const doc = parseDocument(source);
   if (doc.errors.length > 0) {
     throw new CatalogError(`${file} is not valid YAML`, {
       cause: doc.errors[0],
     });
   }
+
   return doc;
 }
 
@@ -213,15 +232,19 @@ export async function appendCatalogEntries(
 
   const categories = doc.get('categories', true);
   const skills = doc.get('skills', true);
+
   if (!isMap(categories) || !isSeq(skills)) {
     throw new CatalogError(
       `${file}: categories must be a map and skills a list`,
     );
   }
+
   for (const [key, label] of Object.entries(next.categories)) {
     if (!Object.hasOwn(current.categories, key)) categories.set(key, label);
   }
+
   if (skills.items.length === 0) skills.flow = false;
+
   let previousRepo = current.skills.at(-1)?.repo;
   for (const entry of next.skills.slice(current.skills.length)) {
     const node = entryNode(doc, entry);
@@ -232,5 +255,6 @@ export async function appendCatalogEntries(
   }
 
   await writeTextAtomic({ path: file, content: doc.toString(YAML_OUTPUT) });
+
   return next;
 }

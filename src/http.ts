@@ -25,26 +25,35 @@ export async function readBoundedResponseText({
   const contentLengthHeader = response.headers.get('content-length');
   const contentLength =
     contentLengthHeader !== null ? Number(contentLengthHeader) : Number.NaN;
+
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     await response.body?.cancel();
     throw overflowError();
   }
+
   const body = response.body as ReadableStream<Uint8Array> | null;
+
   if (!body) {
     const text = await response.text();
+
     if (Buffer.byteLength(text, 'utf8') > maxBytes) {
       throw overflowError();
     }
+
     return text;
   }
+
   const chunks: Uint8Array[] = [];
   let total = 0;
+
   for await (const chunk of body) {
     total += chunk.byteLength;
     if (total > maxBytes) {
       throw overflowError();
     }
+
     chunks.push(chunk);
   }
+
   return Buffer.concat(chunks).toString('utf8');
 }

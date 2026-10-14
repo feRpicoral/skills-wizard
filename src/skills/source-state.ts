@@ -60,6 +60,7 @@ export function sourceDir(cache: SourceCache, repo: string): string {
   if (!isRepository(repo)) {
     throw new SourceError(`${repo} is not an owner/repo name`);
   }
+
   return join(cache.root, ...repo.split('/'));
 }
 
@@ -67,7 +68,9 @@ export function checkSpec(spec: SourceSpec): void {
   if (spec.ref !== undefined && !isGitRef(spec.ref)) {
     throw new SourceError(`${spec.repo}: ${spec.ref} is not a valid ref`);
   }
+
   const invalid = spec.paths.find((path) => !isRepositoryPath(path));
+
   if (invalid !== undefined) {
     throw new SourceError(
       `${spec.repo}: ${invalid} is not a path inside the repository`,
@@ -95,6 +98,7 @@ export async function gitRaw({
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BUFFER,
     });
+
     return stdout;
   } catch (error) {
     throw new SourceError(`${failure}: ${failureDetail(error)}`, {
@@ -133,7 +137,9 @@ function stateFile(dir: string): string {
 
 export async function readState(dir: string): Promise<SourceState> {
   const content = await readTextIfExists(stateFile(dir));
+
   if (content === null) return { ref: null };
+
   try {
     const result = stateSchema.safeParse(JSON.parse(content));
     return result.success ? result.data : { ref: null };
@@ -168,6 +174,7 @@ async function remoteCommit(
       .filter(Boolean)
       .map((line) => {
         const [commit = '', name = ''] = line.split('\t');
+
         return [name, commit] as const;
       }),
   );
@@ -175,10 +182,12 @@ async function remoteCommit(
     ref === DEFAULT_REF
       ? [DEFAULT_REF]
       : [`refs/tags/${ref}^{}`, `refs/heads/${ref}`, `refs/tags/${ref}`];
+
   for (const candidate of candidates) {
     const commit = commits.get(candidate);
     if (commit) return commit;
   }
+
   throw new SourceError(`${spec.repo} has no ref named ${ref}`);
 }
 
@@ -197,8 +206,10 @@ export async function checkSource(
   { force }: CheckSourceOptions,
 ): Promise<UpdateCheck> {
   checkSpec(spec);
+
   const dir = sourceDir(cache, spec.repo);
   const current = await sourceCommit(cache, spec.repo);
+
   if (spec.ref !== undefined && isCommitSha(spec.ref)) {
     return { current, latest: spec.ref };
   }
@@ -206,6 +217,7 @@ export async function checkSource(
   const state = await readState(dir);
   const now = cache.now();
   const checkedAt = state.checkedAt ? Date.parse(state.checkedAt) : NaN;
+
   if (
     !force &&
     state.latest !== undefined &&
@@ -214,7 +226,9 @@ export async function checkSource(
   ) {
     return { current, latest: state.latest };
   }
+
   const latest = await remoteCommit(cache, spec);
   await writeState(dir, { ...state, checkedAt: now.toISOString(), latest });
+
   return { current, latest };
 }

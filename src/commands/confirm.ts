@@ -38,6 +38,7 @@ async function trackProject(
   plan: Plan,
 ): Promise<void> {
   if (plan.projectDir === undefined) return;
+
   try {
     if (await lstatIfExists(plan.manifestPath)) {
       await recordProject(ctx.paths, plan.projectDir);
@@ -48,6 +49,7 @@ async function trackProject(
     if (!(error instanceof AgentsConfigError) && !isSystemError(error)) {
       throw error;
     }
+
     notify({
       ctx,
       prompting,
@@ -64,11 +66,13 @@ export async function confirmPlans({
   options: { yes, dryRun, hasExtraWork = false },
 }: ConfirmPlansParams): Promise<ConfirmDecision> {
   const lines = plans.flatMap((plan) => describePlan(plan, ctx.paths.home));
+
   if (prompting) {
     clack.note(lines.join('\n') || 'Nothing to do', 'Plan');
   } else {
     lines.forEach((entry) => ctx.print(entry));
   }
+
   for (const plan of plans) {
     for (const warning of plan.warnings ?? []) {
       notify({ ctx, prompting, message: warning, level: 'warn' });
@@ -79,23 +83,28 @@ export async function confirmPlans({
     notify({ ctx, prompting, message: 'Dry run: nothing was written.' });
     return { proceed: false, code: 0 };
   }
+
   const hasAnyWork =
     hasExtraWork ||
     plans.some((plan) => hasChanges(plan) || conflicts(plan).length > 0);
+
   if (!hasAnyWork) {
     notify({ ctx, prompting, message: 'Everything is up to date.' });
     return { proceed: false, code: 0 };
   }
+
   if (!ctx.interactive && !yes) {
     ctx.print(
       'Re-run with --yes to apply these changes, or --dry-run to preview them.',
     );
     return { proceed: false, code: 1 };
   }
+
   if (prompting && !(await confirmApply())) {
     notify({ ctx, prompting: true, message: 'Nothing was written.' });
     return { proceed: false, code: 1 };
   }
+
   return { proceed: true };
 }
 
@@ -126,6 +135,10 @@ interface ReportPlanWarningsParams {
   };
 }
 
+function appliedSummary(changed: number): string {
+  return `Applied ${changed} change${changed === 1 ? '' : 's'}.`;
+}
+
 function reportPlanWarnings({
   ctx,
   plan,
@@ -133,6 +146,7 @@ function reportPlanWarnings({
   outcome,
 }: ReportPlanWarningsParams): number {
   const home = ctx.paths.home;
+
   for (const action of outcome.skipped) {
     notify({
       ctx,
@@ -141,6 +155,7 @@ function reportPlanWarnings({
       level: 'warn',
     });
   }
+
   for (const failure of outcome.setupFailures ?? []) {
     notify({
       ctx,
@@ -149,6 +164,7 @@ function reportPlanWarnings({
       level: 'warn',
     });
   }
+
   return outcome.skipped.length + (outcome.setupFailures?.length ?? 0);
 }
 
@@ -176,9 +192,11 @@ export function reportApplyOutcome({
   const summary =
     changed === 0 && plan.manifestStatus !== 'unchanged'
       ? 'Updated the manifest.'
-      : `Applied ${changed} change${changed === 1 ? '' : 's'}.`;
+      : appliedSummary(changed);
+
   if (prompting) clack.outro(summary);
   else ctx.print(summary);
+
   return { code: failed > 0 ? 1 : 0, applied: true };
 }
 
@@ -192,8 +210,10 @@ export async function confirmAndApplyPlans(
   if (!decision.proceed) return { code: decision.code, applied: false };
 
   await options.beforeApply?.();
+
   let changed = 0;
   let failed = 0;
+
   for (const plan of plans) {
     const outcome = await applyPlan(plan);
     await trackProject(ctx, prompting, plan);
@@ -202,6 +222,7 @@ export async function confirmAndApplyPlans(
     ).length;
     failed += reportPlanWarnings({ ctx, plan, prompting, outcome });
   }
+
   const single = !options.alwaysCountSummary ? plans[0] : undefined;
   const summary =
     plans.length === 1 &&
@@ -209,9 +230,11 @@ export async function confirmAndApplyPlans(
     changed === 0 &&
     single.manifestStatus !== 'unchanged'
       ? 'Updated the manifest.'
-      : `Applied ${changed} change${changed === 1 ? '' : 's'}.`;
+      : appliedSummary(changed);
+
   if (prompting) clack.outro(summary);
   else ctx.print(summary);
+
   return { code: failed > 0 ? 1 : 0, applied: true };
 }
 

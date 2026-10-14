@@ -43,13 +43,16 @@ async function readPackageJson(projectDir: string): Promise<string | null> {
   if (location === null || !isInside({ dir: projectDir, path: location })) {
     return null;
   }
+
   if (!(await statIfExists(location))?.isFile()) return null;
+
   return readTextIfExists(location);
 }
 
 async function projectTitle(projectDir: string): Promise<string> {
   const packageJson = await readPackageJson(projectDir);
   if (packageJson === null) return basename(projectDir);
+
   try {
     const { name } = JSON.parse(packageJson) as { name?: unknown };
     return typeof name === 'string' && name.trim()
@@ -93,7 +96,9 @@ async function gitContext(
     args: ['rev-parse', '--git-path', 'info/exclude'],
     env,
   });
+
   if (!root || !excludePath) return undefined;
+
   return { root, excludePath: resolve(projectDir, excludePath) };
 }
 
@@ -126,9 +131,11 @@ export async function resolveLocation({
   if (!(await isDirectory(requested))) {
     throw new UsageError(`${requested} is not a directory`);
   }
+
   const dir = await realpath(requested);
   const repository = await gitContext(dir, ctx.sources.env);
   const existingAgentsMd = await readTextIfExists(join(dir, 'AGENTS.md'));
+
   const needsSeed = !existingAgentsMd?.trim();
 
   if (detect || needsSeed) {
@@ -174,6 +181,7 @@ async function readRecordedManifest({
     dir: project.dir,
     gitExcludePath: project.git?.excludePath,
   });
+
   for (const path of result?.ignored ?? []) {
     notify({
       ctx,
@@ -184,6 +192,7 @@ async function readRecordedManifest({
       level: 'warn',
     });
   }
+
   return result?.manifest ?? null;
 }
 
@@ -207,6 +216,7 @@ export async function readLocationManifest({
         project: location.project,
       })
     : null;
+
   if (manifest && folders) {
     checkSkillEntries({
       file: location.manifestPath,
@@ -215,6 +225,7 @@ export async function readLocationManifest({
       scope: location.scope,
     });
   }
+
   if (manifest && mcpPaths) {
     checkMcpEntries({
       file: location.manifestPath,
@@ -222,6 +233,7 @@ export async function readLocationManifest({
       mcpPaths,
     });
   }
+
   return manifest;
 }
 
@@ -239,10 +251,12 @@ export async function warnTrackedFiles({
   project,
 }: WarnTrackedFilesParams): Promise<void> {
   if (!project?.git) return;
+
   const root = project.git.root;
   const candidates = plan.actions
     .filter((action) => isInside({ dir: project.dir, path: action.path }))
     .map((action) => relative(root, action.path));
+
   if (candidates.length === 0) return;
 
   const tracked = await git({
@@ -250,6 +264,7 @@ export async function warnTrackedFiles({
     args: ['ls-files', '--', ...candidates],
     env: ctx.sources.env,
   });
+
   if (tracked) {
     notify({
       ctx,

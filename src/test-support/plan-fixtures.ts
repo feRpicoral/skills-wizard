@@ -87,6 +87,7 @@ export async function installGlobal(
     previous: await readManifest(manifestPath),
     manifestPath,
   });
+
   await applyPlan(plan);
   return plan;
 }
@@ -107,8 +108,9 @@ export async function installProject({
   const manifestPath = projectManifestPath(project.dir);
   const stored = await readProjectManifest(manifestPath, {
     dir: project.dir,
-    ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
+    gitExcludePath: project.git?.excludePath,
   });
+
   const previous = stored?.manifest ?? null;
   const plan = await buildPlan({
     scope: 'project',
@@ -124,6 +126,7 @@ export async function installProject({
     manifestPath,
     project,
   });
+
   await applyPlan(plan);
   return plan;
 }
@@ -149,9 +152,11 @@ export async function gitProject({
   subdir = '',
 }: GitProjectParams): Promise<ProjectContext> {
   await run('git', ['init', '-q'], { cwd: root });
+
   const realRoot = await realpath(root);
   const dir = join(realRoot, subdir);
   await mkdir(dir, { recursive: true });
+
   return {
     dir,
     title: 'app',

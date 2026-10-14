@@ -105,16 +105,20 @@ export function computeStatSummary(values: readonly number[]): StatSummary {
   if (values.length === 0) {
     return { mean: 0, stddev: 0, min: 0, max: 0 };
   }
+
   const sum = values.reduce((acc, val) => acc + val, 0);
   const mean = sum / values.length;
   const min = Math.min(...values);
   const max = Math.max(...values);
+
   if (values.length === 1) {
     return { mean, stddev: 0, min, max };
   }
+
   const variance =
     values.reduce((acc, val) => acc + (val - mean) ** 2, 0) /
     (values.length - 1);
+
   return { mean, stddev: Math.sqrt(variance), min, max };
 }
 
@@ -127,6 +131,7 @@ export function aggregateVariantRuns(
   runs: readonly EvalRunRecord[],
 ): VariantAggregate {
   const reported = runs.filter((item) => item.timing.usage_reported !== false);
+
   return {
     runs: runs.length,
     failed_runs: runs.filter(isFailedRun).length,
@@ -159,8 +164,10 @@ export function formatSignedDelta({
   decimals,
 }: FormatSignedDeltaParams): string {
   const fixed = value.toFixed(decimals);
+
   // Avoid "-0.00" for values that round to zero.
   if (Number(fixed) === 0) return `+${(0).toFixed(decimals)}`;
+
   return value > 0 ? `+${fixed}` : fixed;
 }
 
@@ -202,12 +209,14 @@ function summarizeCase({
 }: SummarizeCaseParams): CaseBenchmarkSummary {
   const caseRuns = runs.filter((run) => run.case_id === evalCase.id);
   const variants: Partial<Record<EvalVariant, VariantAggregate>> = {};
+
   for (const variant of allVariants) {
     const vRuns = caseRuns.filter((run) => run.variant === variant);
     if (vRuns.length > 0) {
       variants[variant] = aggregateVariantRuns(vRuns);
     }
   }
+
   return {
     case_id: evalCase.id,
     prompt: evalCase.prompt,
@@ -238,10 +247,12 @@ function buildRunSummary(
 
   const compareAggregates: Record<string, VariantAggregate> = {};
   const compareDeltas: Record<string, DeltaSummary> = {};
+
   for (const name of compareSkillNames) {
     const cRuns = runs.filter(
       (run) => run.variant === compareSkillVariant(name),
     );
+
     if (cRuns.length > 0) {
       const agg = aggregateVariantRuns(cRuns);
       compareAggregates[name] = agg;
@@ -299,6 +310,15 @@ export interface AggregateBenchmarkParams {
   timestamp?: string;
 }
 
+function resolveBaselineStatus(
+  baselineEnabled: boolean,
+  possiblyContaminated: boolean,
+): BaselineStatus {
+  if (!baselineEnabled) return 'skipped';
+  if (possiblyContaminated) return 'possibly contaminated';
+  return 'clean';
+}
+
 /**
  * Aggregates per-run grading and timing records across `with_skill`,
  * `without_skill`, `old_skill`, and `compare:<name>` variants into a
@@ -346,11 +366,10 @@ export function aggregateBenchmark({
     caseSummaries,
     compareSkillNames,
   );
-  const baselineStatus: BaselineStatus = !baselineEnabled
-    ? 'skipped'
-    : possiblyContaminated
-      ? 'possibly contaminated'
-      : 'clean';
+  const baselineStatus = resolveBaselineStatus(
+    baselineEnabled,
+    possiblyContaminated,
+  );
 
   return {
     schema_version: EVAL_SCHEMA_VERSION,

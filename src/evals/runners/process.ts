@@ -36,6 +36,7 @@ export function resolveRunnerBinary({
   if (cwd === undefined || !isPathLike(binary) || isAbsolute(binary)) {
     return binary;
   }
+
   return resolve(cwd, binary);
 }
 
@@ -58,6 +59,7 @@ export async function checkRunnerBinary({
         `Runner binary "${binary}" must be an absolute path or a command name on PATH`,
       );
     }
+
     let info;
     try {
       info = await stat(binary);
@@ -68,11 +70,14 @@ export async function checkRunnerBinary({
         { cause: error },
       );
     }
+
     if (!info.isFile()) {
       throw new RunnerError(`Runner binary "${binary}" is not a file`);
     }
+
     return binary;
   }
+
   const resolved = env.PATH
     ? await which(binary, {
         path: env.PATH,
@@ -80,11 +85,13 @@ export async function checkRunnerBinary({
         nothrow: true,
       })
     : null;
+
   if (!resolved) {
     throw new RunnerError(
       `Runner binary "${binary}" was not found on PATH or is not executable`,
     );
   }
+
   return resolved;
 }
 
@@ -98,6 +105,7 @@ export function launchError(binary: string, error: Error): RunnerError {
       cause: error,
     });
   }
+
   return new RunnerError(
     `Failed to launch runner "${binary}": ${error.message}`,
     { cause: error },
@@ -131,6 +139,7 @@ export function runDetachedProcess({
   drainMs = DEFAULT_DRAIN_MS,
 }: RunDetachedProcessParams): Promise<SpawnRunnerProcessResult> {
   const startTime = Date.now();
+
   return new Promise<SpawnRunnerProcessResult>((resolvePromise, reject) => {
     let child: ChildProcess;
     try {
@@ -145,6 +154,7 @@ export function runDetachedProcess({
       reject(error instanceof Error ? error : new Error(String(error)));
       return;
     }
+
     // Stops the group if this process is interrupted while it runs.
     const untrack = trackChildGroup(child);
 
@@ -163,6 +173,7 @@ export function runDetachedProcess({
     };
     const finish = (): void => {
       if (settled) return;
+
       settled = true;
       clearTimers();
       signalProcessTree(child, 'SIGKILL');
@@ -196,6 +207,7 @@ export function runDetachedProcess({
 
     child.on('error', (error) => {
       if (settled) return;
+
       settled = true;
       clearTimers();
       signalProcessTree(child, 'SIGKILL');
@@ -252,6 +264,7 @@ export async function spawnRunnerProcess({
 
   const stdoutName = logPrefix ? `${logPrefix}-stdout.log` : 'stdout.log';
   const stderrName = logPrefix ? `${logPrefix}-stderr.log` : 'stderr.log';
+
   await writeFile(join(runDir, stdoutName), result.stdout);
   await writeFile(join(runDir, stderrName), result.stderr);
 

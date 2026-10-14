@@ -84,6 +84,15 @@ export interface ParseClaudeStreamParams {
 
 export type ParsedClaudeStream = ParsedTaskStream;
 
+/** The skill named by a `Skill` tool input (`skill`, or legacy `command`). */
+function claudeSkillInputName(
+  input: Record<string, unknown>,
+): string | undefined {
+  if (typeof input.skill === 'string') return input.skill;
+  if (typeof input.command === 'string') return input.command;
+  return undefined;
+}
+
 interface ClaudeToolUseTriggerParams {
   block: Record<string, unknown>;
   skillName: string;
@@ -94,29 +103,40 @@ function isClaudeToolUseTrigger({
   skillName,
 }: ClaudeToolUseTriggerParams): boolean {
   if (block.type !== 'tool_use') return false;
+
   const name = block.name;
   const input = isRecordObject(block.input) ? block.input : undefined;
   if (!input) return false;
 
   if (name === 'Skill') {
-    const skill =
-      typeof input.skill === 'string'
-        ? input.skill
-        : typeof input.command === 'string'
-          ? input.command
-          : undefined;
+    const skill = claudeSkillInputName(input);
+
     return (
       skill !== undefined &&
       (skill === skillName || skill.endsWith(`:${skillName}`))
     );
   }
+
   if (name === 'Read' && typeof input.file_path === 'string') {
     return mentionsSkillFile(input.file_path, skillName);
   }
+
   if (name === 'Bash' && typeof input.command === 'string') {
     return mentionsSkillFile(input.command, skillName);
   }
+
   return false;
+}
+
+function claudeResultMessage(
+  event: Record<string, unknown>,
+  details: readonly string[],
+): string | undefined {
+  if (details.length > 0) return details.join('; ');
+  if (typeof event.result === 'string' && event.result.length > 0) {
+    return event.result;
+  }
+  return undefined;
 }
 
 /**
@@ -129,16 +149,13 @@ export function claudeResultError(
   const subtype = typeof event.subtype === 'string' ? event.subtype : '';
   const isError = event.is_error === true || subtype.startsWith('error');
   if (!isError) return undefined;
+
   const details = Array.isArray(event.errors)
     ? event.errors.filter((item): item is string => typeof item === 'string')
     : [];
-  const message =
-    details.length > 0
-      ? details.join('; ')
-      : typeof event.result === 'string' && event.result.length > 0
-        ? event.result
-        : undefined;
+  const message = claudeResultMessage(event, details);
   const label = subtype || 'error';
+
   return message ? `${label}: ${message}` : label;
 }
 
@@ -159,6 +176,7 @@ export function parseClaudeStreamJson({
   for (const event of events) {
     if (event.type === 'assistant' && isRecordObject(event.message)) {
       const content = event.message.content;
+
       if (Array.isArray(content)) {
         for (const block of content) {
           if (
@@ -170,6 +188,7 @@ export function parseClaudeStreamJson({
         }
       }
     }
+
     if (event.type === 'result') {
       sawResult = true;
       response = typeof event.result === 'string' ? event.result : '';
@@ -208,9 +227,11 @@ export function parseClaudeGraderJson({
   const usage = normalizeUsage(doc.usage);
 
   const error = claudeResultError(doc);
+
   if (error !== undefined) {
     throw new RunnerError(`claude grader failed: ${error}`);
   }
+
   // With `--json-schema`, a `success` result without `structured_output` is
   // a failure (Agent SDK structured outputs docs), not text to parse.
   if (doc.structured_output === undefined || doc.structured_output === null) {
@@ -218,6 +239,7 @@ export function parseClaudeGraderJson({
       'claude grader result contained no structured_output',
     );
   }
+
   return {
     output: doc.structured_output,
     durationMs,

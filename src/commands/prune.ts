@@ -33,6 +33,7 @@ export function replacementSkillHint(ids: readonly string[]): string {
     ),
   ];
   if (skills.length === 0) return '';
+
   return ` (use the ${skills.join(', ')} skill${skills.length === 1 ? '' : 's'} instead)`;
 }
 
@@ -53,12 +54,14 @@ export function dropUnknownPreset({
 }: DropUnknownPresetParams): PresetChoice | undefined {
   if (preset === undefined) return undefined;
   if (isPresetChoice(preset)) return preset;
+
   notify({
     ctx,
     prompting,
     message: `Preset "${preset}" is no longer recognized and was dropped.`,
     level: 'warn',
   });
+
   return undefined;
 }
 
@@ -79,6 +82,7 @@ export function dropUnavailableBlocks({
 }: DropUnavailableBlocksParams): string[] {
   const unknown = unknownBlockIds(library, ids);
   const outOfScope = outOfScopeBlockIds(library, ids, scope);
+
   if (unknown.length > 0) {
     notify({
       ctx,
@@ -87,6 +91,7 @@ export function dropUnavailableBlocks({
       level: 'warn',
     });
   }
+
   if (outOfScope.length > 0) {
     notify({
       ctx,
@@ -95,6 +100,7 @@ export function dropUnavailableBlocks({
       level: 'warn',
     });
   }
+
   return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
 }
 
@@ -121,6 +127,7 @@ export function dropUnknownSkills({
           return skill !== undefined && !skill.scopes.includes(scope);
         })
       : [];
+
   if (unknown.length > 0) {
     notify({
       ctx,
@@ -129,6 +136,7 @@ export function dropUnknownSkills({
       level: 'warn',
     });
   }
+
   if (outOfScope.length > 0 && scope !== undefined) {
     notify({
       ctx,
@@ -137,6 +145,7 @@ export function dropUnknownSkills({
       level: 'warn',
     });
   }
+
   return names.filter(
     (name) => !unknown.includes(name) && !outOfScope.includes(name),
   );
@@ -159,6 +168,7 @@ export function dropUnavailableMcpServers({
 }: DropUnavailableMcpServersParams): string[] {
   const unknown = unknownMcpServerNames(catalog, names);
   const outOfScope = outOfScopeMcpServerNames({ catalog, names, scope });
+
   if (unknown.length > 0) {
     notify({
       ctx,
@@ -167,6 +177,7 @@ export function dropUnavailableMcpServers({
       level: 'warn',
     });
   }
+
   if (outOfScope.length > 0) {
     notify({
       ctx,
@@ -175,6 +186,7 @@ export function dropUnavailableMcpServers({
       level: 'warn',
     });
   }
+
   return names.filter(
     (name) => !unknown.includes(name) && !outOfScope.includes(name),
   );
@@ -195,6 +207,7 @@ export function checkExplicitMcp({
   if (unknown.length > 0) {
     throw new UsageError(`Unknown MCP servers: ${unknown.join(', ')}`);
   }
+
   const outOfScope = outOfScopeMcpServerNames({ catalog, names, scope });
   if (outOfScope.length > 0) {
     throw new UsageError(

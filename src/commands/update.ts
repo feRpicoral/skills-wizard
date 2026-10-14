@@ -54,12 +54,14 @@ async function readRecordedProjects(
     return await readProjects(ctx.paths);
   } catch (error) {
     if (!(error instanceof RegistryError)) throw error;
+
     notify({
       ctx,
       prompting,
       message: `Skipping recorded projects: ${error.message}`,
       level: 'warn',
     });
+
     return [];
   }
 }
@@ -78,6 +80,7 @@ function skipProject({
   error,
 }: SkipProjectParams): void {
   if (!(error instanceof AgentsConfigError)) throw error;
+
   notify({
     ctx,
     prompting,
@@ -104,6 +107,7 @@ async function projectTarget({
       projectDir,
     });
     const manifest = await readLocationManifest({ ctx, prompting, location });
+
     return manifest ? { location, manifest } : null;
   } catch (error) {
     skipProject({ ctx, prompting, projectDir, error });
@@ -139,9 +143,11 @@ async function discoverUpdateTargets(
       stale.push(projectDir);
       continue;
     }
+
     const target = await projectTarget({ ctx, prompting, projectDir });
     if (target) targets.push(target);
   }
+
   return { targets, stale };
 }
 
@@ -175,6 +181,7 @@ async function planUpdateTarget({
     skillLibrary,
     mcpCatalog,
   });
+
   return buildPlan({
     scope: location.scope,
     selection: {
@@ -222,6 +229,7 @@ async function buildUpdatePlans({
   sources,
 }: BuildUpdatePlansParams): Promise<Plan[]> {
   const plans: Plan[] = [];
+
   for (const target of targets) {
     try {
       plans.push(
@@ -256,6 +264,7 @@ async function buildUpdatePlans({
       }
     }
   }
+
   return plans;
 }
 
@@ -265,6 +274,7 @@ export async function runUpdate(
 ): Promise<number> {
   const prompting = ctx.interactive && !yes;
   const { targets, stale } = await discoverUpdateTargets(ctx, prompting);
+
   if (targets.length === 0 && stale.length === 0) {
     throw new UsageError(
       'Nothing recorded to update; run agents-config init first.',
@@ -292,6 +302,7 @@ export async function runUpdate(
     names: allSkills,
     cache,
   });
+
   let keepSources = false;
   try {
     const { sources, problems } = await resolveSkillSources({
@@ -300,6 +311,7 @@ export async function runUpdate(
       cache,
       fetch: true,
     });
+
     for (const [name, problem] of problems) {
       notify({
         ctx,
@@ -342,9 +354,11 @@ export async function runUpdate(
         }
       },
     });
+
     if (!hasAnyWork && !dryRun) {
       keepSources = true;
     }
+
     return result.code;
   } finally {
     if (!keepSources) await restoreMoved({ ctx, prompting, cache, moved });

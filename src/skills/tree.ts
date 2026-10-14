@@ -70,10 +70,13 @@ async function walk(
   children.sort((a, b) => compareNames(a.name, b.name));
 
   const entries: TreeEntry[] = [];
+
   for (const child of children) {
     if (skip(child.name, segments)) continue;
+
     const path = [...segments, child.name];
     const absolute = join(root, ...path);
+
     if (child.isDirectory()) {
       entries.push(...(await walk(root, skip, path)));
     } else if (child.isFile() || child.isSymbolicLink()) {
@@ -86,6 +89,7 @@ async function walk(
       });
     }
   }
+
   return entries;
 }
 
@@ -93,10 +97,12 @@ async function snapshotEntries(
   entries: readonly TreeEntry[],
 ): Promise<Map<string, TreeFile>> {
   const files = new Map<string, TreeFile>();
+
   for (const entry of entries) {
     const content = entry.link
       ? await readlink(entry.absolute)
       : await readFile(entry.absolute);
+
     files.set(entry.path, {
       path: entry.path,
       link: entry.link,
@@ -104,6 +110,7 @@ async function snapshotEntries(
       digest: digest(content),
     });
   }
+
   return files;
 }
 
@@ -112,6 +119,7 @@ function hashFiles(files: Map<string, TreeFile>): string {
     (file) =>
       `${file.link ? 'link' : 'file'}\0${file.path}\0${file.executable ? 'x' : '-'}\0${file.digest}\n`,
   );
+
   return `${HASH_PREFIX}${digest(lines.join(''))}`;
 }
 
@@ -152,6 +160,7 @@ export async function hashInstalledCopy({
   setup,
 }: HashInstalledCopyParams): Promise<string> {
   const entries = await walk(dir, (name) => isGenerated(name, setup));
+
   return hashFiles(await snapshotEntries(entries));
 }
 
@@ -167,21 +176,29 @@ async function linkEscapes({ root, path }: LinkInTreeParams): Promise<boolean> {
   const resolved: string[] = [];
   const pending = path.split('/');
   let hops = 0;
+
   for (let part = pending.shift(); part !== undefined; part = pending.shift()) {
     if (part === '' || part === '.') continue;
+
     if (part === '..') {
       if (resolved.pop() === undefined) return true;
       continue;
     }
+
     resolved.push(part);
     const location = join(root, ...resolved);
+
     if (!(await lstatIfExists(location))?.isSymbolicLink()) continue;
+
     hops += 1;
     const target = await readlink(location);
+
     if (hops > MAX_LINK_HOPS || isAbsolute(target)) return true;
+
     resolved.pop();
     pending.unshift(...target.split('/'));
   }
+
   return false;
 }
 
@@ -197,12 +214,15 @@ export interface EscapingLink {
  */
 export async function escapingLinks(root: string): Promise<EscapingLink[]> {
   const links: EscapingLink[] = [];
+
   for (const entry of await walk(root, notCopied)) {
     if (!entry.link) continue;
+
     if (await linkEscapes({ root, path: entry.path })) {
       links.push({ path: entry.path, target: await readlink(entry.absolute) });
     }
   }
+
   return links;
 }
 
