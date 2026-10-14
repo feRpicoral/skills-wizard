@@ -18,6 +18,7 @@ import {
   dropUnavailableMcpServers,
   loadLibrary,
   loadMcpServers,
+  mergeRequestedTools,
   readLocationManifest,
   resolveLocation,
 } from './shared.ts';
@@ -48,6 +49,7 @@ function formatServerLine({ server, status }: FormatServerLineParams): string {
     server.estimatedTools !== undefined
       ? `, ~${server.estimatedTools} tools`
       : '';
+
   return `${server.name}  [${status}]  (${server.transport}, scopes: ${scopes}${tools}) - ${server.description}`;
 }
 
@@ -68,25 +70,29 @@ async function runMcpList({
     const location = await resolveLocation({
       ctx,
       scope,
-      ...(projectDir !== undefined ? { projectDir } : {}),
+      projectDir,
     });
     const manifest = await readLocationManifest({
       ctx,
       prompting: false,
       location,
     });
+
     const installed = new Set(manifest?.mcp ?? []);
     const available = catalog.servers.filter((server) =>
       server.scopes.includes(scope),
     );
+
     if (available.length === 0) {
       ctx.print(`No MCP servers available for ${scope} scope.`);
       return 0;
     }
+
     for (const server of available) {
       const status = installed.has(server.name) ? 'installed' : 'available';
       ctx.print(formatServerLine({ server, status }));
     }
+
     return 0;
   }
 
@@ -106,7 +112,7 @@ async function runMcpList({
     ? await resolveLocation({
         ctx,
         scope: 'project',
-        ...(projectDir !== undefined ? { projectDir } : {}),
+        projectDir,
       })
     : null;
   const projectManifest = projectLocation
@@ -124,12 +130,15 @@ async function runMcpList({
     const installedIn: string[] = [];
     if (globalInstalled.has(server.name)) installedIn.push('global');
     if (projectInstalled.has(server.name)) installedIn.push('project');
+
     const status =
       installedIn.length > 0
         ? `installed: ${installedIn.join(', ')}`
         : 'available';
+
     ctx.print(formatServerLine({ server, status }));
   }
+
   return 0;
 }
 
@@ -170,7 +179,7 @@ async function applyMcpSelectionChange({
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const previous = await readLocationManifest({ ctx, prompting, location });
   if (!previous) {
@@ -195,11 +204,13 @@ async function applyMcpSelectionChange({
     const notInstalled = uniqueNames.filter(
       (name) => !previous.mcp.includes(name),
     );
+
     if (notInstalled.length > 0) {
       throw new UsageError(
         `MCP server${notInstalled.length === 1 ? '' : 's'} not installed in ${scope} scope: ${notInstalled.join(', ')}`,
       );
     }
+
     const removeSet = new Set(uniqueNames);
     mcp = dropUnavailableMcpServers({
       ctx,
@@ -210,12 +221,8 @@ async function applyMcpSelectionChange({
     });
   }
 
-  const tools =
-    requestedTools !== undefined
-      ? requestedTools.length === 0
-        ? []
-        : [...new Set([...previous.tools, ...requestedTools])]
-      : previous.tools;
+  const tools = mergeRequestedTools(previous.tools, requestedTools);
+
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
@@ -263,11 +270,12 @@ export async function runMcp(
         `Unexpected arguments for mcp list: ${args.join(' ')}`,
       );
     }
+
     return runMcpList({
       ctx,
       catalog,
-      ...(scope !== undefined ? { scope } : {}),
-      ...(projectDir !== undefined ? { projectDir } : {}),
+      scope,
+      projectDir,
     });
   }
 
@@ -275,15 +283,16 @@ export async function runMcp(
     if (subcommand === 'remove' && tools !== undefined) {
       throw new UsageError('--tools only applies to mcp add.');
     }
+
     return applyMcpSelectionChange({
       ctx,
       prompting,
       catalog,
       mode: subcommand,
       names: args,
-      ...(scope !== undefined ? { requestedScope: scope } : {}),
-      ...(projectDir !== undefined ? { projectDir } : {}),
-      ...(tools !== undefined ? { requestedTools: tools } : {}),
+      requestedScope: scope,
+      projectDir,
+      requestedTools: tools,
       yes,
       dryRun,
     });
@@ -296,7 +305,7 @@ export async function runMcp(
     catalog,
     query,
     official,
-    ...(limit !== undefined ? { limit } : {}),
+    limit,
     add,
     yes,
     dryRun,

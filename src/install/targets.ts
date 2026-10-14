@@ -162,10 +162,12 @@ function globalInstructionTargets(
   paths: Paths,
 ): RegionTarget[] {
   const owners = new Map<string, string[]>();
+
   for (const tool of tools) {
     const path = tool.global.instructions(paths);
     owners.set(path, [...(owners.get(path) ?? []), tool.label]);
   }
+
   return [...owners.entries()].map(([path, labels]) => ({
     kind: 'region',
     path,
@@ -181,6 +183,7 @@ function globalSettingTargets(
   return tools.flatMap((tool) => {
     const setting = tool.global.settings?.(paths);
     if (!setting) return [];
+
     return [
       {
         kind: 'json-array',
@@ -206,6 +209,7 @@ function globalTargets(input: PlanInput): McpTargetsResult {
       servers: selectedMcpServers(input),
       paths,
     });
+
     warnings.push(...mcp.warnings);
     targets.push(
       ...globalInstructionTargets(tools, body, paths),
@@ -223,6 +227,7 @@ function globalTargets(input: PlanInput): McpTargetsResult {
       label: 'agents-config command',
     });
   }
+
   return { targets, warnings };
 }
 
@@ -238,8 +243,10 @@ function projectToolTargets({
   instructionsPath,
 }: ProjectToolTargetsParams): Target[] {
   const targets: Target[] = [];
+
   for (const tool of tools) {
     const { importLine, settings } = tool.project;
+
     if (importLine) {
       targets.push({
         kind: 'line',
@@ -249,6 +256,7 @@ function projectToolTargets({
         label: `${tool.label} import`,
       });
     }
+
     if (settings) {
       targets.push({
         kind: 'json-array',
@@ -259,6 +267,7 @@ function projectToolTargets({
       });
     }
   }
+
   return targets;
 }
 
@@ -281,6 +290,7 @@ function gitExcludeTarget({
     ...new Set([...targets.map((target) => target.path), manifestPath]),
   ];
   const paths = uniquePaths.map((path) => relative(root, path));
+
   return {
     kind: 'exclude-region',
     path: excludePath,
@@ -293,6 +303,7 @@ function gitExcludeTarget({
 function projectTargets(input: PlanInput): McpTargetsResult {
   const { selection, library, project, manifestPath } = input;
   const tools = orderedTools(selection.tools);
+
   if (!project || tools.length === 0) return { targets: [], warnings: [] };
 
   const instructionsPath = join(project.dir, 'AGENTS.md');
@@ -329,6 +340,7 @@ function projectTargets(input: PlanInput): McpTargetsResult {
       }),
     );
   }
+
   return { targets, warnings: mcp.warnings };
 }
 

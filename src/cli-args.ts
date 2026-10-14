@@ -210,10 +210,13 @@ function flags(names: readonly string[]): string {
 export function parseTools(value: string | undefined): ToolId[] | undefined {
   const ids = parseList(value);
   if (!ids) return undefined;
+
   const unknown = ids.filter((id) => !isToolId(id));
+
   if (unknown.length > 0) {
     throw new UsageError(`Unknown tools: ${unknown.join(', ')}`);
   }
+
   return ids.filter(isToolId);
 }
 
@@ -221,12 +224,15 @@ export function parseSkillMode(
   value: string | undefined,
 ): SkillMode | undefined {
   if (value === undefined) return undefined;
+
   const mode = SKILL_MODES.find((candidate) => candidate === value);
+
   if (!mode) {
     throw new UsageError(
       `--skill-mode must be one of ${SKILL_MODES.join(', ')}, got "${value}"`,
     );
   }
+
   return mode;
 }
 
@@ -234,11 +240,13 @@ export function parsePreset(
   value: string | undefined,
 ): PresetChoice | undefined {
   if (value === undefined) return undefined;
+
   if (!isPresetChoice(value)) {
     throw new UsageError(
       `--preset must be one of ${PRESET_IDS.join(', ')}, none, got "${value}"`,
     );
   }
+
   return value;
 }
 
@@ -247,11 +255,13 @@ export function parseProjectStyle(
 ): ProjectStyle | undefined {
   if (value === undefined) return undefined;
   if (value === 'strict') return 'self-contained';
+
   if (!isProjectStyle(value)) {
     throw new UsageError(
       `--style must be one of ${PROJECT_STYLES.join(', ')}, strict, got "${value}"`,
     );
   }
+
   return value;
 }
 
@@ -259,21 +269,25 @@ export function parseDiscoverSource(
   value: string | undefined,
 ): DiscoverSource | undefined {
   if (value === undefined) return undefined;
+
   if (!isDiscoverSource(value)) {
     throw new UsageError(
       `--source must be one of ${DISCOVER_SOURCES.join(', ')}, got "${value}"`,
     );
   }
+
   return value;
 }
 
 export function parseRefFlag(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
+
   if (!isGitRef(value)) {
     throw new UsageError(
       `--ref must be a valid branch, tag or commit SHA, got "${value}"`,
     );
   }
+
   return value;
 }
 
@@ -281,10 +295,13 @@ export function parseCategoryFlag(
   value: string | undefined,
 ): string | undefined {
   if (value === undefined) return undefined;
+
   const trimmed = value.trim();
+
   if (trimmed === '') {
     throw new UsageError('--category must not be empty');
   }
+
   return trimmed;
 }
 
@@ -292,19 +309,30 @@ export function parseVariables(
   values: string[] | undefined,
 ): Record<string, string> {
   const variables: Record<string, string> = {};
+
   for (const entry of values ?? []) {
     const separator = entry.indexOf('=');
+
     if (separator <= 0) {
       throw new UsageError(`Expected --var name=value, got "${entry}"`);
     }
+
     variables[entry.slice(0, separator)] = entry.slice(separator + 1);
   }
+
   return variables;
+}
+
+function commandScope(values: ParsedValues): Scope | undefined {
+  if (values.project !== undefined) return 'project';
+  if (values.global) return 'global';
+  return undefined;
 }
 
 function rejectOptions(command: Command, provided: readonly string[]): void {
   const allowed: readonly string[] = ALLOWED[command];
   const extra = provided.filter((name) => !allowed.includes(name));
+
   if (extra.length > 0) {
     throw new UsageError(`${flags(extra)} does not apply to ${command}`);
   }
@@ -320,8 +348,10 @@ function rejectSkillOptions(
   ) {
     return;
   }
+
   const allowed: readonly string[] = SKILL_SUBCOMMAND_OPTIONS[subcommand] ?? [];
   const extra = provided.filter((name) => !allowed.includes(name));
+
   if (extra.length > 0) {
     throw new UsageError(
       `${flags(extra)} does not apply to skill ${subcommand}`,
@@ -343,6 +373,7 @@ export function parseMcpSubcommand(value: string | undefined): McpSubcommand {
   if (value === 'add' || value === 'remove' || value === 'search') {
     return value;
   }
+
   throw new UsageError(
     'Usage: agents-config mcp [list | add <name...> | remove <name...> | search <query>]',
   );
@@ -354,13 +385,16 @@ function rejectMcpOptions(
 ): void {
   const allowed: readonly string[] = MCP_SUBCOMMAND_OPTIONS[subcommand];
   const extra = provided.filter((name) => !allowed.includes(name));
+
   if (extra.length > 0) {
     throw new UsageError(`${flags(extra)} does not apply to mcp ${subcommand}`);
   }
+
   if (subcommand === 'search' && !provided.includes('add')) {
     const addOnly = provided.filter(
       (name) => name === 'yes' || name === 'dry-run',
     );
+
     if (addOnly.length > 0) {
       throw new UsageError(
         `${flags(addOnly)} only applies to mcp search with --add`,
@@ -393,9 +427,11 @@ export type ParsedCommand =
 export function parseCommand(argv: string[]): ParsedCommand {
   let parsed;
   let baselineRef: string | undefined;
+
   try {
     const normalized = normalizeBaselineArgv(argv, STRING_OPTIONS);
     baselineRef = normalized.baselineRef;
+
     parsed = parseArgs({
       args: normalized.args,
       options: OPTIONS,
@@ -405,40 +441,50 @@ export function parseCommand(argv: string[]): ParsedCommand {
     });
   } catch (error) {
     if (error instanceof UsageError) throw error;
+
     throw new UsageError(
       error instanceof Error ? error.message : String(error),
     );
   }
 
   const { values, positionals } = parsed;
+
   if (values.help) return { kind: 'help' };
   if (values.version) return { kind: 'version' };
+
   if (values.global && values.project !== undefined) {
     throw new UsageError('Use either --global or --project, not both.');
   }
 
   const command = positionals[0];
+
   if (command === undefined || command === 'help') {
     if (positionals.length > 1) {
       throw new UsageError(
         `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
       );
     }
+
     if (command === undefined) {
       const provided = Object.keys(values);
       if (baselineRef !== undefined) provided.push('baseline');
+
       if (provided.length > 0) {
         throw new UsageError(
           `${flags(provided)} must follow a command such as init`,
         );
       }
+
       return { kind: 'default' };
     }
+
     return { kind: 'help' };
   }
+
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
   }
+
   if (
     command !== 'add' &&
     command !== 'adopt' &&
@@ -450,10 +496,12 @@ export function parseCommand(argv: string[]): ParsedCommand {
       `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
     );
   }
+
   const provided = Object.keys(values);
   if (baselineRef !== undefined && !provided.includes('baseline')) {
     provided.push('baseline');
   }
+
   rejectOptions(command, provided);
   if (command === 'skill') rejectSkillOptions(positionals[1], provided);
   if (command === 'mcp') {
@@ -461,12 +509,8 @@ export function parseCommand(argv: string[]): ParsedCommand {
     rejectMcpOptions(subcommand, provided);
   }
 
-  const scope: Scope | undefined =
-    values.project !== undefined
-      ? 'project'
-      : values.global
-        ? 'global'
-        : undefined;
+  const scope = commandScope(values);
+
   return {
     kind: 'command',
     command,

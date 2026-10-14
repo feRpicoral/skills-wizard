@@ -27,6 +27,7 @@ import {
   buildSyncPlanForLocation,
   loadLibrary,
   loadMcpServers,
+  mergeRequestedTools,
   notify,
   readLocationManifest,
   resolveLocation,
@@ -47,10 +48,12 @@ interface CheckFolderNamesParams {
 
 async function mismatchedFolders(skill: DiscoveredSkill): Promise<string[]> {
   const folders = new Set(skill.locations);
+
   for (const location of skill.locations) {
     const real = await realLocation(location);
     if (real) folders.add(real);
   }
+
   return [...folders].filter((path) => basename(path) !== skill.name);
 }
 
@@ -60,6 +63,7 @@ async function checkFolderNames({
   home,
 }: CheckFolderNamesParams): Promise<void> {
   const details: string[] = [];
+
   for (const skill of unmanaged) {
     if (!picked.includes(skill.name)) continue;
     for (const path of await mismatchedFolders(skill)) {
@@ -68,7 +72,9 @@ async function checkFolderNames({
       );
     }
   }
+
   if (details.length === 0) return;
+
   throw new UsageError(
     `Cannot adopt skills whose folder name differs from their name: ${details.join('; ')}. Rename or remove these folders first.`,
   );
@@ -94,26 +100,31 @@ async function pickUnmanagedSkills({
   const unmanagedByName = new Map(
     unmanaged.map((skill) => [skill.name, skill]),
   );
+
   if (names.length > 0) {
     const missing = names.filter((name) => !unmanagedByName.has(name));
     if (missing.length > 0) {
       throw new UsageError(`Not an unmanaged skill: ${missing.join(', ')}`);
     }
+
     const unknown = names.filter(
       (name) =>
         !findSkill(skillLibrary, name) &&
         !upstreamEntry({ name, locked, catalog: skillLibrary.catalog }),
     );
+
     if (unknown.length > 0) {
       throw new UsageError(
         `Cannot adopt ${unknown.join(', ')}: no source in catalog.yaml, skills/ or ~/.agents/.skill-lock.json`,
       );
     }
+
     return [...new Set(names)];
   }
 
   const choices: AdoptChoice[] = [];
   const unsupported: string[] = [];
+
   for (const skill of unmanaged) {
     const hint = choiceHint({
       skill,
@@ -124,6 +135,7 @@ async function pickUnmanagedSkills({
     if (hint) choices.push({ name: skill.name, hint });
     else unsupported.push(skill.name);
   }
+
   if (unsupported.length > 0) {
     notify({
       ctx,
@@ -131,6 +143,7 @@ async function pickUnmanagedSkills({
       message: `Skipping unmanaged skills without a known source: ${unsupported.join(', ')}`,
     });
   }
+
   if (choices.length === 0) {
     notify({
       ctx,
@@ -139,16 +152,20 @@ async function pickUnmanagedSkills({
     });
     return null;
   }
+
   if (!prompting) {
     throw new UsageError(
       'Pass the unmanaged skill names to adopt, for example: agents-config adopt pretty-mermaid',
     );
   }
+
   const picked = await promptAdoptSkills(choices);
+
   if (picked.length === 0) {
     notify({ ctx, prompting: true, message: 'Nothing was adopted.' });
     return null;
   }
+
   return picked;
 }
 
@@ -159,12 +176,15 @@ export async function runAdopt(
   const prompting = ctx.interactive && !yes;
   const location = await resolveLocation({ ctx, scope: 'global' });
   const previous = await readLocationManifest({ ctx, prompting, location });
+
   if (!previous) {
     throw new UsageError(
       'No system-wide install recorded; run agents-config init --global first.',
     );
   }
+
   const scan = await scanInstalledSkills(ctx.paths, previous);
+
   if (scan.unmanaged.length === 0) {
     notify({ ctx, prompting, message: 'No unmanaged skills found.' });
     return 0;
@@ -180,6 +200,7 @@ export async function runAdopt(
     skillLibrary,
     locked,
   });
+
   if (!picked) return 0;
 
   await checkFolderNames({
@@ -187,13 +208,16 @@ export async function runAdopt(
     picked,
     home: ctx.paths.home,
   });
+
   const candidates = picked.flatMap((name) => {
     if (findSkill(skillLibrary, name)) return [];
+
     const entry = upstreamEntry({
       name,
       locked,
       catalog: skillLibrary.catalog,
     });
+
     return entry ? [entry] : [];
   });
   const file = catalogPath(ctx.repoRoot);
@@ -206,17 +230,14 @@ export async function runAdopt(
 
   const library = await loadLibrary(ctx);
   const mcpCatalog = await loadMcpServers(ctx);
-  const tools =
-    requestedTools !== undefined
-      ? requestedTools.length === 0
-        ? []
-        : [...new Set([...previous.tools, ...requestedTools])]
-      : previous.tools;
+  const tools = mergeRequestedTools(previous.tools, requestedTools);
+
   if (tools.length === 0) {
     throw new UsageError(
       'No tools recorded; pass --tools <ids> or run agents-config init --global.',
     );
   }
+
   const stamp = ctx.sources.now().toISOString().replace(/[:.]/g, '-');
   const backupDir = join(ctx.paths.stateDir, 'backups', stamp);
   const plan = await buildSyncPlanForLocation({
@@ -242,6 +263,7 @@ export async function runAdopt(
     yes,
     dryRun,
   });
+
   if (outcome.applied && (await lstatIfExists(backupDir))) {
     notify({
       ctx,
@@ -249,5 +271,6 @@ export async function runAdopt(
       message: `Backed up replaced skill files to ${displayPath({ path: backupDir, home: ctx.paths.home })}.`,
     });
   }
+
   return outcome.code;
 }

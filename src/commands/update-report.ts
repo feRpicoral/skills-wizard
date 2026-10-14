@@ -44,6 +44,7 @@ function isOutdatedCopy(entry: SkillCopyEntry, source: SkillSource): boolean {
 
 function copySignature(entry: SkillCopyEntry): string {
   const commit = entry.source.type === 'catalog' ? entry.source.commit : '';
+
   return `${entry.install.hash}:${commit}`;
 }
 
@@ -55,10 +56,12 @@ export async function findInstalledCopies(
   const outdated: string[] = [];
   const seen = new Set<string>();
   let fallback: string | null = null;
+
   for (const manifest of manifests) {
     for (const entry of manifest.entries) {
       if (!isSkillCopy(entry, name)) continue;
       if ((await lstatIfExists(entry.path))?.isDirectory() !== true) continue;
+
       if (isOutdatedCopy(entry, source)) {
         const key = copySignature(entry);
         if (!seen.has(key)) {
@@ -70,6 +73,7 @@ export async function findInstalledCopies(
       }
     }
   }
+
   if (outdated.length > 0) return outdated;
   return fallback === null ? [] : [fallback];
 }
@@ -84,15 +88,19 @@ export async function findInstalledCopy(
 
 export function formatDiffSummary(report: SkillChangeReport): string {
   const parts: string[] = [];
+
   if (report.diff.added.length > 0) {
     parts.push(`added ${report.diff.added.join(', ')}`);
   }
+
   if (report.diff.modified.length > 0) {
     parts.push(`modified ${report.diff.modified.join(', ')}`);
   }
+
   if (report.diff.removed.length > 0) {
     parts.push(`removed ${report.diff.removed.join(', ')}`);
   }
+
   return `${report.name}: ${parts.join('; ')}`;
 }
 
@@ -102,9 +110,11 @@ export async function collectChangeReports(
   sources: ReadonlyMap<string, SkillSource>,
 ): Promise<SkillChangeReport[]> {
   const reports: SkillChangeReport[] = [];
+
   for (const name of names) {
     const source = sources.get(name);
     if (!source) continue;
+
     for (const installed of await findInstalledCopies(
       manifests,
       name,
@@ -114,15 +124,19 @@ export async function collectChangeReports(
         previousDir: installed,
         nextDir: source.dir,
       });
+
       if (!hasDiff(diff)) continue;
+
       const risks = await scanSkillRisks({
         previousDir: installed,
         nextDir: source.dir,
         precomputed: diff,
       });
+
       reports.push({ name, diff, risks });
     }
   }
+
   return reports;
 }
 

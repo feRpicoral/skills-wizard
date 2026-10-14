@@ -22,12 +22,15 @@ export interface ParsedPyproject {
 
 function stringMap(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+
   const out: Record<string, string> = {};
+
   for (const [key, value] of Object.entries(raw)) {
     if (typeof value === 'string' && value.trim()) {
       out[key] = value.trim();
     }
   }
+
   return out;
 }
 
@@ -45,6 +48,7 @@ export function parseWorkspacesField(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.filter((item): item is string => typeof item === 'string');
   }
+
   if (raw && typeof raw === 'object' && 'packages' in raw) {
     const packages = (raw as { packages?: unknown }).packages;
     if (Array.isArray(packages)) {
@@ -53,6 +57,7 @@ export function parseWorkspacesField(raw: unknown): string[] {
       );
     }
   }
+
   return [];
 }
 
@@ -67,6 +72,7 @@ export function parsePackageJson(source: string): ParsedPackageJson | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return null;
     }
+
     const name =
       typeof parsed.name === 'string' && parsed.name.trim()
         ? parsed.name.trim()
@@ -87,6 +93,7 @@ export function parsePackageJson(source: string): ParsedPackageJson | null {
       ]),
     ].sort();
     const workspaces = parseWorkspacesField(parsed.workspaces);
+
     return {
       ...(name !== undefined ? { name } : {}),
       ...(description !== undefined ? { description } : {}),
@@ -113,25 +120,30 @@ function stripTomlComments(source: string): string {
         i += 3;
         continue;
       }
+
       if (source.startsWith("'''", i)) {
         quote = "'''";
         result += "'''";
         i += 3;
         continue;
       }
+
       const ch = source[i]!;
+
       if (ch === '"' || ch === "'") {
         quote = ch;
         result += ch;
         i += 1;
         continue;
       }
+
       if (ch === '#') {
         while (i < source.length && source[i] !== '\n') {
           i += 1;
         }
         continue;
       }
+
       result += ch;
       i += 1;
       continue;
@@ -144,25 +156,30 @@ function stripTomlComments(source: string): string {
         quote = null;
         continue;
       }
+
       if (quote === '"""' && source[i] === '\\' && i + 1 < source.length) {
         result += source.slice(i, i + 2);
         i += 2;
         continue;
       }
+
       result += source[i]!;
       i += 1;
       continue;
     }
 
     const ch = source[i]!;
+
     if (quote === '"' && ch === '\\' && i + 1 < source.length) {
       result += source.slice(i, i + 2);
       i += 2;
       continue;
     }
+
     if (ch === quote || ch === '\n') {
       quote = null;
     }
+
     result += ch;
     i += 1;
   }
@@ -194,18 +211,22 @@ function splitTomlTables(uncommented: string): {
   for (const match of uncommented.matchAll(TOML_STRING_OR_HEADER)) {
     const rawHeader = match[1];
     if (rawHeader === undefined) continue;
+
     if (currentHeader !== null && !tables.has(currentHeader)) {
       tables.set(currentHeader, uncommented.slice(currentStart, match.index));
     }
+
     headers.push(rawHeader);
     currentHeader = rawHeader.startsWith('[[')
       ? rawHeader.slice(2, -2)
       : rawHeader.slice(1, -1);
     currentStart = match.index + match[0].length;
   }
+
   if (currentHeader !== null && !tables.has(currentHeader)) {
     tables.set(currentHeader, uncommented.slice(currentStart));
   }
+
   return { headers, tables };
 }
 
@@ -267,6 +288,7 @@ function hasHeaderPrefix(
   const pattern = new RegExp(
     `^\\[\\[?tool\\.${RegExp.escape(toolName)}(?:\\]|\\.)`,
   );
+
   return headers.some((header) => pattern.test(header));
 }
 
@@ -320,6 +342,7 @@ export function parsePyprojectToml(source: string): ParsedPyproject {
 export function parsePnpmWorkspaceYaml(source: string): string[] {
   try {
     const parsed = parseYaml(source) as unknown;
+
     return parseWorkspacesField(parsed);
   } catch {
     return [];
@@ -359,33 +382,40 @@ export async function detectPackageManager({
     hasProjectFile({
       projectDir,
       relativePath,
-      ...(root !== undefined ? { root } : {}),
+      root,
     });
 
   if (await hasFile('yarn.lock')) {
     return 'yarn';
   }
+
   if (await hasFile('pnpm-lock.yaml')) {
     return 'pnpm';
   }
+
   if (
     (await hasFile('package-lock.json')) ||
     (await hasFile('npm-shrinkwrap.json'))
   ) {
     return 'npm';
   }
+
   if ((await hasFile('bun.lock')) || (await hasFile('bun.lockb'))) {
     return 'bun';
   }
+
   if (await hasFile('.yarnrc.yml')) {
     return 'yarn';
   }
 
   const uvLock = hasUvLock ?? (await hasFile('uv.lock'));
+
   if (pyproject?.hasUvSection || uvLock) {
     return 'uv';
   }
+
   const poetryLock = hasPoetryLock ?? (await hasFile('poetry.lock'));
+
   if (pyproject?.hasPoetrySection || poetryLock) {
     return 'poetry';
   }

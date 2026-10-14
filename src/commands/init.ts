@@ -66,6 +66,7 @@ export interface InitOptions {
 
 function isOnSearchPath(ctx: Context, dir: string): boolean {
   const wanted = resolve(dir);
+
   return ctx.searchPath.some((entry) => resolve(ctx.cwd, entry) === wanted);
 }
 
@@ -86,15 +87,19 @@ function checkScopeOptions(
       '--link-command only applies to system-wide installs.',
     );
   }
+
   if (scope === 'project' && skillMode !== undefined) {
     throw new UsageError('--skill-mode only applies to system-wide installs.');
   }
+
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
   }
+
   if (scope === 'global' && preset !== undefined) {
     throw new UsageError('--preset only applies to project installs.');
   }
+
   if (scope === 'global' && style !== undefined) {
     throw new UsageError('--style only applies to project installs.');
   }
@@ -114,8 +119,10 @@ async function readGlobalManifestForProject(
         message: `Skipping corrupt system-wide manifest when detecting default project style: ${error.message}`,
         level: 'warn',
       });
+
       return null;
     }
+
     throw error;
   }
 }
@@ -176,6 +183,7 @@ async function resolveProjectPresetContext({
     globalManifest !== null &&
     tools.length > 0 &&
     tools.every((tool) => globalManifest.tools.includes(tool));
+
   if (reconciled?.unknownPreset !== undefined) {
     notify({
       ctx,
@@ -184,6 +192,7 @@ async function resolveProjectPresetContext({
       level: 'warn',
     });
   }
+
   const previousPreset = reconciled?.preset;
   const { preset, style } = await resolveProjectPresetAndStyle({
     scope,
@@ -222,9 +231,7 @@ async function resolveProjectPresetContext({
         style: style ?? (hasGlobalInstall ? 'lean' : 'self-contained'),
         blockLibrary: library,
         skillLibrary,
-        ...(location.detection?.packageManager !== undefined
-          ? { packageManager: location.detection.packageManager }
-          : {}),
+        packageManager: location.detection?.packageManager,
         detectedBlocks:
           preset === 'none' ? [] : (location.detection?.detectedBlocks ?? []),
         detectedSkills:
@@ -269,7 +276,9 @@ export async function runInit(
 ): Promise<number> {
   const prompting = ctx.interactive && !confirmOptions.yes;
   const scope = requestedScope ?? (prompting ? await promptScope() : undefined);
+
   if (!scope) throw new UsageError('Pass --global or --project <dir>.');
+
   checkScopeOptions(scope, {
     linkCommand: requestedLinkCommand,
     skillMode: requestedSkillMode,
@@ -285,7 +294,7 @@ export async function runInit(
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
     detect: scope === 'project',
   });
   const library = await loadLibrary(ctx);
@@ -305,7 +314,7 @@ export async function runInit(
     ctx,
     scope,
     prompting,
-    ...(requestedTools ? { requestedTools } : {}),
+    requestedTools,
     previous,
   });
   const {
@@ -333,13 +342,13 @@ export async function runInit(
     library,
     scope,
     prompting,
-    ...(requestedBlocks ? { requestedBlocks } : {}),
-    ...(preset !== undefined ? { preset } : {}),
-    ...(style !== undefined ? { style } : {}),
+    requestedBlocks,
+    preset,
+    style,
     presetChanged,
     styleChanged,
     presetSelection,
-    ...(replacedPreset ? { replacedPreset } : {}),
+    replacedPreset,
     reconciled,
   });
   const variables = await resolveVariablesSelection({
@@ -357,11 +366,11 @@ export async function runInit(
     skillLibrary,
     scope,
     prompting,
-    ...(requestedSkills ? { requestedSkills } : {}),
-    ...(requestedSkillMode ? { requestedSkillMode } : {}),
+    requestedSkills,
+    requestedSkillMode,
     presetChanged,
     presetSelection,
-    ...(replacedPreset ? { replacedPreset } : {}),
+    replacedPreset,
     previous,
   });
   const mcp = await resolveMcpSelection({
@@ -369,7 +378,7 @@ export async function runInit(
     mcpCatalog,
     scope,
     prompting,
-    ...(requestedMcp ? { requestedMcp } : {}),
+    requestedMcp,
     location,
     previous,
   });
@@ -378,14 +387,16 @@ export async function runInit(
     scope,
     location,
     prompting,
-    ...(requestedLinkCommand !== undefined ? { requestedLinkCommand } : {}),
-    ...(requestedKeepLocal !== undefined ? { requestedKeepLocal } : {}),
+    requestedLinkCommand,
+    requestedKeepLocal,
     previous,
     reconciled,
   });
 
   const installing = tools.length > 0 ? skills : [];
+
   if (scope === 'global') await warnLockedSkills(ctx, prompting, installing);
+
   const skillSources = await fetchSkills({
     ctx,
     prompting,
@@ -403,28 +414,30 @@ export async function runInit(
       linkCommand,
       keepLocal,
       skillMode,
-      ...(preset !== undefined ? { preset } : {}),
-      ...(style !== undefined ? { style } : {}),
+      preset,
+      style,
     },
     library,
     paths: ctx.paths,
     repoRoot: ctx.repoRoot,
     previous,
     manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
+    project: location.project,
     skillSources,
     mcpCatalog,
   });
+
   if (keepLocal) {
     await warnTrackedFiles({
       ctx,
       prompting,
       plan,
-      ...(location.project ? { project: location.project } : {}),
+      project: location.project,
     });
   }
 
   const result = await confirmAndApply(ctx, plan, confirmOptions);
+
   if (
     result.applied &&
     linkCommand &&
@@ -437,5 +450,6 @@ export async function runInit(
       level: 'warn',
     });
   }
+
   return result.code;
 }

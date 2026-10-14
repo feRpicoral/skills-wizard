@@ -11,8 +11,10 @@ const MAX_ITERATION_ATTEMPTS = 1000;
 async function makeTreeWritable(path: string): Promise<void> {
   const info = await lstatIfExists(path);
   if (!info?.isDirectory()) return;
+
   try {
     await chmod(path, (info.mode & 0o7777) | 0o700);
+
     for (const entry of await readdir(path, { withFileTypes: true })) {
       if (entry.isDirectory()) await makeTreeWritable(join(path, entry.name));
     }
@@ -39,6 +41,7 @@ export async function removeWorkdir({
   } catch {
     await makeTreeWritable(path);
   }
+
   try {
     await rm(path, { recursive: true, force: true });
   } catch (error) {
@@ -68,8 +71,10 @@ export async function allocateIterationDir({
 }: AllocateIterationDirParams): Promise<string> {
   const skillEvalsDir = join(evalsRootDir, skillName);
   await mkdir(skillEvalsDir, { recursive: true });
+
   const numbers = await iterationNumbers({ dir: skillEvalsDir, prefix });
   let candidate = (numbers[0] ?? 0) + 1;
+
   for (let attempt = 0; attempt < MAX_ITERATION_ATTEMPTS; attempt += 1) {
     const iterationDir = join(skillEvalsDir, `${prefix}-${candidate}`);
     try {
@@ -80,6 +85,7 @@ export async function allocateIterationDir({
       candidate += 1;
     }
   }
+
   throw new EvalError(
     `Could not allocate a new ${prefix} directory in ${skillEvalsDir}`,
   );
@@ -98,11 +104,14 @@ async function iterationNumbers({
   const entries = await readdir(dir, { withFileTypes: true });
   const pattern = new RegExp(`^${prefix}-(\\d+)$`);
   const numbers: number[] = [];
+
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+
     const match = pattern.exec(entry.name);
     if (match?.[1]) numbers.push(Number.parseInt(match[1], 10));
   }
+
   return numbers.sort((left, right) => right - left);
 }
 
@@ -120,15 +129,18 @@ export async function findLatestIterationDir({
   if (!(await isDirectory(skillEvalsDir))) {
     throw new EvalError(`No evaluation iterations found for "${skillName}"`);
   }
+
   const numbers = await iterationNumbers({
     dir: skillEvalsDir,
     prefix: 'iteration',
   });
+
   for (const num of numbers) {
     const iterationDir = join(skillEvalsDir, `iteration-${num}`);
     const benchmark = await statIfExists(join(iterationDir, 'benchmark.json'));
     if (benchmark?.isFile()) return iterationDir;
   }
+
   throw new EvalError(
     numbers.length === 0
       ? `No evaluation iterations found for "${skillName}"`

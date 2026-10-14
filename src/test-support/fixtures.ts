@@ -21,10 +21,12 @@ export async function tempSearchPath(
   commands: readonly string[],
 ): Promise<string> {
   const dir = await tempDir(t);
+
   for (const command of commands) {
     const binary = command === 'node' ? process.execPath : await which(command);
     await symlink(binary, join(dir, command));
   }
+
   return dir;
 }
 
@@ -83,6 +85,7 @@ export function blockSource(
     body,
     '',
   ];
+
   return lines.join('\n');
 }
 

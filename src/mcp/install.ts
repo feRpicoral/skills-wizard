@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { parse as parseToml } from 'smol-toml';
+import { z } from 'zod';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import {
@@ -23,6 +24,27 @@ export const MCP_TOML_MARKERS = {
   end: '# END:agents-config-mcp',
 } as const;
 
+const mcpDocumentSchema = z.looseObject({
+  mcpServers: z.record(z.string(), z.unknown()).optional(),
+});
+
+type McpDocument = z.infer<typeof mcpDocumentSchema>;
+
+/**
+ * Parses `text` as a JSON object whose optional `mcpServers` key is an object.
+ *
+ * @throws {JsonMergeError} If the document is not a plain JSON object or
+ *   `mcpServers` is not an object.
+ */
+function parseMcpDocument(text: string | null): McpDocument {
+  const result = mcpDocumentSchema.safeParse(parseJsonObject(text));
+  if (!result.success) {
+    throw new JsonMergeError('"mcpServers" must be an object');
+  }
+
+  return result.data;
+}
+
 export interface EnsureMcpJsonParams {
   existing: string | null;
   servers: Readonly<Record<string, Record<string, unknown>>>;
@@ -37,6 +59,35 @@ export interface EnsureMcpJsonResult {
   wasEmpty: boolean;
   blankText?: string;
   original?: string;
+}
+
+interface EmptyOriginalParams {
+  text: string;
+  doc: McpDocument;
+  createdMcpServers: boolean;
+}
+
+/**
+ * Captures the raw text of the object that will receive the first managed
+ * server, but only when that object is empty, so removal can restore its exact
+ * formatting.
+ */
+function emptyOriginal({
+  text,
+  doc,
+  createdMcpServers,
+}: EmptyOriginalParams): string | undefined {
+  if (createdMcpServers) {
+    return Object.keys(doc).length === 0
+      ? rawJson({ text, keys: [] })
+      : undefined;
+  }
+
+  const currentServers = doc.mcpServers ?? {};
+
+  if (Object.keys(currentServers).length > 0) return undefined;
+
+  return rawJson({ text, keys: ['mcpServers'] });
 }
 
 /**
@@ -56,10 +107,7 @@ export function ensureMcpJsonServers({
   ownedServers,
   retainedServers,
 }: EnsureMcpJsonParams): EnsureMcpJsonResult {
-  const doc = parseJsonObject(existing);
-  if (doc.mcpServers !== undefined && !isObject(doc.mcpServers)) {
-    throw new JsonMergeError('"mcpServers" must be an object');
-  }
+  const doc = parseMcpDocument(existing);
   const currentServers = doc.mcpServers ?? {};
   const ownedSet = new Set(ownedServers);
   const retainedSet = retainedServers ?? new Set<string>();
@@ -80,24 +128,24 @@ export function ensureMcpJsonServers({
       () => `${text}${lineEnding(existing)}`,
     );
     const wasEmpty = existing !== null && isBlank(existing);
+
     return {
       content,
       servers: serverNames,
       createdMcpServers: true,
       wasEmpty,
-      ...(wasEmpty && existing ? { blankText: existing } : {}),
+      blankText: wasEmpty && existing ? existing : undefined,
     };
   }
 
-  const original = createdMcpServers
-    ? Object.keys(doc).length === 0
-      ? rawJson({ text: withoutBom(existing), keys: [] })
-      : undefined
-    : Object.keys(currentServers).length === 0
-      ? rawJson({ text: withoutBom(existing), keys: ['mcpServers'] })
-      : undefined;
+  const original = emptyOriginal({
+    text: withoutBom(existing),
+    doc,
+    createdMcpServers,
+  });
 
   let content = existing;
+
   for (const owned of ownedServers) {
     if (
       !Object.hasOwn(servers, owned) &&
@@ -114,6 +162,7 @@ export function ensureMcpJsonServers({
     const unchanged =
       Object.hasOwn(currentServers, name) &&
       isDeepStrictEqual(currentServers[name], config);
+
     if (!unchanged) {
       content = keepBom(content, (text) =>
         setJsonValue({ text, keys: ['mcpServers', name], value: config }),
@@ -126,7 +175,7 @@ export function ensureMcpJsonServers({
     servers: serverNames,
     createdMcpServers,
     wasEmpty: false,
-    ...(original !== undefined ? { original } : {}),
+    original,
   };
 }
 
@@ -155,19 +204,19 @@ export function removeMcpJsonServers({
   original,
   retainedServers,
 }: RemoveMcpJsonParams): string {
-  const doc = parseJsonObject(existing);
+  const doc = parseMcpDocument(existing);
   if (!Object.hasOwn(doc, 'mcpServers')) return existing;
-  if (doc.mcpServers !== undefined && !isObject(doc.mcpServers)) {
-    throw new JsonMergeError('"mcpServers" must be an object');
-  }
+
   const currentServers = doc.mcpServers ?? {};
   const retainedSet = retainedServers ?? new Set<string>();
   const toRemove = servers.filter(
     (name) => !retainedSet.has(name) && Object.hasOwn(currentServers, name),
   );
+
   if (toRemove.length === 0) return existing;
 
   let content = existing;
+
   for (const name of toRemove) {
     content = keepBom(content, (text) =>
       removeJsonProperty({ text, keys: ['mcpServers', name] }),
@@ -176,11 +225,13 @@ export function removeMcpJsonServers({
 
   const afterDoc = parseJsonObject(content);
   const afterServers = afterDoc.mcpServers;
+
   if (isObject(afterServers) && Object.keys(afterServers).length === 0) {
     if (createdMcpServers) {
       content = keepBom(content, (text) =>
         removeJsonProperty({ text, keys: ['mcpServers'] }),
       );
+
       if (
         original !== undefined &&
         isEmptyJsonObject(content) &&
@@ -224,6 +275,7 @@ export function hasUnmanagedTomlServer({
       { cause: error },
     );
   }
+
   return (
     isObject(parsed.mcp_servers) && Object.hasOwn(parsed.mcp_servers, name)
   );
@@ -251,6 +303,7 @@ export function upsertMcpTomlServers({
 }: UpsertMcpTomlParams): string {
   if (existing !== null && !isBlank(existing)) {
     const outside = removeRegion(existing, MCP_TOML_MARKERS);
+
     for (const name of serverNames) {
       if (hasUnmanagedTomlServer({ text: outside, name })) {
         throw new ManagedRegionError(
@@ -259,6 +312,7 @@ export function upsertMcpTomlServers({
       }
     }
   }
+
   return upsertRegion({ existing, body, markers: MCP_TOML_MARKERS });
 }
 

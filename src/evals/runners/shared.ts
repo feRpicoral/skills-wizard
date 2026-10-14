@@ -44,6 +44,7 @@ export function normalizeUsage(raw: unknown): RunnerUsage {
   if (typeof raw !== 'object' || raw === null) {
     return emptyUsage();
   }
+
   const record = raw as Record<string, unknown>;
   const input =
     tokenCount(record.input_tokens) +
@@ -70,6 +71,7 @@ export function isUsageReported(raw: unknown): boolean {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return false;
   }
+
   return Object.entries(raw).some(
     ([key, value]) =>
       key.endsWith('tokens') && typeof value === 'number' && value > 0,
@@ -83,20 +85,26 @@ export function isUsageReported(raw: unknown): boolean {
  */
 export function mentionsSkillFile(text: string, skillName: string): boolean {
   if (!skillName) return false;
+
   const normalized = text.replaceAll('\\', '/');
   const pattern = new RegExp(
     `(?:^|[^A-Za-z0-9._-])skills/${RegExp.escape(skillName)}/SKILL\\.md(?![A-Za-z0-9._-])`,
   );
+
   return pattern.test(normalized);
 }
 
 export function parseJsonLines(text: string): Record<string, unknown>[] {
   const events: Record<string, unknown>[] = [];
+
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim();
+
     if (!line.startsWith('{')) continue;
+
     try {
       const parsed: unknown = JSON.parse(line);
+
       if (isRecordObject(parsed)) {
         events.push(parsed);
       }
@@ -104,21 +112,26 @@ export function parseJsonLines(text: string): Record<string, unknown>[] {
       continue;
     }
   }
+
   return events;
 }
 
 export function parseJsonDocument(text: string): Record<string, unknown> {
   const trimmed = text.trim();
+
   try {
     const parsed: unknown = JSON.parse(trimmed);
+
     if (isRecordObject(parsed)) {
       return parsed;
     }
   } catch {
     const events = parseJsonLines(trimmed);
     const last = events.at(-1);
+
     if (last) return last;
   }
+
   throw new RunnerError('Runner did not return a valid JSON object');
 }
 
@@ -126,6 +139,7 @@ export function extractJsonFromText(text: string): unknown {
   const trimmed = text.trim();
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
   const candidate = fenced?.[1]?.trim() ?? trimmed;
+
   try {
     return JSON.parse(candidate);
   } catch (error) {
@@ -141,12 +155,15 @@ const STDERR_TAIL_CHARS = 400;
 /** The last few hundred characters of stderr, on one line. */
 export function stderrTail(stderr: string): string {
   const collapsed = stderr.replace(/\s+/g, ' ').trim();
+
   if (collapsed.length <= STDERR_TAIL_CHARS) return collapsed;
+
   return `…${collapsed.slice(-STDERR_TAIL_CHARS)}`;
 }
 
 function withStderr(message: string, stderr: string): string {
   const tail = stderrTail(stderr);
+
   return tail ? `${message}; stderr: ${tail}` : message;
 }
 
@@ -177,21 +194,25 @@ export function describeProcessFailure({
       proc.stderr,
     );
   }
+
   if (reportedError !== undefined) {
     return withStderr(`${label} reported an error: ${reportedError}`, '');
   }
+
   if (proc.exitCode !== 0) {
     return withStderr(
       `${label} exited with code ${proc.exitCode}`,
       proc.stderr,
     );
   }
+
   if (!sawResult) {
     return withStderr(
       `${label} output ended without a final result event`,
       proc.stderr,
     );
   }
+
   return undefined;
 }
 
@@ -216,6 +237,7 @@ export function buildTaskResult({
     reportedError: parsed.error,
     sawResult: parsed.sawResult,
   });
+
   return {
     response: parsed.response,
     triggered: parsed.triggered,
@@ -252,7 +274,9 @@ export function parseGraderProcess({
       withStderr(`${label} timed out after ${timeoutSeconds}s`, proc.stderr),
     );
   }
+
   let parsed: ParsedGraderOutput;
+
   try {
     parsed = parse();
   } catch (error) {
@@ -263,11 +287,13 @@ export function parseGraderProcess({
         : reason;
     throw new RunnerError(withStderr(message, proc.stderr), { cause: error });
   }
+
   if (proc.exitCode !== 0) {
     throw new RunnerError(
       withStderr(`${label} exited with code ${proc.exitCode}`, proc.stderr),
     );
   }
+
   return {
     ...parsed,
     rawStdout: proc.stdout,
@@ -340,6 +366,7 @@ export function createCliRunner({
         skillName,
         fallbackDurationMs: proc.durationMs,
       });
+
       return buildTaskResult({
         label: name,
         proc,
@@ -352,14 +379,17 @@ export function createCliRunner({
       const { workdir, runDir, timeoutSeconds } = request;
       const args = buildGraderArgs(request);
       let lastError: unknown;
+
       for (let attempt = 0; attempt <= graderRetries; attempt += 1) {
         if (attempt > 0) {
           if (graderRetryDelayMs > 0) {
             await delay(graderRetryDelayMs * attempt);
           }
+
           await rm(workdir, { recursive: true, force: true });
           await mkdir(workdir, { recursive: true });
         }
+
         try {
           const proc = await spawnRunnerProcess({
             binary,
@@ -370,6 +400,7 @@ export function createCliRunner({
             env,
             logPrefix: attempt === 0 ? 'grader' : `grader-retry-${attempt}`,
           });
+
           return parseGraderProcess({
             label: `${name} grader`,
             proc,
@@ -384,6 +415,7 @@ export function createCliRunner({
           lastError = error;
         }
       }
+
       throw lastError;
     },
   };

@@ -50,6 +50,7 @@ export function isOffensiveCandidate(candidate: DiscoveryCandidate): boolean {
 function resolveAwesomeSkillName(entry: AwesomeItem): string | undefined {
   if (isSkillName(entry.id)) return entry.id;
   if (isSkillName(entry.name)) return entry.name;
+
   const folder = posix.basename(entry.path);
   return isSkillName(folder) ? folder : undefined;
 }
@@ -66,6 +67,7 @@ function matchesAwesomeQuery({
   terms,
 }: MatchAwesomeEntryParams): boolean {
   if (terms.length === 0) return true;
+
   const haystacks = [
     skillName.toLowerCase(),
     entry.id.toLowerCase(),
@@ -74,6 +76,7 @@ function matchesAwesomeQuery({
     entry.category.toLowerCase(),
     ...(entry.tags ?? []).map((tag) => tag.toLowerCase()),
   ];
+
   return terms.every((term) =>
     haystacks.some((haystack) => haystack.includes(term)),
   );
@@ -89,9 +92,12 @@ function scoreAwesomeCandidate({
   normalizedQuery,
 }: ScoreAwesomeCandidateParams): number {
   if (!normalizedQuery) return 2;
+
   const name = candidate.name.toLowerCase();
+
   if (name === normalizedQuery) return 0;
   if (name.startsWith(normalizedQuery)) return 1;
+
   return 2;
 }
 
@@ -132,13 +138,17 @@ export async function searchAwesomeIndexWithAll({
   });
   const indexFile = join(root, AWESOME_INDEX_FILE);
   const indexStat = await lstatIfExists(indexFile);
+
   if (!indexStat?.isFile()) {
     throw new SourceError(`${repo} does not contain ${AWESOME_INDEX_FILE}`);
   }
+
   const rawContent = await readTextIfExists(indexFile);
+
   if (rawContent === null) {
     throw new SourceError(`${repo} does not contain ${AWESOME_INDEX_FILE}`);
   }
+
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(rawContent);
@@ -147,7 +157,9 @@ export async function searchAwesomeIndexWithAll({
       cause: error,
     });
   }
+
   const validated = awesomeIndexSchema.safeParse(parsedJson);
+
   if (!validated.success) {
     throw new SourceError(
       `${repo}/${AWESOME_INDEX_FILE} is invalid: ${z.prettifyError(validated.error)}`,
@@ -160,13 +172,17 @@ export async function searchAwesomeIndexWithAll({
 
   const all: DiscoveryCandidate[] = [];
   const matched: DiscoveryCandidate[] = [];
+
   for (const rawEntry of validated.data) {
     const parsedEntry = awesomeItemSchema.safeParse(rawEntry);
     if (!parsedEntry.success) continue;
+
     const entry = parsedEntry.data;
     if (!isRepositoryPath(entry.path)) continue;
+
     const skillName = resolveAwesomeSkillName(entry);
     if (!skillName) continue;
+
     const candidate: DiscoveryCandidate = {
       sourceType: 'awesome',
       name: skillName,
@@ -181,6 +197,7 @@ export async function searchAwesomeIndexWithAll({
       ...(entry.tags ? { tags: entry.tags } : {}),
     };
     all.push(candidate);
+
     if (!includeOffensive && isOffensiveEntry(entry)) continue;
     if (
       normalizedCategory &&
@@ -188,6 +205,7 @@ export async function searchAwesomeIndexWithAll({
     ) {
       continue;
     }
+
     if (!matchesAwesomeQuery({ entry, skillName, terms })) continue;
     matched.push(candidate);
   }
@@ -198,6 +216,7 @@ export async function searchAwesomeIndexWithAll({
         scoreAwesomeCandidate({ candidate: b, normalizedQuery }) ||
       a.name.localeCompare(b.name),
   );
+
   return { matched, all };
 }
 

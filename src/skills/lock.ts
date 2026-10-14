@@ -32,8 +32,10 @@ export function skillLockPath(paths: Paths): string {
 function skillFolder(skillPath: string | undefined): string | null {
   if (!skillPath) return WHOLE_REPOSITORY;
   if (skillPath.includes('\\')) return null;
+
   const file = posix.normalize(skillPath);
   if (posix.basename(file) !== SKILL_FILE) return null;
+
   const folder = posix.dirname(file);
   return isRepositoryPath(folder) ? folder : null;
 }
@@ -48,8 +50,10 @@ function upstreamOf(
   ) {
     return {};
   }
+
   const folder = skillFolder(entry.skillPath);
   if (folder === null) return {};
+
   return { repo: entry.source, path: folder };
 }
 
@@ -58,14 +62,17 @@ export async function readSkillLock(
 ): Promise<Map<string, LockedSkill>> {
   const content = await readTextIfExists(skillLockPath(paths));
   if (content === null) return new Map();
+
   let raw: unknown;
   try {
     raw = JSON.parse(content);
   } catch {
     return new Map();
   }
+
   const result = lockSchema.safeParse(raw);
   if (!result.success) return new Map();
+
   return new Map(
     Object.entries(result.data.skills).map(([name, entry]) => [
       name,

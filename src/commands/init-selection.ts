@@ -60,10 +60,13 @@ function checkExplicitBlocks(
   scope: Scope,
 ): void {
   const unknown = unknownBlockIds(library, ids);
+
   if (unknown.length > 0) {
     throw new UsageError(`Unknown blocks: ${unknown.join(', ')}`);
   }
+
   const outOfScope = outOfScopeBlockIds(library, ids, scope);
+
   if (outOfScope.length > 0) {
     throw new UsageError(
       `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
@@ -93,9 +96,11 @@ export async function resolveToolsSelection({
   const tools = prompting
     ? await promptTools({ scope, initial, paths: ctx.paths })
     : initial;
+
   if (!prompting && tools.length === 0 && !previous) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
+
   return tools;
 }
 
@@ -129,6 +134,7 @@ export async function resolveBlocksSelection({
   reconciled,
 }: ResolveBlocksSelectionParams): Promise<string[]> {
   if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
+
   if (!requestedBlocks && reconciled) {
     notifyReconciledBlocks({
       ctx,
@@ -139,8 +145,10 @@ export async function resolveBlocksSelection({
           ? { ...reconciled, addedBlocks: [] }
           : reconciled,
     });
+
     if (!prompting && presetSelection === null) return reconciled.blocks;
   }
+
   const reRunBlocks =
     reconciled !== null && presetSelection !== null
       ? applyReRunPresetAndStyle({
@@ -153,19 +161,20 @@ export async function resolveBlocksSelection({
       : null;
   const initial =
     requestedBlocks ??
-    (reRunBlocks !== null
-      ? prompting && preset === 'none' && reRunBlocks.length === 0
-        ? defaultBlockIds(library, scope)
-        : reRunBlocks
-      : reconciled !== null
-        ? reconciled.knownBlocks
-        : presetSelection !== null && presetSelection.blocks.length > 0
-          ? presetSelection.blocks
-          : defaultBlockIds(library, scope));
+    initialBlocks({
+      library,
+      scope,
+      prompting,
+      preset,
+      reRunBlocks,
+      reconciled,
+      presetSelection,
+    });
   const chosen = prompting
     ? await promptBlocks({ library, scope, initial })
     : initial;
   const { ids: blocks, added } = withRequirements(library, chosen);
+
   if (added.length > 0) {
     notify({
       ctx,
@@ -173,7 +182,41 @@ export async function resolveBlocksSelection({
       message: `Added required blocks: ${added.join(', ')}`,
     });
   }
+
   return blocks;
+}
+
+function initialBlocks({
+  library,
+  scope,
+  prompting,
+  preset,
+  reRunBlocks,
+  reconciled,
+  presetSelection,
+}: {
+  library: BlockLibrary;
+  scope: Scope;
+  prompting: boolean;
+  preset?: PresetChoice;
+  reRunBlocks: string[] | null;
+  reconciled: ReconciledManifest | null;
+  presetSelection: ResolvedPresetSelection | null;
+}): string[] {
+  if (reRunBlocks !== null) {
+    if (prompting && preset === 'none' && reRunBlocks.length === 0) {
+      return defaultBlockIds(library, scope);
+    }
+
+    return reRunBlocks;
+  }
+
+  if (reconciled !== null) return reconciled.knownBlocks;
+  if (presetSelection !== null && presetSelection.blocks.length > 0) {
+    return presetSelection.blocks;
+  }
+
+  return defaultBlockIds(library, scope);
 }
 
 export interface ResolveVariablesSelectionParams {
@@ -201,6 +244,7 @@ export async function resolveVariablesSelection({
   const unused = Object.keys(givenVariables).filter(
     (name) => !needed.includes(name),
   );
+
   if (unused.length > 0) {
     notify({
       ctx,
@@ -209,6 +253,7 @@ export async function resolveVariablesSelection({
       level: 'warn',
     });
   }
+
   const known = await lookupVariables(
     needed,
     {
@@ -220,11 +265,13 @@ export async function resolveVariablesSelection({
   );
   const variables = prompting ? await promptVariables(needed, known) : known;
   const missing = needed.filter((name) => !variables[name]?.trim());
+
   if (missing.length > 0) {
     throw new UsageError(
       `Missing variables: ${missing.map((name) => `--var ${name}=<value>`).join(' ')}`,
     );
   }
+
   return variables;
 }
 
@@ -237,6 +284,25 @@ export interface ResolveInstallOptionsParams {
   requestedKeepLocal?: boolean;
   previous: Manifest | null;
   reconciled: ReconciledManifest | null;
+}
+
+async function resolveLinkCommand({
+  ctx,
+  scope,
+  prompting,
+  requestedLinkCommand,
+  previous,
+}: Pick<
+  ResolveInstallOptionsParams,
+  'ctx' | 'scope' | 'prompting' | 'requestedLinkCommand' | 'previous'
+>): Promise<boolean> {
+  if (scope !== 'global') return false;
+  if (requestedLinkCommand !== undefined) return requestedLinkCommand;
+
+  const previousLink = previous?.options.linkCommand ?? false;
+  if (!prompting) return previousLink;
+
+  return promptLinkCommand(previous ? previousLink : true, ctx.paths);
 }
 
 export async function resolveInstallOptions({
@@ -252,20 +318,21 @@ export async function resolveInstallOptions({
   linkCommand: boolean;
   keepLocal: boolean;
 }> {
-  const previousLink = previous?.options.linkCommand ?? false;
-  const linkCommand =
-    scope === 'global'
-      ? (requestedLinkCommand ??
-        (prompting
-          ? await promptLinkCommand(previous ? previousLink : true, ctx.paths)
-          : previousLink))
-      : false;
+  const linkCommand = await resolveLinkCommand({
+    ctx,
+    scope,
+    prompting,
+    requestedLinkCommand,
+    previous,
+  });
   const git = location.project?.git;
+
   if (requestedKeepLocal && !git) {
     throw new UsageError(
       `${location.project?.dir ?? ctx.cwd} is not in a git repository, so files cannot be kept local.`,
     );
   }
+
   if (
     reconciled?.leftGit &&
     location.project &&
@@ -273,13 +340,32 @@ export async function resolveInstallOptions({
   ) {
     notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
   }
-  const previousLocal = reconciled?.keepLocal ?? false;
+
   const keepLocal =
     scope === 'project' && git
-      ? (requestedKeepLocal ??
-        (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
+      ? await resolveKeepLocal({
+          prompting,
+          requestedKeepLocal,
+          previousLocal: reconciled?.keepLocal ?? false,
+        })
       : false;
+
   return { linkCommand, keepLocal };
+}
+
+async function resolveKeepLocal({
+  prompting,
+  requestedKeepLocal,
+  previousLocal,
+}: {
+  prompting: boolean;
+  requestedKeepLocal?: boolean;
+  previousLocal: boolean;
+}): Promise<boolean> {
+  if (requestedKeepLocal !== undefined) return requestedKeepLocal;
+  if (!prompting) return previousLocal;
+
+  return promptKeepLocal(previousLocal);
 }
 
 export interface ResolveSkillsSelectionParams {
@@ -313,6 +399,7 @@ export async function resolveSkillsSelection({
   if (requestedSkills) {
     checkExplicitSkills(skillLibrary, requestedSkills, scope);
   }
+
   const recordedSkills = previous
     ? dropUnknownSkills({
         ctx,
@@ -324,17 +411,14 @@ export async function resolveSkillsSelection({
     : null;
   const initialSkills =
     requestedSkills ??
-    (recordedSkills !== null
-      ? presetChanged && presetSelection !== null
-        ? applyReRunPresetSkills({
-            recordedSkills,
-            previousPresetSkills: replacedPreset?.skills ?? [],
-            presetSkills: presetSelection.skills,
-          })
-        : recordedSkills
-      : presetSelection !== null
-        ? presetSelection.skills
-        : defaultSkillNames(skillLibrary, scope));
+    initialSkillNames({
+      skillLibrary,
+      scope,
+      recordedSkills,
+      presetChanged,
+      presetSelection,
+      replacedPreset,
+    });
   const skills = prompting
     ? await promptSkills(skillLibrary, scope, initialSkills)
     : initialSkills;
@@ -342,14 +426,48 @@ export async function resolveSkillsSelection({
   const firstParty = skills.some(
     (name) => findSkill(skillLibrary, name)?.origin.type === 'local',
   );
-  const skillMode =
-    scope === 'global'
-      ? (requestedSkillMode ??
-        (prompting && firstParty
-          ? await promptSkillMode(previousMode)
-          : previousMode))
-      : DEFAULT_SKILL_MODE;
+  let skillMode = DEFAULT_SKILL_MODE;
+  if (scope === 'global') {
+    if (requestedSkillMode !== undefined) {
+      skillMode = requestedSkillMode;
+    } else if (prompting && firstParty) {
+      skillMode = await promptSkillMode(previousMode);
+    } else {
+      skillMode = previousMode;
+    }
+  }
+
   return { skills, skillMode };
+}
+
+function initialSkillNames({
+  skillLibrary,
+  scope,
+  recordedSkills,
+  presetChanged,
+  presetSelection,
+  replacedPreset,
+}: {
+  skillLibrary: SkillLibrary;
+  scope: Scope;
+  recordedSkills: string[] | null;
+  presetChanged: boolean;
+  presetSelection: ResolvedPresetSelection | null;
+  replacedPreset?: PresetDefinition;
+}): string[] {
+  if (recordedSkills !== null) {
+    if (!presetChanged || presetSelection === null) return recordedSkills;
+
+    return applyReRunPresetSkills({
+      recordedSkills,
+      previousPresetSkills: replacedPreset?.skills ?? [],
+      presetSkills: presetSelection.skills,
+    });
+  }
+
+  if (presetSelection !== null) return presetSelection.skills;
+
+  return defaultSkillNames(skillLibrary, scope);
 }
 
 export interface ResolveMcpSelectionParams {
@@ -374,6 +492,7 @@ export async function resolveMcpSelection({
   if (requestedMcp) {
     checkExplicitMcp({ catalog: mcpCatalog, names: requestedMcp, scope });
   }
+
   const recordedMcp = previous
     ? dropUnavailableMcpServers({
         ctx,
@@ -390,18 +509,16 @@ export async function resolveMcpSelection({
           location.detection?.detectedMcpServers ?? [],
         )
       : [];
-  const initialMcp =
-    requestedMcp ??
-    (recordedMcp !== null
-      ? recordedMcp
-      : scope === 'project'
-        ? [
-            ...new Set([
-              ...defaultMcpServerNames(mcpCatalog, 'project'),
-              ...detectedMcp,
-            ]),
-          ]
-        : defaultMcpServerNames(mcpCatalog, scope));
+  const projectMcp = [
+    ...new Set([
+      ...defaultMcpServerNames(mcpCatalog, 'project'),
+      ...detectedMcp,
+    ]),
+  ];
+  const fallbackMcp =
+    scope === 'project' ? projectMcp : defaultMcpServerNames(mcpCatalog, scope);
+  const initialMcp = requestedMcp ?? recordedMcp ?? fallbackMcp;
+
   return prompting
     ? promptMcpServers({
         catalog: mcpCatalog,

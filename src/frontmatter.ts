@@ -23,16 +23,21 @@ export function parseFrontmatter({
   file,
 }: ParseFrontmatterParams): FrontmatterDocument {
   const text = source.replace(/\r\n/g, '\n');
+
   if (!text.startsWith('---\n')) {
     throw new FrontmatterError(`${file}: missing YAML frontmatter`);
   }
+
   const match = FRONTMATTER.exec(text);
+
   if (!match) {
     throw new FrontmatterError(`${file}: unterminated YAML frontmatter`);
   }
+
   try {
     const data: unknown = parse(match[1] ?? '');
     const body = text.slice(match[0].length).replace(/^\n+/, '');
+
     return { data, body };
   } catch (error) {
     throw new FrontmatterError(`${file}: invalid YAML frontmatter`, {

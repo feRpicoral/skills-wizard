@@ -22,9 +22,11 @@ export function escapeTableCell(text: string): string {
 
 function longestBacktickRun(text: string): number {
   let longest = 0;
+
   for (const match of text.matchAll(/`+/g)) {
     longest = Math.max(longest, match[0].length);
   }
+
   return longest;
 }
 
@@ -37,6 +39,7 @@ export function codeSpan(text: string): string {
   const fence = '`'.repeat(longestBacktickRun(content) + 1);
   const padded =
     content.startsWith('`') || content.endsWith('`') ? ` ${content} ` : content;
+
   return `${fence}${padded}${fence}`;
 }
 
@@ -72,7 +75,9 @@ export function formatPassRateDelta(
 ): string {
   const points = (primary.pass_rate.mean - reference.pass_rate.mean) * 100;
   const fixed = points.toFixed(1);
+
   if (Number(fixed) === 0) return '+0.0 pp';
+
   return points > 0 ? `+${fixed} pp` : `${fixed} pp`;
 }
 
@@ -81,6 +86,7 @@ function formatVariantRow(label: string, variant: VariantAggregate): string {
   const duration = `${formatStat(variant.time_seconds, 2)}s`;
   const tokens = variant.tokens ? formatStat(variant.tokens, 0) : NOT_AVAILABLE;
   const failed = `${variant.failed_runs}/${variant.runs}`;
+
   return `| ${label} | ${passRate} | ${duration} | ${tokens} | ${failed} |`;
 }
 
@@ -93,6 +99,7 @@ function formatDeltaRow(params: {
 }): string {
   const tokenCell =
     params.tokens === NOT_AVAILABLE ? params.tokens : `**${params.tokens}**`;
+
   return `| **${params.label}** | **${formatPassRateDelta(params.primary, params.reference)}** | **${params.timeSeconds}s** | ${tokenCell} | |`;
 }
 
@@ -100,16 +107,19 @@ function formatAnalysisLine(label: string, items: readonly string[]): string {
   return `- **${label} (${items.length}):** ${items.map(codeSpan).join(', ')}`;
 }
 
+function runFailureSuffix(run: EvalRunRecord): string {
+  if (run.timing.timed_out) return ', timed out';
+  if (run.timing.error) return ', failed';
+  return '';
+}
+
 function formatRunHeading(run: EvalRunRecord): string {
   const tokens =
     run.timing.usage_reported === false
       ? 'tokens n/a'
       : `${run.timing.total_tokens} tokens`;
-  const failure = run.timing.timed_out
-    ? ', timed out'
-    : run.timing.error
-      ? ', failed'
-      : '';
+  const failure = runFailureSuffix(run);
+
   return `#### ${codeSpan(run.variant)} - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds.toFixed(2)}s, ${tokens}${failure})`;
 }
 
@@ -128,6 +138,10 @@ function formatAssertionRow({
   const oldClassification =
     assertion.old_skill_classification ??
     (hasBaseline ? undefined : assertion.classification);
+  const oldClassificationCell = oldClassification
+    ? cellCodeSpan(oldClassification)
+    : NOT_AVAILABLE;
+
   const cells = [
     escapeTableCell(assertion.text),
     cellCodeSpan(assertion.kind),
@@ -140,20 +154,20 @@ function formatAssertionRow({
     ...(hasBaseline || (!withOldSkill && !withCompareSkills)
       ? [cellCodeSpan(assertion.classification)]
       : []),
-    ...(withOldSkill
-      ? [oldClassification ? cellCodeSpan(oldClassification) : NOT_AVAILABLE]
-      : []),
+    ...(withOldSkill ? [oldClassificationCell] : []),
     ...compareSkillNames.map((name, index) => {
       const compareClassification =
         assertion.compare_classifications?.[name] ??
         (!hasBaseline && !withOldSkill && index === 0
           ? assertion.classification
           : undefined);
+
       return compareClassification
         ? cellCodeSpan(compareClassification)
         : NOT_AVAILABLE;
     }),
   ];
+
   return `| ${cells.join(' | ')} |`;
 }
 
@@ -170,6 +184,7 @@ function renderOverallSummarySection(
     '| --- | --- | --- | --- | --- |',
     formatVariantRow('`with_skill`', summary.with_skill),
   ];
+
   if (summary.without_skill) {
     lines.push(formatVariantRow('`without_skill`', summary.without_skill));
   }
@@ -221,7 +236,9 @@ function renderOverallSummarySection(
       );
     }
   }
+
   lines.push('');
+
   return lines;
 }
 
@@ -232,6 +249,22 @@ interface AssertionAnalysisSectionParams {
   compareSkillNames: readonly string[];
 }
 
+/** The variant assertions are classified against, if any. */
+function analysisReferenceLabel({
+  hasBaseline,
+  withOldSkill,
+  compareSkillNames,
+}: Omit<AssertionAnalysisSectionParams, 'benchmark'>): string | undefined {
+  if (hasBaseline) return 'baseline';
+  if (withOldSkill) return '`old_skill`';
+
+  const firstCompareName = compareSkillNames[0];
+
+  return firstCompareName === undefined
+    ? undefined
+    : codeSpan(`compare:${firstCompareName}`);
+}
+
 function renderAssertionAnalysisSection({
   benchmark,
   hasBaseline,
@@ -239,14 +272,11 @@ function renderAssertionAnalysisSection({
   compareSkillNames,
 }: AssertionAnalysisSectionParams): string[] {
   const lines: string[] = [];
-  const firstCompareName = compareSkillNames[0];
-  const referenceLabel = hasBaseline
-    ? 'baseline'
-    : withOldSkill
-      ? '`old_skill`'
-      : firstCompareName !== undefined
-        ? codeSpan(`compare:${firstCompareName}`)
-        : undefined;
+  const referenceLabel = analysisReferenceLabel({
+    hasBaseline,
+    withOldSkill,
+    compareSkillNames,
+  });
   const vsReference = referenceLabel ? ` (vs ${referenceLabel})` : '';
 
   if (benchmark.non_discriminating_assertions.length > 0) {
@@ -280,6 +310,7 @@ function renderAssertionAnalysisSection({
     [`Fail in both${vsReference}`, analysis.fail_in_both],
     [`Flaky${vsReference}`, analysis.flaky],
   ];
+
   if (analysisLines.some(([, items]) => items.length > 0)) {
     lines.push('## Assertion Analysis', '');
     for (const [label, items] of analysisLines) {
@@ -287,6 +318,7 @@ function renderAssertionAnalysisSection({
     }
     lines.push('');
   }
+
   return lines;
 }
 
@@ -305,6 +337,7 @@ function renderEvalCasesSection({
 }: EvalCasesSectionParams): string[] {
   const lines: string[] = ['## Eval Cases', ''];
   const withCompareSkills = compareSkillNames.length > 0;
+
   for (const evalCase of cases) {
     lines.push(
       `### Case: ${codeSpan(evalCase.case_id)}`,
@@ -320,6 +353,13 @@ function renderEvalCasesSection({
     );
 
     if (evalCase.assertions.length > 0) {
+      const primaryClassificationHeader = hasBaseline
+        ? ['Classification (vs baseline)']
+        : [];
+      if (!hasBaseline && !withOldSkill && !withCompareSkills) {
+        primaryClassificationHeader.push('Classification');
+      }
+
       const header = [
         'Assertion',
         'Kind',
@@ -327,20 +367,18 @@ function renderEvalCasesSection({
         ...(hasBaseline ? ['`without_skill`'] : []),
         ...(withOldSkill ? ['`old_skill`'] : []),
         ...compareSkillNames.map((name) => cellCodeSpan(`compare:${name}`)),
-        ...(hasBaseline
-          ? ['Classification (vs baseline)']
-          : !withOldSkill && !withCompareSkills
-            ? ['Classification']
-            : []),
+        ...primaryClassificationHeader,
         ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
         ...compareSkillNames.map(
           (name) => `Classification (vs ${cellCodeSpan(`compare:${name}`)})`,
         ),
       ];
+
       lines.push(
         `| ${header.join(' | ')} |`,
         `| ${header.map(() => '---').join(' | ')} |`,
       );
+
       for (const assertion of evalCase.assertions) {
         lines.push(
           formatAssertionRow({
@@ -351,23 +389,28 @@ function renderEvalCasesSection({
           }),
         );
       }
+
       lines.push('');
     }
 
     for (const run of evalCase.runs) {
       lines.push(formatRunHeading(run), '');
+
       if (run.timing.error) {
         lines.push(`- **Run error:** ${collapseWhitespace(run.timing.error)}`);
       }
+
       for (const exp of run.grading.expectations) {
         const badge = exp.passed ? 'PASS' : 'FAIL';
         lines.push(
           `- **[${badge}]** ${collapseWhitespace(exp.text)}: ${collapseWhitespace(exp.evidence)}`,
         );
       }
+
       lines.push('');
     }
   }
+
   return lines;
 }
 
@@ -375,6 +418,7 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   const { metadata, run_summary: summary, cases } = benchmark;
   const compareSkillNames =
     metadata.compare_skills ?? Object.keys(summary.compare_skills ?? {});
+
   const lines: string[] = [
     `# Skill Evaluation Report: ${codeSpan(metadata.skill_name)}`,
     '',
@@ -384,14 +428,17 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     `- **Baseline status:** ${metadata.baseline_status}`,
     `- **\`with_skill\` status:** ${metadata.with_skill_contaminated ? 'possibly contaminated' : 'clean'}`,
   ];
+
   if (metadata.compare_ref) {
     lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
   }
+
   if (compareSkillNames.length > 0) {
     lines.push(
       `- **Compared against skills:** ${compareSkillNames.map(codeSpan).join(', ')}`,
     );
   }
+
   lines.push('');
 
   if (metadata.warnings.length > 0) {
@@ -407,6 +454,7 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   // Without baseline runs, assertions are classified against old_skill or the first compared skill.
   const hasBaseline = summary.without_skill !== undefined;
   const withOldSkill = summary.old_skill !== undefined;
+
   lines.push(
     ...renderAssertionAnalysisSection({
       benchmark,
@@ -448,6 +496,7 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
       : []),
     '',
   ];
+
   if (metadata.warnings.length > 0) {
     lines.push('## Warnings', '');
     for (const warning of metadata.warnings) {
@@ -455,6 +504,7 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
     }
     lines.push('');
   }
+
   lines.push(
     '## Metrics',
     '',
@@ -478,18 +528,30 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
   );
 
   for (const item of queries) {
-    const status =
-      item.trigger_rate === null ? 'ERROR' : item.passed ? 'PASS' : 'FAIL';
+    const status = triggerStatus(item);
     const expected = item.should_trigger ? 'trigger' : 'no-trigger';
     const okRuns = item.runs - item.errored_runs;
     const errored =
       item.errored_runs > 0 ? `, ${item.errored_runs} failed` : '';
+
     const rate = `${item.trigger_count}/${okRuns} (${formatRate(item.trigger_rate)}${errored})`;
     lines.push(
       `| **${status}** | \`${expected}\` | ${rate} | ${escapeTableCell(item.query)} |`,
     );
   }
+
   lines.push('');
 
   return lines.join('\n');
+}
+
+function triggerStatus(item: {
+  trigger_rate: number | null;
+  passed: boolean;
+}): string {
+  if (item.trigger_rate === null) {
+    return 'ERROR';
+  }
+
+  return item.passed ? 'PASS' : 'FAIL';
 }

@@ -29,13 +29,17 @@ export interface LsTreeRecord {
  */
 export function parseLsTreeOutput(output: string): LsTreeRecord[] {
   const records: LsTreeRecord[] = [];
+
   for (const record of output.split('\0')) {
     if (!record) continue;
+
     const tabIndex = record.indexOf('\t');
     if (tabIndex === -1) continue;
+
     const meta = record.slice(0, tabIndex);
     const path = record.slice(tabIndex + 1);
     const [mode = '', type = '', objectHash = ''] = meta.split(' ');
+
     if (
       type === 'blob' &&
       mode.length > 0 &&
@@ -45,6 +49,7 @@ export function parseLsTreeOutput(output: string): LsTreeRecord[] {
       records.push({ mode, type, objectHash, path });
     }
   }
+
   return records;
 }
 
@@ -72,6 +77,7 @@ export async function listRepositoryFiles({
     failure: `Could not list files in ${repo}`,
     cwd: sourceDir(cache, repo),
   });
+
   return parseLsTreeOutput(output)
     .filter((entry) => REGULAR_MODES.has(entry.mode))
     .map((entry) => ({ path: entry.path, blobSha: entry.objectHash }));
@@ -106,6 +112,7 @@ export async function readGitBlobBuffer({
       timeout,
     },
   );
+
   return stdout;
 }
 
@@ -127,12 +134,14 @@ export async function readRepositoryBlob({
   if (!isCommitSha(blobSha)) {
     throw new SourceError(`${repo}: invalid blob object id "${blobSha}"`);
   }
+
   try {
     const buf = await readGitBlobBuffer({
       cwd: sourceDir(cache, repo),
       objectHash: blobSha,
       env: cache.env,
     });
+
     return buf.toString('utf8');
   } catch (error) {
     throw new SourceError(

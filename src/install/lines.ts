@@ -17,6 +17,7 @@ export function keepBom(
 ): string {
   const text = withoutBom(content);
   const next = edit(text);
+
   return next === '' || text === content ? next : `${BOM}${next}`;
 }
 
@@ -31,11 +32,14 @@ export function lineEnding(content: string | null): string {
 export function splitLines(content: string): Line[] {
   const lines: Line[] = [];
   let start = 0;
+
   for (const match of content.matchAll(/\r?\n/g)) {
     lines.push({ text: content.slice(start, match.index), eol: match[0] });
     start = match.index + match[0].length;
   }
+
   lines.push({ text: content.slice(start), eol: '' });
+
   return lines;
 }
 

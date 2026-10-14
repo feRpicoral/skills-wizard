@@ -6,10 +6,12 @@ export function failureDetail(error: unknown): string {
     typeof error.stderr === 'string'
       ? error.stderr
       : '';
+
   const lines = stderr
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+
   return (
     lines.find((line) => /^(fatal|error):/i.test(line)) ??
     lines.at(-1) ??

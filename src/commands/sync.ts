@@ -27,9 +27,10 @@ export async function runSync(
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const previous = await readLocationManifest({ ctx, prompting, location });
+
   if (!previous) {
     throw new UsageError(
       `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init first.`,
@@ -50,5 +51,6 @@ export async function runSync(
   });
 
   const result = await confirmAndApply(ctx, plan, confirmOptions);
+
   return result.code;
 }

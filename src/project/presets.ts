@@ -89,20 +89,25 @@ function parsePreset({
   expectedId,
 }: ParsePresetParams): PresetDefinition {
   let raw: unknown;
+
   try {
     raw = parse(source);
   } catch (error) {
     throw new PresetError(`${file}: invalid YAML`, { cause: error });
   }
+
   const result = presetSchema.safeParse(raw);
+
   if (!result.success) {
     throw new PresetError(`${file}: ${z.prettifyError(result.error)}`);
   }
+
   if (result.data.id !== expectedId) {
     throw new PresetError(
       `${file}: preset id "${result.data.id}" must match filename "${expectedId}"`,
     );
   }
+
   return result.data;
 }
 
@@ -115,11 +120,14 @@ function validatePresetReferences(
     const byId = new Map(
       libraries.blockLibrary.blocks.map((block) => [block.id, block]),
     );
+
     for (const blockId of preset.blocks) {
       const block = byId.get(blockId);
+
       if (!block) {
         throw new PresetError(`${file}: unknown block "${blockId}"`);
       }
+
       if (!block.scopes.includes('project')) {
         throw new PresetError(
           `${file}: block "${blockId}" is not available for project scope`,
@@ -127,15 +135,19 @@ function validatePresetReferences(
       }
     }
   }
+
   if (libraries.skillLibrary) {
     const byName = new Map(
       libraries.skillLibrary.skills.map((skill) => [skill.name, skill]),
     );
+
     for (const skillName of preset.skills) {
       const skill = byName.get(skillName);
+
       if (!skill) {
         throw new PresetError(`${file}: unknown skill "${skillName}"`);
       }
+
       if (!skill.scopes.includes('project')) {
         throw new PresetError(
           `${file}: skill "${skillName}" is not available for project scope`,
@@ -159,6 +171,7 @@ export async function loadPresets(
   libraries: PresetLibraries = {},
 ): Promise<PresetDefinition[]> {
   let entries;
+
   try {
     entries = await readdir(presetsDir, { withFileTypes: true });
   } catch (error) {
@@ -173,6 +186,7 @@ export async function loadPresets(
     .sort();
 
   const byId = new Map<PresetId, PresetDefinition>();
+
   for (const name of yamlFiles) {
     const expectedId = name.slice(0, -'.yaml'.length);
     const file = join(presetsDir, name);
@@ -183,6 +197,7 @@ export async function loadPresets(
   }
 
   const missing = PRESET_IDS.filter((id) => !byId.has(id));
+
   if (missing.length > 0) {
     throw new PresetError(
       `${presetsDir}: missing presets: ${missing.join(', ')}`,
@@ -197,7 +212,9 @@ export async function loadPresetsIfAvailable(
   libraries: PresetLibraries,
 ): Promise<PresetDefinition[]> {
   const dir = presetsPath(repoRoot);
+
   if (!(await isDirectory(dir))) return [];
+
   return loadPresets(dir, libraries);
 }
 
@@ -206,6 +223,7 @@ export function findPreset(
   id: PresetChoice | undefined,
 ): PresetDefinition | undefined {
   if (!id || id === 'none') return undefined;
+
   return presets.find((preset) => preset.id === id);
 }
 
@@ -235,6 +253,7 @@ export function resolvePresetSelection({
   detectedSkills = [],
 }: ResolvePresetSelectionParams): ResolvedPresetSelection {
   const wantedBlocks = new Set<string>();
+
   if (style === 'self-contained') {
     for (const block of blockLibrary.blocks) {
       if (
@@ -245,6 +264,7 @@ export function resolvePresetSelection({
       }
     }
   }
+
   for (const blockId of preset?.blocks ?? []) {
     if (
       blockId === 'stack/node-yarn' &&
@@ -253,8 +273,10 @@ export function resolvePresetSelection({
     ) {
       continue;
     }
+
     wantedBlocks.add(blockId);
   }
+
   for (const blockId of detectedBlocks) {
     wantedBlocks.add(blockId);
   }
@@ -273,8 +295,10 @@ export function resolvePresetSelection({
       )
     : null;
   const skills: string[] = [];
+
   for (const skillName of [...(preset?.skills ?? []), ...detectedSkills]) {
     if (allowedSkills && !allowedSkills.has(skillName)) continue;
+
     if (!skills.includes(skillName)) {
       skills.push(skillName);
     }
@@ -322,10 +346,12 @@ export async function resolveProjectPresetAndStyle({
   if (scope !== 'project') {
     return { preset: undefined, style: undefined };
   }
+
   const askPreset = prompts?.promptPreset ?? promptPreset;
   const askStyle = prompts?.promptProjectStyle ?? promptProjectStyle;
 
   let preset: PresetChoice | undefined;
+
   if (requestedPreset !== undefined) {
     preset = requestedPreset;
   } else if (prompting && presets.length > 0) {
@@ -347,6 +373,7 @@ export async function resolveProjectPresetAndStyle({
     ? 'lean'
     : 'self-contained';
   let style: ProjectStyle | undefined;
+
   if (requestedStyle !== undefined) {
     style = requestedStyle;
   } else if (prompting) {
@@ -383,9 +410,11 @@ export function applyReRunPresetAndStyle({
 }: ApplyReRunPresetAndStyleParams): string[] {
   const projectDefaults = new Set(defaultBlockIds(library, 'project'));
   const wanted = new Set(recordedBlocks);
+
   for (const id of previousPresetBlocks) {
     wanted.delete(id);
   }
+
   if (requestedStyle === 'lean') {
     for (const id of projectDefaults) {
       wanted.delete(id);
@@ -395,9 +424,11 @@ export function applyReRunPresetAndStyle({
       wanted.add(id);
     }
   }
+
   for (const id of presetBlocks) {
     wanted.add(id);
   }
+
   return library.blocks
     .filter((block) => block.scopes.includes('project') && wanted.has(block.id))
     .map((block) => block.id);
@@ -421,5 +452,6 @@ export function applyReRunPresetSkills({
 }: ApplyReRunPresetSkillsParams): string[] {
   const removed = new Set(previousPresetSkills);
   const kept = recordedSkills.filter((skill) => !removed.has(skill));
+
   return [...new Set([...kept, ...presetSkills])];
 }

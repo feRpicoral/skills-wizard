@@ -48,9 +48,11 @@ interface CreatedShapeParams {
 
 function createdShape({ earlier, result }: CreatedShapeParams): CreatedShape {
   if (!earlier) return shapeOf(result);
+
   if (earlier.createdKeys === undefined) {
     return result.createdKeys > 0 ? shapeOf(result) : {};
   }
+
   return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
 }
 
@@ -69,11 +71,12 @@ function planJsonArray({
       file.existing !== null && previous?.kind === 'json-array'
         ? previous
         : null;
+
     const result = ensureArrayValues({
       existing: file.existing,
       keyPath: target.key,
       values: target.values,
-      ...(earlier ? { ownedValues: earlier.added } : {}),
+      ownedValues: earlier?.added,
     });
     const added = [
       ...new Set([
@@ -83,6 +86,7 @@ function planJsonArray({
         ...result.added,
       ]),
     ];
+
     const wasEmpty = earlier
       ? earlier.wasEmpty
       : (emptyJson?.wasEmpty ?? result.wasEmpty);
@@ -99,6 +103,7 @@ function planJsonArray({
             original: emptyJson.rootOriginal,
           }
         : shape;
+
     return writeAction({
       target,
       file,
@@ -120,6 +125,7 @@ function planJsonArray({
     if (error instanceof JsonMergeError) {
       return conflict({ target, previous, reason: error.message });
     }
+
     throw error;
   }
 }
@@ -148,12 +154,13 @@ export async function planFile({
       ...rest,
     });
   }
+
   const resolved = await resolveTargetFile({ target, previous, ...rest });
+
   if (!resolved.ok) return resolved.action;
+
   const { file } = resolved;
 
-  const emptyState = emptyJson ? { emptyJson } : {};
-  const mcpState = sharedMcp ? { sharedMcp } : {};
   switch (target.kind) {
     case 'region':
       return planRegion({ target, file, previous });
@@ -162,15 +169,9 @@ export async function planFile({
     case 'line':
       return planLine({ target, file, previous });
     case 'json-array':
-      return planJsonArray({ target, file, previous, ...emptyState });
+      return planJsonArray({ target, file, previous, emptyJson });
     case 'mcp-json':
-      return planMcpJson({
-        target,
-        file,
-        previous,
-        ...emptyState,
-        ...mcpState,
-      });
+      return planMcpJson({ target, file, previous, emptyJson, sharedMcp });
     case 'mcp-toml':
       return planMcpToml({ target, file, previous });
   }

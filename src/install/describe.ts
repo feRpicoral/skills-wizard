@@ -57,12 +57,14 @@ export function describePlan(plan: Plan, home: string): string[] {
   const lines = plan.actions.map((action) => {
     const target = action.writePath ? ` -> ${show(action.writePath)}` : '';
     const reason = action.reason ? ` (${action.reason})` : '';
+
     return line({
       status: action.status,
       path: `${show(action.path)}${target}`,
       label: `${action.label}${reason}`,
     });
   });
+
   if (plan.manifestStatus !== 'unchanged') {
     lines.push(
       line({
@@ -72,6 +74,7 @@ export function describePlan(plan: Plan, home: string): string[] {
       }),
     );
   }
+
   return lines;
 }
 

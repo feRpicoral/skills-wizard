@@ -47,6 +47,7 @@ export async function createUpstream(
       '-m',
       'change',
     ]);
+
     if (tag) await git(work, ['tag', tag]);
     return git(work, ['rev-parse', 'HEAD']);
   };

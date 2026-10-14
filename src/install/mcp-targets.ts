@@ -43,9 +43,11 @@ function groupToolsByMcpPath(
     | undefined,
 ): ResolvedMcpConfigGroup[] {
   const groups = new Map<string, ResolvedMcpConfigGroup>();
+
   for (const tool of tools) {
     const resolved = resolve(tool);
     if (!resolved) continue;
+
     const key = `${resolved.format}:${resolved.path}`;
     const existing = groups.get(key) ?? {
       format: resolved.format,
@@ -55,6 +57,7 @@ function groupToolsByMcpPath(
       permissionsFiles: [],
     };
     existing.tools.push(tool);
+
     if (resolved.format === 'json') {
       existing.clients.add(resolved.client);
       if (resolved.permissionsPath !== undefined) {
@@ -64,8 +67,10 @@ function groupToolsByMcpPath(
         });
       }
     }
+
     groups.set(key, existing);
   }
+
   return [...groups.values()];
 }
 
@@ -75,6 +80,7 @@ function resolveGroupClient(
   if (clients.has('claude-code') && clients.has('copilot')) {
     return 'claude-copilot-shared';
   }
+
   const [first] = clients;
   return first ?? 'claude-code';
 }
@@ -84,14 +90,17 @@ function buildMcpTargetsFromGroups(
   servers: readonly McpServerDefinition[],
 ): McpTargetsResult {
   if (servers.length === 0) return { targets: [], warnings: [] };
+
   const targets: Target[] = [];
   const warnings: string[] = [];
 
   for (const group of groups) {
     const label = `${group.tools.map((tool) => tool.label).join(', ')} MCP servers`;
+
     if (group.format === 'toml') {
       const rendered = renderMcpTomlServers(servers);
       warnings.push(...rendered.warnings);
+
       if (rendered.serverNames.length > 0) {
         targets.push({
           kind: 'mcp-toml',
@@ -101,12 +110,14 @@ function buildMcpTargetsFromGroups(
           label,
         });
       }
+
       continue;
     }
 
     const client = resolveGroupClient(group.clients);
     const rendered = renderMcpJsonServers({ client, servers });
     warnings.push(...rendered.warnings);
+
     if (rendered.serverNames.length > 0) {
       targets.push({
         kind: 'mcp-json',
@@ -116,9 +127,12 @@ function buildMcpTargetsFromGroups(
         label,
       });
     }
+
     for (const perm of group.permissionsFiles) {
       if (perm.tool.id !== 'claude-code') continue;
+
       const denied = claudeDeniedToolPermissions(servers);
+
       if (denied.length > 0) {
         targets.push({
           kind: 'json-array',
@@ -141,6 +155,7 @@ function buildMcpTargetsFromGroups(
 export function selectedMcpServers(input: PlanInput): McpServerDefinition[] {
   const names = input.selection.mcp ?? [];
   if (!input.mcpCatalog || names.length === 0) return [];
+
   return selectMcpServers({
     catalog: input.mcpCatalog,
     names,
@@ -162,9 +177,11 @@ export function globalMcpTargets({
   const groups = groupToolsByMcpPath(tools, (tool) => {
     const mcp = tool.global.mcp;
     if (!mcp) return undefined;
+
     if (mcp.format === 'toml') {
       return { format: 'toml', path: mcp.file(paths) };
     }
+
     return {
       format: 'json',
       client: mcp.client,
@@ -174,6 +191,7 @@ export function globalMcpTargets({
         : {}),
     };
   });
+
   return buildMcpTargetsFromGroups(groups, servers);
 }
 
@@ -191,9 +209,11 @@ export function projectMcpTargets({
   const groups = groupToolsByMcpPath(tools, (tool) => {
     const mcp = tool.project.mcp;
     if (!mcp) return undefined;
+
     if (mcp.format === 'toml') {
       return { format: 'toml', path: join(projectDir, mcp.file) };
     }
+
     return {
       format: 'json',
       client: mcp.client,
@@ -203,6 +223,7 @@ export function projectMcpTargets({
         : {}),
     };
   });
+
   return buildMcpTargetsFromGroups(groups, servers);
 }
 
@@ -212,6 +233,7 @@ export function mcpConfigPaths({
   project,
 }: Pick<PlanInput, 'scope' | 'paths' | 'project'>): McpConfigPaths | null {
   if (scope === 'project' && !project) return null;
+
   const json = new Set<string>();
   const toml = new Set<string>();
 
@@ -220,11 +242,13 @@ export function mcpConfigPaths({
     if (scope === 'global') {
       const mcp = tool.global.mcp;
       if (!mcp) continue;
+
       const targetSet = mcp.format === 'json' ? json : toml;
       targetSet.add(mcp.file(paths));
     } else if (project) {
       const mcp = tool.project.mcp;
       if (!mcp) continue;
+
       const targetSet = mcp.format === 'json' ? json : toml;
       targetSet.add(join(project.dir, mcp.file));
     }

@@ -12,6 +12,7 @@ function isSafeRelativePath(value: string): boolean {
   if (!trimmed || isAbsolute(trimmed) || trimmed.startsWith('\\')) {
     return false;
   }
+
   const normalized = posix.normalize(trimmed.replaceAll('\\', '/'));
   if (
     normalized === '.' ||
@@ -21,6 +22,7 @@ function isSafeRelativePath(value: string): boolean {
   ) {
     return false;
   }
+
   return true;
 }
 
@@ -130,6 +132,7 @@ const evalCaseSchema = z
       });
       return;
     }
+
     if ((val.assertions ?? val.expectations ?? []).length === 0) {
       ctx.addIssue({
         code: 'custom',
@@ -191,7 +194,9 @@ export function parseEvalSuite({
   if (!result.success) {
     throw new EvalError(`${sourcePath}: ${z.prettifyError(result.error)}`);
   }
+
   const suite = result.data;
+
   if (expectedSkillName && suite.skill_name !== expectedSkillName) {
     throw new EvalError(
       `${sourcePath}: skill_name "${suite.skill_name}" does not match skill directory "${expectedSkillName}"`,
@@ -201,9 +206,11 @@ export function parseEvalSuite({
   // Compared case-insensitively: on case-insensitive file systems `eval-A`
   // and `eval-a` would share one run directory.
   const seenIds = new Map<string, string>();
+
   for (const evalCase of suite.evals) {
     const key = evalCase.id.toLowerCase();
     const previous = seenIds.get(key);
+
     if (previous !== undefined) {
       const detail =
         previous === evalCase.id ? '' : ` (conflicts with "${previous}")`;
@@ -211,6 +218,7 @@ export function parseEvalSuite({
         `${sourcePath}: duplicate eval case id "${evalCase.id}"${detail}`,
       );
     }
+
     seenIds.set(key, evalCase.id);
   }
 
@@ -227,6 +235,7 @@ export async function readEvalJsonFile({
   missingMessage,
 }: ReadEvalJsonFileParams): Promise<unknown> {
   const content = await readTextIfExists(path);
+
   if (content === null) {
     throw new EvalError(missingMessage);
   }
@@ -255,11 +264,13 @@ export async function loadEvalSuite(skillDir: string): Promise<EvalSuite> {
     for (const fileEntry of evalCase.files) {
       const fullPath = join(skillDir, fileEntry);
       const info = await lstatIfExists(fullPath);
+
       if (info === null) {
         throw new EvalError(
           `Eval case "${evalCase.id}" references missing file "${fileEntry}"`,
         );
       }
+
       if (!info.isFile()) {
         throw new EvalError(
           `Eval case "${evalCase.id}" file "${fileEntry}" is not a regular file`,
@@ -281,12 +292,14 @@ export function parseTriggerQueries(
   }
 
   const seenQueries = new Set<string>();
+
   for (const item of result.data) {
     if (seenQueries.has(item.query)) {
       throw new EvalError(
         `${sourcePath}: duplicate trigger query "${item.query}"`,
       );
     }
+
     seenQueries.add(item.query);
   }
 
@@ -312,6 +325,7 @@ const MIN_QUERIES_PER_CLASS = 2;
 // queries never moves it between train and validation.
 function isTrainQuery(query: string): boolean {
   const digest = createHash('sha256').update(query).digest('hex');
+
   return Number.parseInt(digest.slice(0, 8), 16) % 100 < TRAIN_PERCENT;
 }
 
@@ -336,6 +350,7 @@ function splitWarning({
   count,
 }: SplitWarningParams): string | null {
   if (count >= MIN_QUERIES_PER_CLASS) return null;
+
   return `The ${split} split has ${count} ${label} trigger ${count === 1 ? 'query' : 'queries'}; add more queries so each split has at least ${MIN_QUERIES_PER_CLASS}.`;
 }
 
@@ -346,6 +361,7 @@ export function splitTriggerQueries(
   const negative = queries.filter((item) => !item.should_trigger);
   const posSplit = splitBucket(positive);
   const negSplit = splitBucket(negative);
+
   const warnings = [
     splitWarning({
       split: 'train',
@@ -383,6 +399,8 @@ export function selectTriggerQueries(
   if (split === 'all') {
     return [...queries];
   }
+
   const partitioned = splitTriggerQueries(queries);
+
   return split === 'train' ? partitioned.train : partitioned.validation;
 }

@@ -19,6 +19,7 @@ export function unknownBlockIds(
   ids: readonly string[],
 ): string[] {
   const known = new Set(library.blocks.map((block) => block.id));
+
   return ids.filter((id) => !known.has(id));
 }
 
@@ -39,8 +40,10 @@ export function withRequirements(
   const byId = new Map(library.blocks.map((block) => [block.id, block]));
   const wanted = new Set(ids);
   const pending = [...ids];
+
   while (pending.length > 0) {
     const id = pending.pop();
+
     for (const required of (id && byId.get(id)?.requires) || []) {
       if (!wanted.has(required)) {
         wanted.add(required);
@@ -52,6 +55,7 @@ export function withRequirements(
   const ordered = library.blocks
     .map((block) => block.id)
     .filter((id) => wanted.has(id));
+
   return { ids: ordered, added: ordered.filter((id) => !ids.includes(id)) };
 }
 
@@ -61,11 +65,13 @@ export function selectBlocks(
   scope: Scope,
 ): Block[] {
   const unknown = unknownBlockIds(library, ids);
+
   if (unknown.length > 0) {
     throw new CompositionError(`Unknown blocks: ${unknown.join(', ')}`);
   }
 
   const outOfScope = outOfScopeBlockIds(library, ids, scope);
+
   if (outOfScope.length > 0) {
     throw new CompositionError(
       `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
@@ -74,12 +80,15 @@ export function selectBlocks(
 
   const wanted = new Set(ids);
   const selected = library.blocks.filter((block) => wanted.has(block.id));
+
   for (const block of selected) {
     const missing = block.requires.filter((required) => !wanted.has(required));
+
     if (missing.length > 0) {
       throw new CompositionError(`${block.id} requires ${missing.join(', ')}`);
     }
   }
+
   return selected;
 }
 
@@ -94,6 +103,7 @@ function renderBlocks(
   const missing = requiredVariables(blocks).filter(
     (name) => !variables[name]?.trim(),
   );
+
   if (missing.length > 0) {
     throw new CompositionError(`Missing variables: ${missing.join(', ')}`);
   }
@@ -114,6 +124,7 @@ export function composeGlobal(
   variables: Variables,
 ): string {
   const blocks = selectBlocks(library, ids, 'global');
+
   return `${library.headers.global}\n\n${renderBlocks(blocks, variables)}\n`;
 }
 
@@ -123,5 +134,6 @@ export function composeProject(
   variables: Variables,
 ): string {
   const blocks = selectBlocks(library, ids, 'project');
+
   return `${renderBlocks(blocks, variables)}\n`;
 }

@@ -53,6 +53,7 @@ function formatTomlInlineTable(
   const members = entries.map(
     ([key, value]) => `${formatTomlKey(key)} = ${formatTomlString(value)}`,
   );
+
   return `{ ${members.join(', ')} }`;
 }
 
@@ -60,9 +61,11 @@ function expandEnvSecrets(
   env: Readonly<Record<string, McpValue>>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
+
   for (const [key, value] of Object.entries(env)) {
     out[key] = isSecretValue(value) ? `\${${value.secret}}` : value;
   }
+
   return out;
 }
 
@@ -70,6 +73,7 @@ function expandHeaderSecrets(
   headers: Readonly<Record<string, McpValue>>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
+
   for (const [key, value] of Object.entries(headers)) {
     if (isSecretValue(value)) {
       out[key] =
@@ -80,6 +84,7 @@ function expandHeaderSecrets(
       out[key] = value;
     }
   }
+
   return out;
 }
 
@@ -87,11 +92,13 @@ function literalStringEntries(
   map: Readonly<Record<string, McpValue>>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
+
   for (const [key, value] of Object.entries(map)) {
     if (typeof value === 'string') {
       out[key] = value;
     }
   }
+
   return out;
 }
 
@@ -102,19 +109,25 @@ function renderAntigravityStdio(
     command: server.command,
     args: [...server.args],
   };
+
   if (server.cwd !== undefined) {
     entry.cwd = server.cwd;
   }
+
   const literalEnv = literalStringEntries(server.env);
+
   if (Object.keys(literalEnv).length > 0) {
     entry.env = literalEnv;
   }
+
   if (server.tools?.allow && server.tools.allow.length > 0) {
     entry.enabledTools = [...server.tools.allow];
   }
+
   if (server.tools?.deny && server.tools.deny.length > 0) {
     entry.disabledTools = [...server.tools.deny];
   }
+
   return entry;
 }
 
@@ -130,20 +143,25 @@ function renderAntigravityRemote(
       return null;
     }
   }
+
   const entry: Record<string, unknown> = {
     url: server.url,
     serverUrl: server.url,
   };
   const literalHeaders = literalStringEntries(server.headers);
+
   if (Object.keys(literalHeaders).length > 0) {
     entry.headers = literalHeaders;
   }
+
   if (server.tools?.allow && server.tools.allow.length > 0) {
     entry.enabledTools = [...server.tools.allow];
   }
+
   if (server.tools?.deny && server.tools.deny.length > 0) {
     entry.disabledTools = [...server.tools.deny];
   }
+
   return entry;
 }
 
@@ -162,21 +180,27 @@ function renderExpandedServer({
       command: server.command,
       args: [...server.args],
     };
+
     if (server.cwd !== undefined) {
       entry.cwd = server.cwd;
     }
+
     if (Object.keys(server.env).length > 0) {
       entry.env = expandEnvSecrets(server.env);
     }
+
     return entry;
   }
+
   const entry: Record<string, unknown> = {
     type: server.transport,
     url: server.url,
   };
+
   if (Object.keys(server.headers).length > 0) {
     entry.headers = expandHeaderSecrets(server.headers);
   }
+
   return entry;
 }
 
@@ -202,16 +226,20 @@ function renderJsonServer({
           `MCP server "${server.name}" defines tools.allow, which Claude Code does not support in MCP config; all tools not in tools.deny remain enabled.`,
         );
       }
+
       return renderExpandedServer({ server, includeStdioType: false });
     }
     case 'gemini-cli': {
       const entry = renderExpandedServer({ server, includeStdioType: false });
+
       if (server.tools?.allow && server.tools.allow.length > 0) {
         entry.includeTools = [...server.tools.allow];
       }
+
       if (server.tools?.deny && server.tools.deny.length > 0) {
         entry.excludeTools = [...server.tools.deny];
       }
+
       return entry;
     }
     case 'copilot':
@@ -225,6 +253,7 @@ function renderJsonServer({
           `MCP server "${server.name}" defines tools.allow, which Claude Code ignores in shared .mcp.json.`,
         );
       }
+
       if (server.tools?.deny && server.tools.deny.length > 0) {
         warnings.push(
           client === 'copilot'
@@ -232,11 +261,13 @@ function renderJsonServer({
             : `MCP server "${server.name}" defines tools.deny, which GitHub Copilot ignores in shared .mcp.json (enforced only for Claude Code via permissions.deny).`,
         );
       }
+
       const entry = renderExpandedServer({ server, includeStdioType: true });
       entry.tools =
         server.tools?.allow && server.tools.allow.length > 0
           ? [...server.tools.allow]
           : ['*'];
+
       return entry;
     }
   }
@@ -260,6 +291,7 @@ export function renderMcpJsonServers({
 
   for (const server of servers) {
     const config = renderJsonServer({ client, server, warnings });
+
     if (config !== null) {
       rendered[server.name] = config;
       serverNames.push(server.name);
@@ -280,6 +312,7 @@ function appendTomlToolFilters(
   if (server.tools?.allow && server.tools.allow.length > 0) {
     lines.push(`enabled_tools = ${formatTomlStringArray(server.tools.allow)}`);
   }
+
   if (server.tools?.deny && server.tools.deny.length > 0) {
     lines.push(`disabled_tools = ${formatTomlStringArray(server.tools.deny)}`);
   }
@@ -290,12 +323,15 @@ function renderCodexStdioBlock(server: McpStdioServer): string {
     `[mcp_servers.${server.name}]`,
     `command = ${formatTomlString(server.command)}`,
   ];
+
   if (server.args.length > 0) {
     lines.push(`args = ${formatTomlStringArray(server.args)}`);
   }
+
   if (server.cwd !== undefined) {
     lines.push(`cwd = ${formatTomlString(server.cwd)}`);
   }
+
   const secretVars = [
     ...new Set(
       Object.values(server.env).flatMap((val) =>
@@ -303,20 +339,24 @@ function renderCodexStdioBlock(server: McpStdioServer): string {
       ),
     ),
   ];
+
   if (secretVars.length > 0) {
     lines.push(`env_vars = ${formatTomlStringArray(secretVars)}`);
   }
+
   appendTomlToolFilters(lines, server);
 
   const literalEnv = Object.entries(server.env).flatMap(([key, val]) =>
     typeof val === 'string' ? ([[key, val]] as const) : [],
   );
+
   if (literalEnv.length > 0) {
     lines.push('', `[mcp_servers.${server.name}.env]`);
     for (const [key, val] of literalEnv) {
       lines.push(`${formatTomlKey(key)} = ${formatTomlString(val)}`);
     }
   }
+
   return lines.join('\n');
 }
 
@@ -325,6 +365,7 @@ function renderCodexHttpBlock(server: McpRemoteServer): string {
     `[mcp_servers.${server.name}]`,
     `url = ${formatTomlString(server.url)}`,
   ];
+
   let bearerVar: string | undefined;
   const envHeaders: (readonly [string, string])[] = [];
   const literalHeaders: (readonly [string, string])[] = [];
@@ -340,16 +381,21 @@ function renderCodexHttpBlock(server: McpRemoteServer): string {
       literalHeaders.push([key, value]);
     }
   }
+
   if (bearerVar !== undefined) {
     lines.push(`bearer_token_env_var = ${formatTomlString(bearerVar)}`);
   }
+
   if (envHeaders.length > 0) {
     lines.push(`env_http_headers = ${formatTomlInlineTable(envHeaders)}`);
   }
+
   if (literalHeaders.length > 0) {
     lines.push(`http_headers = ${formatTomlInlineTable(literalHeaders)}`);
   }
+
   appendTomlToolFilters(lines, server);
+
   return lines.join('\n');
 }
 
@@ -373,6 +419,7 @@ export function renderMcpTomlServers(
       );
       continue;
     }
+
     blocks.push(
       server.transport === 'stdio'
         ? renderCodexStdioBlock(server)
@@ -396,6 +443,7 @@ export function claudeDeniedToolPermissions(
   servers: readonly McpServerDefinition[],
 ): string[] {
   const denied: string[] = [];
+
   for (const server of servers) {
     for (const tool of server.tools?.deny ?? []) {
       const rule = `mcp__${server.name}__${tool}`;
@@ -404,5 +452,6 @@ export function claudeDeniedToolPermissions(
       }
     }
   }
+
   return denied;
 }

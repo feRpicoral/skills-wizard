@@ -53,6 +53,7 @@ export async function gitOutput({
       maxBuffer: GIT_MAX_BUFFER,
       timeout: GIT_TIMEOUT_MS,
     });
+
     return stdout;
   } catch (error) {
     throw new EvalError(`${failure}: ${failureDetail(error)}`, {
@@ -74,6 +75,7 @@ export async function skillPathInRepository({
 }: SkillPathParams): Promise<string> {
   let realRoot: string;
   let realSkill: string;
+
   try {
     realRoot = await realpath(repoRoot);
     realSkill = await realpath(skillDir);
@@ -83,10 +85,12 @@ export async function skillPathInRepository({
       { cause: error },
     );
   }
+
   const relSkillDir = relative(realRoot, realSkill)
     .split(sep)
     .join('/')
     .replace(/\/+$/, '');
+
   if (
     !relSkillDir ||
     relSkillDir === '..' ||
@@ -97,6 +101,7 @@ export async function skillPathInRepository({
       `Skill directory "${skillDir}" is not inside a subfolder of repository "${repoRoot}"`,
     );
   }
+
   return relSkillDir;
 }
 
@@ -128,18 +133,23 @@ export function parseTreeEntries({
   prefix,
 }: ParseTreeEntriesParams): TreeEntry[] {
   const entries: TreeEntry[] = [];
+
   for (const record of parseLsTreeOutput(output)) {
     if (!record.path.startsWith(prefix)) continue;
+
     const relPath = record.path.slice(prefix.length);
+
     if (!isSafeTreePath(relPath)) {
       throw new EvalError(`Refusing to extract unsafe path "${record.path}"`);
     }
+
     entries.push({
       mode: record.mode,
       objectHash: record.objectHash,
       relPath,
     });
   }
+
   return entries;
 }
 
@@ -194,6 +204,7 @@ export async function extractSkillAtRef({
   env,
 }: ExtractSkillAtRefParams): Promise<void> {
   assertSafeGitRef(ref);
+
   const relSkillDir = await skillPathInRepository({ repoRoot, skillDir });
   const prefix = `${relSkillDir}/`;
   const treeOutput = await gitOutput({
@@ -212,18 +223,22 @@ export async function extractSkillAtRef({
     failure: `Failed to read skill "${relSkillDir}" at ref "${ref}"`,
   });
   const entries = parseTreeEntries({ output: treeOutput, prefix });
+
   if (entries.length === 0) {
     throw new EvalError(`Skill "${relSkillDir}" was not found at ref "${ref}"`);
   }
 
   await mkdir(destDir, { recursive: true });
+
   // Regular files first, links last, so no write ever goes through a link.
   const links: TreeEntry[] = [];
+
   for (const entry of entries) {
     if (entry.mode === SYMLINK_MODE) {
       links.push(entry);
       continue;
     }
+
     const outPath = join(destDir, ...entry.relPath.split('/'));
     await mkdir(dirname(outPath), { recursive: true });
     await writeFile(outPath, await readBlob({ repoRoot, entry, ref, env }));
@@ -231,24 +246,30 @@ export async function extractSkillAtRef({
       await chmod(outPath, 0o755);
     }
   }
+
   for (const entry of links) {
     const target = (await readBlob({ repoRoot, entry, ref, env })).toString(
       'utf8',
     );
+
     if (!target || isAbsolute(target) || target.includes('\0')) {
       throw new EvalError(
         `Skill "${relSkillDir}" at ref "${ref}" has a link "${entry.relPath}" that points outside the skill (${target})`,
       );
     }
+
     const outPath = join(destDir, ...entry.relPath.split('/'));
     await mkdir(dirname(outPath), { recursive: true });
     await symlink(target, outPath);
   }
+
   const escaping = await escapingLinks(destDir);
+
   if (escaping.length > 0) {
     const detail = escaping
       .map((link) => `${link.path} -> ${link.target}`)
       .join(', ');
+
     throw new EvalError(
       `Skill "${relSkillDir}" at ref "${ref}" has links that point outside the skill: ${detail}`,
     );
@@ -272,11 +293,13 @@ export async function resolveSkillRepository({
     failure: `Skill directory "${skillDir}" is not inside a git repository`,
   });
   const repoRoot = output.trim();
+
   if (!repoRoot) {
     throw new EvalError(
       `Skill directory "${skillDir}" is not inside a git work tree`,
     );
   }
+
   return repoRoot;
 }
 
@@ -295,7 +318,9 @@ export async function verifySkillAtRef({
   env,
 }: VerifySkillAtRefParams): Promise<void> {
   assertSafeGitRef(ref);
+
   const relSkillDir = await skillPathInRepository({ repoRoot, skillDir });
+
   await gitOutput({
     cwd: repoRoot,
     args: ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
@@ -308,6 +333,7 @@ export async function verifySkillAtRef({
     env,
     failure: `Skill "${relSkillDir}" does not exist at ref "${ref}"`,
   });
+
   if (type.trim() !== 'tree') {
     throw new EvalError(
       `Skill "${relSkillDir}" at ref "${ref}" is not a directory`,
