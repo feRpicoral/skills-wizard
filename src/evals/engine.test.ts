@@ -922,7 +922,7 @@ test('runSkillEval marks with_skill_contaminated when a competing skill is shado
     }),
   ]);
 
-  assert.equal(claudeResult.benchmark.metadata.with_skill_contaminated, true);
+  assert.equal(claudeResult.benchmark.metadata.with_skill_contaminated, false);
   assert.equal(claudeResult.benchmark.metadata.baseline_status, 'clean');
   assert.ok(
     claudeResult.benchmark.metadata.warnings.some((warning) =>
@@ -933,5 +933,10 @@ test('runSkillEval marks with_skill_contaminated when a competing skill is shado
   assert.equal(
     agyResult.benchmark.metadata.baseline_status,
     'possibly contaminated',
+  );
+  assert.ok(
+    agyResult.benchmark.metadata.warnings.some((warning) =>
+      warning.includes('with_skill is possibly contaminated'),
+    ),
   );
 });

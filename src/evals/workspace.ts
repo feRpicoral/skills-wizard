@@ -1,10 +1,9 @@
-import { chmod, copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, posix } from 'node:path';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
-import { copySkillTree } from '../skills/tree.ts';
-import { type ToolId, TOOLS } from '../tools/registry.ts';
+import { copySkillTree } from '../skills/tree-replace.ts';
 import type { EvalCase } from './cases.ts';
 import {
   applyBaselineExclusion,
@@ -31,27 +30,61 @@ import {
   verifySkillAtRef,
   type VerifySkillAtRefParams,
 } from './git-snapshot.ts';
+import {
+  type CaseFileDestinationsParams,
+  type ComparedSkillSpec,
+  copyCaseFiles,
+  EVAL_RUNNER_NAMES,
+  type EvalRunnerName,
+  type EvalSuiteFileDestinationsParams,
+  FIXTURE_SKILL_FILE,
+  HARNESS_OWNED_DIRS,
+  type MapCaseFileParams,
+  mapCaseFileRelativePath,
+  prepareComparedSkillSetups,
+  projectSkillsDir,
+  stagedSkillDir,
+  type StagedSkillDirParams,
+  validateCaseFileDestinations,
+  validateComparedSkillSpecs,
+  validateEvalSuiteFileDestinations,
+} from './workspace-files.ts';
 
 export {
   applyBaselineExclusion,
   type ApplyBaselineExclusionParams,
   assertSafeGitRef,
+  type CaseFileDestinationsParams,
   type ClaudePluginSkillParams,
+  type ComparedSkillSpec,
+  EVAL_RUNNER_NAMES,
+  type EvalRunnerName,
+  type EvalSuiteFileDestinationsParams,
   extractSkillAtRef,
   type ExtractSkillAtRefParams,
   findClaudePluginSkill,
+  FIXTURE_SKILL_FILE,
   gitOutput,
   type GitOutputParams,
   type GlobalSkillCheckParams,
   isSkillInstalledGlobally,
+  type MapCaseFileParams,
+  mapCaseFileRelativePath,
   parseTreeEntries,
   type PersonalSkillShadowParams,
   personalSkillShadowWarning,
+  prepareComparedSkillSetups,
+  projectSkillsDir,
   readBlob,
   resolveSkillRepository,
   type ResolveSkillRepositoryParams,
   skillPathInRepository,
+  stagedSkillDir,
+  type StagedSkillDirParams,
   type TreeEntry,
+  validateCaseFileDestinations,
+  validateComparedSkillSpecs,
+  validateEvalSuiteFileDestinations,
   verifySkillAtRef,
   type VerifySkillAtRefParams,
 };
@@ -67,24 +100,10 @@ const WORKSPACE_GIT_CONFIG = [
   'core.fsmonitor=false',
 ] as const;
 
-/** Directories the harness or the agent CLIs own inside an eval workspace. */
-const HARNESS_OWNED_DIRS = ['.agents', '.claude', '.gemini', '.codex'] as const;
-
-const DEFAULT_PROJECT_SKILLS_DIR = posix.join('.agents', 'skills');
-
-/** Fixture file name that is staged into eval workspaces as `SKILL.md`. */
-export const FIXTURE_SKILL_FILE = 'SKILL.fixture.md';
-
 export type CompareSkillVariant = `compare:${string}`;
 
 export type EvalVariant =
   'with_skill' | 'without_skill' | 'old_skill' | CompareSkillVariant;
-
-export interface ComparedSkillSpec {
-  skillName: string;
-  skillDir: string;
-  setup?: string;
-}
 
 export function compareSkillVariant(skillName: string): CompareSkillVariant {
   return `compare:${skillName}`;
@@ -103,49 +122,6 @@ export function variantDirName(variant: EvalVariant): string {
   return compared !== undefined ? `compare-${compared}` : variant;
 }
 
-export const EVAL_RUNNER_NAMES = [
-  'agy',
-  'claude',
-  'codex',
-  'gemini',
-  'fake',
-] as const;
-
-export type EvalRunnerName = (typeof EVAL_RUNNER_NAMES)[number];
-
-const RUNNER_TOOLS: Readonly<Record<EvalRunnerName, ToolId | null>> = {
-  agy: 'antigravity-cli',
-  claude: 'claude-code',
-  codex: 'codex',
-  gemini: 'gemini-cli',
-  fake: null,
-};
-
-/**
- * The project skills folder the runner's CLI reads, relative to the workspace
- * (`.claude/skills` for Claude Code, `.agents/skills` for every other runner).
- */
-export function projectSkillsDir(runner: EvalRunnerName): string {
-  const tool = RUNNER_TOOLS[runner];
-  const folder = tool ? TOOLS[tool].project.skills : undefined;
-  return folder ? folder.replaceAll('\\', '/') : DEFAULT_PROJECT_SKILLS_DIR;
-}
-
-export interface StagedSkillDirParams {
-  workdir: string;
-  runner: EvalRunnerName;
-  skillName: string;
-}
-
-/** Where the skill under evaluation is staged in a workspace for a runner. */
-export function stagedSkillDir({
-  workdir,
-  runner,
-  skillName,
-}: StagedSkillDirParams): string {
-  return join(workdir, projectSkillsDir(runner), skillName);
-}
-
 export interface PreparedWorkspace {
   workdir: string;
   variant: EvalVariant;
@@ -162,175 +138,6 @@ export interface PreparedWorkspace {
    */
   skillShadowed: boolean;
   warning?: string;
-}
-
-export interface MapCaseFileParams {
-  fileEntry: string;
-  caseId: string;
-}
-
-export function mapCaseFileRelativePath({
-  fileEntry,
-  caseId,
-}: MapCaseFileParams): string {
-  const normalized = posix.normalize(fileEntry.trim().replaceAll('\\', '/'));
-  const prefix = 'evals/files/';
-  const afterPrefix = normalized.startsWith(prefix)
-    ? normalized.slice(prefix.length)
-    : normalized;
-  const casePrefix = `${caseId}/`;
-  const relative =
-    afterPrefix.startsWith(casePrefix) && afterPrefix.length > casePrefix.length
-      ? afterPrefix.slice(casePrefix.length)
-      : afterPrefix;
-  // Fixture skills are stored as SKILL.fixture.md so that tools scanning a
-  // linked skill folder never discover them; they are staged as SKILL.md.
-  if (posix.basename(relative) === FIXTURE_SKILL_FILE) {
-    return posix.join(posix.dirname(relative), 'SKILL.md');
-  }
-  return relative;
-}
-
-export interface CaseFileDestinationsParams {
-  evalCase: Pick<EvalCase, 'id' | 'files'>;
-  skillName: string;
-  compareSkillNames?: readonly string[];
-}
-
-function isUnderDir(path: string, dir: string): boolean {
-  return path === dir || path.startsWith(`${dir}/`);
-}
-
-/**
- * Checks where a case's fixture files land in the workspace before anything
- * is copied: destinations must stay inside the workspace, must not be inside
- * `.git/`, the staged skill folder or a directory the harness and agent CLIs
- * own (`.agents/`, `.claude/`, `.gemini/`, `.codex/`), and must not collide
- * with each other. Comparisons ignore case, as on case-insensitive file
- * systems. Throws an `EvalError` describing every problem.
- */
-export function validateCaseFileDestinations({
-  evalCase,
-  skillName,
-  compareSkillNames = [],
-}: CaseFileDestinationsParams): void {
-  const problems: string[] = [];
-  const seen = new Map<string, string>();
-  const allSkillNames = [skillName, ...compareSkillNames];
-  const stagedDirs = new Set(
-    EVAL_RUNNER_NAMES.flatMap((runner) =>
-      allSkillNames.map((name) =>
-        posix.join(projectSkillsDir(runner), name).toLowerCase(),
-      ),
-    ),
-  );
-
-  for (const fileEntry of evalCase.files) {
-    const dest = mapCaseFileRelativePath({ fileEntry, caseId: evalCase.id });
-    const folded = dest.toLowerCase();
-    if (
-      dest === '' ||
-      dest === '.' ||
-      posix.isAbsolute(dest) ||
-      dest === '..' ||
-      dest.startsWith('../')
-    ) {
-      problems.push(`"${fileEntry}" maps outside the workspace ("${dest}")`);
-      continue;
-    }
-    if (isUnderDir(folded, '.git')) {
-      problems.push(`"${fileEntry}" maps into ".git/" ("${dest}")`);
-      continue;
-    }
-    const stagedDir = [...stagedDirs].find((dir) => isUnderDir(folded, dir));
-    if (stagedDir) {
-      problems.push(
-        `"${fileEntry}" maps into the staged skill folder "${stagedDir}/" ("${dest}")`,
-      );
-      continue;
-    }
-    const ownedDir = HARNESS_OWNED_DIRS.find((dir) => isUnderDir(folded, dir));
-    if (ownedDir) {
-      problems.push(
-        `"${fileEntry}" maps into "${ownedDir}/", which the eval harness and agent CLIs own ("${dest}")`,
-      );
-      continue;
-    }
-    const previous = seen.get(folded);
-    if (previous !== undefined) {
-      problems.push(
-        `"${fileEntry}" and "${previous}" map to the same destination "${dest}"`,
-      );
-      continue;
-    }
-    seen.set(folded, fileEntry);
-  }
-
-  for (const [folded, fileEntry] of seen) {
-    for (const [other, otherEntry] of seen) {
-      if (other !== folded && other.startsWith(`${folded}/`)) {
-        problems.push(
-          `"${fileEntry}" maps to a file that "${otherEntry}" needs as a directory`,
-        );
-      }
-    }
-  }
-
-  if (problems.length > 0) {
-    throw new EvalError(
-      `Eval case "${evalCase.id}" has invalid fixture files: ${problems.join('; ')}`,
-    );
-  }
-}
-
-export interface EvalSuiteFileDestinationsParams {
-  cases: readonly Pick<EvalCase, 'id' | 'files'>[];
-  skillName: string;
-  compareSkillNames?: readonly string[];
-}
-
-/**
- * Runs `validateCaseFileDestinations` for every case, so an eval can fail
- * before any job starts.
- */
-export function validateEvalSuiteFileDestinations({
-  cases,
-  skillName,
-  compareSkillNames,
-}: EvalSuiteFileDestinationsParams): void {
-  for (const evalCase of cases) {
-    validateCaseFileDestinations({ evalCase, skillName, compareSkillNames });
-  }
-}
-
-interface CopyCaseFilesParams {
-  skillDir: string;
-  skillName: string;
-  compareSkillNames?: readonly string[];
-  workdir: string;
-  evalCase: EvalCase;
-}
-
-async function copyCaseFiles({
-  skillDir,
-  skillName,
-  compareSkillNames,
-  workdir,
-  evalCase,
-}: CopyCaseFilesParams): Promise<void> {
-  validateCaseFileDestinations({ evalCase, skillName, compareSkillNames });
-  for (const fileEntry of evalCase.files) {
-    const srcPath = join(skillDir, fileEntry);
-    const relDest = mapCaseFileRelativePath({
-      fileEntry,
-      caseId: evalCase.id,
-    });
-    const destPath = join(workdir, relDest);
-    const info = await stat(srcPath);
-    await mkdir(dirname(destPath), { recursive: true });
-    await copyFile(srcPath, destPath);
-    await chmod(destPath, info.mode & 0o777);
-  }
 }
 
 interface InitWorkspaceGitParams {
@@ -467,6 +274,7 @@ export async function prepareEvalWorkspace({
       workdir,
       skillNames: allCompareNames,
       runner,
+      variant,
       paths,
     });
     const shadowWarning = await personalSkillShadowWarning({
@@ -508,6 +316,7 @@ export async function prepareEvalWorkspace({
       workdir,
       skillNames: [skillName, ...otherCompareNames],
       runner,
+      variant,
       paths,
     });
     const shadowWarning = await personalSkillShadowWarning({
@@ -533,6 +342,7 @@ export async function prepareEvalWorkspace({
     workdir,
     skillNames: [skillName, ...allCompareNames],
     runner,
+    variant,
     paths,
   });
   return {

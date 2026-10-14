@@ -231,3 +231,49 @@ test('check-version.mjs scripts are byte-for-byte identical and handle git ceili
   assert.equal(prereleasePkg.result['staleInstall'], false);
   assert.equal(urlPkg.result['status'], 'declared');
 });
+
+test('check-version.mjs handles <, <=, compound, hyphen, and wildcard ranges', async (t) => {
+  const dir = await tempDir(t);
+  await writeFiles(dir, {
+    'upper-only/package.json': JSON.stringify({
+      name: 'upper-only',
+      devDependencies: { eslint: '<10.0.0' },
+    }),
+    'compound/package.json': JSON.stringify({
+      name: 'compound',
+      devDependencies: { eslint: '>=9.0.0 <10.0.0' },
+    }),
+    'compound/node_modules/eslint/package.json': JSON.stringify({
+      name: 'eslint',
+      version: '10.12.0',
+    }),
+    'hyphen/package.json': JSON.stringify({
+      name: 'hyphen',
+      devDependencies: { eslint: '9.0.0 - 9.9.9' },
+    }),
+    'hyphen/node_modules/eslint/package.json': JSON.stringify({
+      name: 'eslint',
+      version: '10.12.0',
+    }),
+    'wildcard/package.json': JSON.stringify({
+      name: 'wildcard',
+      devDependencies: { eslint: '9.x' },
+    }),
+  });
+
+  const [upperOnly, compound, hyphen, wildcard] = await Promise.all([
+    runCheckVersion(eslintScript, join(dir, 'upper-only')),
+    runCheckVersion(eslintScript, join(dir, 'compound')),
+    runCheckVersion(eslintScript, join(dir, 'hyphen')),
+    runCheckVersion(eslintScript, join(dir, 'wildcard')),
+  ]);
+
+  assert.equal(upperOnly.result['status'], 'declared');
+  assert.equal(upperOnly.result['action'], 'install-and-recheck');
+  assert.equal(compound.result['staleInstall'], true);
+  assert.match(compound.message, /outside the range/);
+  assert.equal(hyphen.result['staleInstall'], true);
+  assert.match(hyphen.message, /outside the range/);
+  assert.equal(wildcard.result['status'], 'older');
+  assert.equal(wildcard.result['source'], 'package.json');
+});

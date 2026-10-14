@@ -84,23 +84,16 @@ function formatVariantRow(label: string, variant: VariantAggregate): string {
   return `| ${label} | ${passRate} | ${duration} | ${tokens} | ${failed} |`;
 }
 
-interface DeltaRowParams {
+function formatDeltaRow(params: {
   label: string;
   primary: VariantAggregate;
   reference: VariantAggregate;
   timeSeconds: string;
   tokens: string;
-}
-
-function formatDeltaRow({
-  label,
-  primary,
-  reference,
-  timeSeconds,
-  tokens,
-}: DeltaRowParams): string {
-  const tokenCell = tokens === NOT_AVAILABLE ? tokens : `**${tokens}**`;
-  return `| **${label}** | **${formatPassRateDelta(primary, reference)}** | **${timeSeconds}s** | ${tokenCell} | |`;
+}): string {
+  const tokenCell =
+    params.tokens === NOT_AVAILABLE ? params.tokens : `**${params.tokens}**`;
+  return `| **${params.label}** | **${formatPassRateDelta(params.primary, params.reference)}** | **${params.timeSeconds}s** | ${tokenCell} | |`;
 }
 
 function formatAnalysisLine(label: string, items: readonly string[]): string {
@@ -120,19 +113,17 @@ function formatRunHeading(run: EvalRunRecord): string {
   return `#### ${codeSpan(run.variant)} - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds.toFixed(2)}s, ${tokens}${failure})`;
 }
 
-interface AssertionRowParams {
-  assertion: AssertionAggregate;
-  hasBaseline: boolean;
-  withOldSkill: boolean;
-  compareSkillNames: readonly string[];
-}
-
 function formatAssertionRow({
   assertion,
   hasBaseline,
   withOldSkill,
   compareSkillNames,
-}: AssertionRowParams): string {
+}: {
+  assertion: AssertionAggregate;
+  hasBaseline: boolean;
+  withOldSkill: boolean;
+  compareSkillNames: readonly string[];
+}): string {
   const withCompareSkills = compareSkillNames.length > 0;
   const oldClassification =
     assertion.old_skill_classification ??
@@ -434,18 +425,12 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   return lines.join('\n');
 }
 
-interface CountParams {
+function formatRateWithCount(params: {
   value: number | null;
   numerator: number;
   denominator: number;
-}
-
-function formatRateWithCount({
-  value,
-  numerator,
-  denominator,
-}: CountParams): string {
-  return `${formatRate(value)} (${numerator}/${denominator})`;
+}): string {
+  return `${formatRate(params.value)} (${params.numerator}/${params.denominator})`;
 }
 
 export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {

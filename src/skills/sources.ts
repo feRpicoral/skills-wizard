@@ -1,18 +1,8 @@
-import { execFile } from 'node:child_process';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
 
-import type { Environment } from '../env.ts';
-import { SourceError } from '../errors.ts';
 import { isDirectory } from '../install/fs.ts';
-import {
-  isCommitSha,
-  isGitRef,
-  isRepository,
-  isRepositoryPath,
-  WHOLE_REPOSITORY,
-} from './catalog.ts';
+import { isCommitSha, WHOLE_REPOSITORY } from './catalog.ts';
 import {
   listRepositoryFiles,
   type ListRepositoryFilesParams,
@@ -20,100 +10,45 @@ import {
   type ReadRepositoryBlobParams,
   type RepositoryTreeFile,
 } from './git-tree.ts';
-import { failureDetail } from './process.ts';
 import {
   checkSource,
+  checkSpec,
+  DEFAULT_REF,
+  END_OF_OPTIONS,
+  git,
+  githubUrl,
+  gitRaw,
+  type GitRunParams,
   readState,
+  type SourceCache,
+  sourceCommit,
+  sourceDir,
+  type SourceSettings,
+  type SourceSpec,
   type SourceState,
   writeState,
 } from './source-state.ts';
 
 export {
   checkSource,
+  checkSpec,
+  DEFAULT_REF,
+  END_OF_OPTIONS,
+  git,
+  githubUrl,
+  gitRaw,
+  type GitRunParams,
   listRepositoryFiles,
   type ListRepositoryFilesParams,
   readRepositoryBlob,
   type ReadRepositoryBlobParams,
   type RepositoryTreeFile,
+  type SourceCache,
+  sourceCommit,
+  sourceDir,
+  type SourceSettings,
+  type SourceSpec,
 };
-
-const run = promisify(execFile);
-
-const GIT_TIMEOUT_MS = 5 * 60_000;
-const GIT_MAX_BUFFER = 16 * 1024 * 1024;
-export const DEFAULT_REF = 'HEAD';
-export const END_OF_OPTIONS = '--end-of-options';
-
-export interface SourceSettings {
-  url: (repo: string) => string;
-  env: Environment;
-  now: () => Date;
-}
-
-export interface SourceCache extends SourceSettings {
-  root: string;
-}
-
-export interface SourceSpec {
-  repo: string;
-  ref?: string;
-  paths: readonly string[];
-}
-
-export function githubUrl(repo: string): string {
-  return `https://github.com/${repo}.git`;
-}
-
-export function sourceDir(cache: SourceCache, repo: string): string {
-  if (!isRepository(repo)) {
-    throw new SourceError(`${repo} is not an owner/repo name`);
-  }
-  return join(cache.root, ...repo.split('/'));
-}
-
-export function checkSpec(spec: SourceSpec): void {
-  if (spec.ref !== undefined && !isGitRef(spec.ref)) {
-    throw new SourceError(`${spec.repo}: ${spec.ref} is not a valid ref`);
-  }
-  const invalid = spec.paths.find((path) => !isRepositoryPath(path));
-  if (invalid !== undefined) {
-    throw new SourceError(
-      `${spec.repo}: ${invalid} is not a path inside the repository`,
-    );
-  }
-}
-
-export interface GitRunParams {
-  cache: SourceCache;
-  args: string[];
-  failure: string;
-  cwd?: string;
-}
-
-export async function gitRaw({
-  cache,
-  args,
-  failure,
-  cwd,
-}: GitRunParams): Promise<string> {
-  try {
-    const { stdout } = await run('git', args, {
-      cwd,
-      env: cache.env,
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BUFFER,
-    });
-    return stdout;
-  } catch (error) {
-    throw new SourceError(`${failure}: ${failureDetail(error)}`, {
-      cause: error,
-    });
-  }
-}
-
-export async function git(params: GitRunParams): Promise<string> {
-  return (await gitRaw(params)).trim();
-}
 
 async function isSparse(cache: SourceCache, dir: string): Promise<boolean> {
   const value = await git({
@@ -448,18 +383,6 @@ export async function inspectRemoteRefs(
     ...(defaultBranch ? { defaultBranch } : {}),
     refCommits,
   };
-}
-
-export async function sourceCommit(
-  cache: SourceCache,
-  repo: string,
-): Promise<string> {
-  return git({
-    cache,
-    args: ['rev-parse', 'HEAD'],
-    failure: `Could not read the cached commit of ${repo}`,
-    cwd: sourceDir(cache, repo),
-  });
 }
 
 /**

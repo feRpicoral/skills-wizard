@@ -3,7 +3,6 @@ import { join, relative } from 'node:path';
 import { composeGlobal, composeProject } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
-import { ManagedRegionError } from '../errors.ts';
 import type { PresetChoice, ProjectStyle } from '../project/presets.ts';
 import type { SkillMode, SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
@@ -69,6 +68,7 @@ export interface ExcludeRegionTarget {
   kind: 'exclude-region';
   path: string;
   id: string;
+  paths?: readonly string[];
   body: string;
   label: string;
 }
@@ -230,18 +230,6 @@ function projectToolTargets({
   return targets;
 }
 
-function gitignorePattern(path: string): string {
-  if (/[\r\n]/.test(path)) {
-    throw new ManagedRegionError(
-      'git exclude entry path must not contain line breaks',
-    );
-  }
-  const escaped = path
-    .replace(/[[\]*?\\]/g, '\\$&')
-    .replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length));
-  return `/${escaped}`;
-}
-
 interface GitExcludeTargetParams {
   root: string;
   excludePath: string;
@@ -257,14 +245,15 @@ function gitExcludeTarget({
   targets,
   manifestPath,
 }: GitExcludeTargetParams): ExcludeRegionTarget {
-  const patterns = [...targets.map((target) => target.path), manifestPath]
-    .map((path) => gitignorePattern(relative(root, path)))
-    .join('\n');
+  const paths = [...targets.map((target) => target.path), manifestPath].map(
+    (path) => relative(root, path),
+  );
   return {
     kind: 'exclude-region',
     path: excludePath,
     id: relative(root, projectDir) || '.',
-    body: patterns,
+    paths,
+    body: paths.map((path) => `/${path}`).join('\n'),
     label: 'git exclude entries',
   };
 }

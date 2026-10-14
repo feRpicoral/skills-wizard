@@ -10,7 +10,15 @@ import {
   stat,
   symlink,
 } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 
 import writeFileAtomic from 'write-file-atomic';
 
@@ -177,6 +185,51 @@ export async function removePath(path: string): Promise<void> {
 
 export async function isDirectory(path: string): Promise<boolean> {
   return (await statIfExists(path))?.isDirectory() ?? false;
+}
+
+export function fileKindProblem(stats: Stats | null): string | undefined {
+  if (!stats || stats.isFile()) return undefined;
+  return stats.isDirectory() ? 'is a directory' : 'is not a regular file';
+}
+
+interface SymlinkMatchParams {
+  link: string;
+  destination: string;
+}
+
+async function linksTo({
+  link,
+  destination,
+}: SymlinkMatchParams): Promise<boolean> {
+  const target = await readSymlink(link);
+  if (target === null) return false;
+  const [linked, expected] = await Promise.all([
+    realLocation(resolve(dirname(link), target)),
+    realLocation(destination),
+  ]);
+  return linked !== null && linked === expected;
+}
+
+export interface SameFileParams {
+  path: string;
+  other: string;
+}
+
+export async function sameFile({
+  path,
+  other,
+}: SameFileParams): Promise<boolean> {
+  if (
+    (await linksTo({ link: path, destination: other })) ||
+    (await linksTo({ link: other, destination: path }))
+  ) {
+    return true;
+  }
+  const [real, otherReal] = await Promise.all([
+    realLocation(path),
+    realLocation(other),
+  ]);
+  return real !== null && real === otherReal;
 }
 
 export interface WalkDirectoriesParams {

@@ -168,7 +168,6 @@ async function installAddedSkill({
     entries: [entry],
     failureOutcome: `${entry.name} was not added`,
     manifestPath: location.manifestPath,
-    ...(location.project ? { projectDir: location.project.dir } : {}),
     yes,
     dryRun,
   });

@@ -157,7 +157,10 @@ function buildPythonToolLines(
 
 function buildPythonCommands(detection: ProjectDetection): string[] {
   if (!detection.hasPyproject) return [];
-  if (detection.packageManager === 'poetry') {
+  if (
+    detection.packageManager === 'poetry' ||
+    detection.pythonPackageManager === 'poetry'
+  ) {
     return [
       '- Install dependencies: `poetry install`',
       ...buildPythonToolLines('poetry run', detection.pythonTools, false),

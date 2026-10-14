@@ -1,6 +1,13 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+import { type Environment, gitEnvironment } from '../env.ts';
 import { SourceError } from '../errors.ts';
 import { isCommitSha } from './catalog.ts';
-import { gitRaw, type SourceCache, sourceDir } from './sources.ts';
+import { failureDetail } from './process.ts';
+import { gitRaw, type SourceCache, sourceDir } from './source-state.ts';
+
+const execFileAsync = promisify(execFile);
 
 export const SYMLINK_MODE = '120000';
 export const EXECUTABLE_MODE = '100755';
@@ -70,6 +77,38 @@ export async function listRepositoryFiles({
     .map((entry) => ({ path: entry.path, blobSha: entry.objectHash }));
 }
 
+export interface ReadGitBlobBufferParams {
+  cwd: string;
+  objectHash: string;
+  env?: Environment;
+  maxBuffer?: number;
+  timeout?: number;
+}
+
+/**
+ * Reads a raw git blob (`git cat-file blob <sha>`) as a `Buffer`.
+ */
+export async function readGitBlobBuffer({
+  cwd,
+  objectHash,
+  env,
+  maxBuffer = 64 * 1024 * 1024,
+  timeout = 30_000,
+}: ReadGitBlobBufferParams): Promise<Buffer> {
+  const { stdout } = await execFileAsync(
+    'git',
+    ['cat-file', 'blob', objectHash],
+    {
+      cwd,
+      env: gitEnvironment(env),
+      encoding: 'buffer',
+      maxBuffer,
+      timeout,
+    },
+  );
+  return stdout;
+}
+
 export interface ReadRepositoryBlobParams {
   cache: SourceCache;
   repo: string;
@@ -88,10 +127,17 @@ export async function readRepositoryBlob({
   if (!isCommitSha(blobSha)) {
     throw new SourceError(`${repo}: invalid blob object id "${blobSha}"`);
   }
-  return gitRaw({
-    cache,
-    args: ['cat-file', 'blob', blobSha],
-    failure: `Could not read blob ${blobSha} in ${repo}`,
-    cwd: sourceDir(cache, repo),
-  });
+  try {
+    const buf = await readGitBlobBuffer({
+      cwd: sourceDir(cache, repo),
+      objectHash: blobSha,
+      env: cache.env,
+    });
+    return buf.toString('utf8');
+  } catch (error) {
+    throw new SourceError(
+      `Could not read blob ${blobSha} in ${repo}: ${failureDetail(error)}`,
+      { cause: error },
+    );
+  }
 }
