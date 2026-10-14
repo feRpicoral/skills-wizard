@@ -1,4 +1,3 @@
-import { withRequirements } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
@@ -8,16 +7,11 @@ import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
 import { loadSkillLibrary } from '../skills/library.ts';
 import {
   confirmAndApply,
-  dropUnavailableBlocks,
-  dropUnknownPreset,
-  dropUnknownSkills,
   fetchSkills,
   loadLibrary,
-  notify,
-  notifyLeftGit,
   readLocationManifest,
+  reconcileManifestSelection,
   resolveLocation,
-  resolveVariables,
   warnTrackedFiles,
 } from './shared.ts';
 
@@ -38,7 +32,7 @@ export async function runSync(
     scope,
     ...(projectDir !== undefined ? { projectDir } : {}),
   });
-  const previous = await readLocationManifest(ctx, prompting, location);
+  const previous = await readLocationManifest({ ctx, prompting, location });
   if (!previous) {
     throw new UsageError(
       `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init first.`,
@@ -46,63 +40,32 @@ export async function runSync(
   }
 
   const library = await loadLibrary(ctx);
-  const known = dropUnavailableBlocks({
-    ctx,
-    prompting,
-    library,
-    ids: previous.blocks,
-    scope,
-  });
-  const { ids: blocks, added } = withRequirements(library, known);
-  if (added.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Added required blocks: ${added.join(', ')}`,
-    });
-  }
-  const variables = await resolveVariables({
-    ctx,
-    prompting,
-    library,
-    blocks,
-    location,
-    recorded: previous.variables,
-  });
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
-  const skills = dropUnknownSkills({
+  const reconciled = await reconcileManifestSelection({
     ctx,
     prompting,
-    library: skillLibrary,
-    names: previous.skills,
+    location,
+    previous,
+    library,
+    skillLibrary,
   });
   const skillSources = await fetchSkills({
     ctx,
     prompting,
     library: skillLibrary,
-    names: previous.tools.length > 0 ? skills : [],
-  });
-  const recordedLocal = previous.options.keepLocal ?? false;
-  const keepLocal = recordedLocal && location.project?.git !== undefined;
-  if (location.project && recordedLocal && !keepLocal) {
-    notifyLeftGit(ctx, prompting, location.project.dir);
-  }
-  const preset = dropUnknownPreset({
-    ctx,
-    prompting,
-    preset: previous.options.preset,
+    names: previous.tools.length > 0 ? reconciled.skills : [],
   });
   const plan = await buildPlan({
     scope,
     selection: {
       tools: previous.tools,
-      blocks,
-      skills,
-      variables,
+      blocks: reconciled.blocks,
+      skills: reconciled.skills,
+      variables: reconciled.variables,
       linkCommand: previous.options.linkCommand ?? false,
-      keepLocal,
+      keepLocal: reconciled.keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
-      ...(preset !== undefined ? { preset } : {}),
+      ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
       ...(previous.options.style !== undefined
         ? { style: previous.options.style }
         : {}),
@@ -115,7 +78,7 @@ export async function runSync(
     ...(location.project ? { project: location.project } : {}),
     skillSources,
   });
-  if (keepLocal) {
+  if (reconciled.keepLocal) {
     await warnTrackedFiles({
       ctx,
       prompting,

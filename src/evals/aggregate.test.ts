@@ -571,7 +571,7 @@ test('loadBenchmarkFromIteration validates benchmark.json with EvalError', async
   await write({ ...benchmark, schema_version: undefined });
   await assert.rejects(loadBenchmarkFromIteration(dir), {
     name: 'EvalError',
-    message: /schema_version: unsupported schema_version/,
+    message: /unsupported schema_version[\s\S]*schema_version/,
   });
 
   await write({ ...benchmark, schema_version: 2 });

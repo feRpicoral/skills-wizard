@@ -1,8 +1,7 @@
 import type { Environment } from '../../env.ts';
 import { RunnerError } from '../../errors.ts';
 import {
-  buildTaskResult,
-  checkRunnerBinary,
+  createCliRunner,
   type EvalRunner,
   isRecordObject,
   isUsageReported,
@@ -10,14 +9,8 @@ import {
   normalizeUsage,
   type ParsedGraderOutput,
   type ParsedTaskStream,
-  parseGraderProcess,
   parseJsonDocument,
   parseJsonLines,
-  type RunnerGraderRequest,
-  type RunnerGraderResult,
-  type RunnerTaskRequest,
-  type RunnerTaskResult,
-  spawnRunnerProcess,
 } from './types.ts';
 
 export interface BuildClaudeTaskArgsParams {
@@ -241,71 +234,19 @@ export function createClaudeRunner({
   binary,
   env,
 }: CreateClaudeRunnerParams): EvalRunner {
-  const resolvedBin = binary ?? 'claude';
-
-  return {
+  return createCliRunner({
     name: 'claude',
+    binary: binary ?? 'claude',
+    env,
     // Claude Code has no sandbox flag; `--sandbox` cannot be honored.
     sandboxSupported: false,
-    async preflight(): Promise<void> {
-      await checkRunnerBinary({ binary: resolvedBin, env });
-    },
-
-    async runTask({
-      prompt,
-      workdir,
-      runDir,
-      skillName,
-      timeoutSeconds,
-      excludeSkill,
-    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildClaudeTaskArgs({ prompt, skillName, excludeSkill }),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
-      });
-      const parsed = parseClaudeStreamJson({
-        stdout: proc.stdout,
-        skillName,
-        fallbackDurationMs: proc.durationMs,
-      });
-      return buildTaskResult({
-        label: 'claude',
-        proc,
-        parsed,
-        timeoutSeconds,
-      });
-    },
-
-    async runGrader({
-      prompt,
-      schema,
-      workdir,
-      runDir,
-      timeoutSeconds,
-    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildClaudeGraderArgs({ prompt, schema }),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
-        logPrefix: 'grader',
-      });
-      return parseGraderProcess({
-        label: 'claude grader',
-        proc,
-        timeoutSeconds,
-        parse: () =>
-          parseClaudeGraderJson({
-            stdout: proc.stdout,
-            fallbackDurationMs: proc.durationMs,
-          }),
-      });
-    },
-  };
+    buildTaskArgs: ({ prompt, skillName, excludeSkill }) =>
+      buildClaudeTaskArgs({ prompt, skillName, excludeSkill }),
+    parseTaskStream: ({ stdout, skillName, fallbackDurationMs }) =>
+      parseClaudeStreamJson({ stdout, skillName, fallbackDurationMs }),
+    buildGraderArgs: ({ prompt, schema }) =>
+      buildClaudeGraderArgs({ prompt, schema }),
+    parseGraderOutput: ({ stdout, fallbackDurationMs }) =>
+      parseClaudeGraderJson({ stdout, fallbackDurationMs }),
+  });
 }

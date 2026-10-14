@@ -1,8 +1,7 @@
 import type { Environment } from '../../env.ts';
 import { RunnerError } from '../../errors.ts';
 import {
-  buildTaskResult,
-  checkRunnerBinary,
+  createCliRunner,
   type EvalRunner,
   extractJsonFromText,
   isRecordObject,
@@ -11,13 +10,7 @@ import {
   normalizeUsage,
   type ParsedGraderOutput,
   type ParsedTaskStream,
-  parseGraderProcess,
   parseJsonLines,
-  type RunnerGraderRequest,
-  type RunnerGraderResult,
-  type RunnerTaskRequest,
-  type RunnerTaskResult,
-  spawnRunnerProcess,
 } from './types.ts';
 
 /**
@@ -186,70 +179,18 @@ export function createCodexRunner({
   binary,
   env,
 }: CreateCodexRunnerParams): EvalRunner {
-  const resolvedBin = binary ?? 'codex';
-
-  return {
+  return createCliRunner({
     name: 'codex',
+    binary: binary ?? 'codex',
+    env,
     // Task runs are always confined by `--sandbox workspace-write`.
     sandboxSupported: true,
-    async preflight(): Promise<void> {
-      await checkRunnerBinary({ binary: resolvedBin, env });
-    },
-
-    async runTask({
-      prompt,
-      workdir,
-      runDir,
-      skillName,
-      timeoutSeconds,
-    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildCodexTaskArgs(prompt),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
-      });
-      const parsed = parseCodexStreamJson({
-        stdout: proc.stdout,
-        skillName,
-        fallbackDurationMs: proc.durationMs,
-      });
-      return buildTaskResult({
-        label: 'codex',
-        proc,
-        parsed,
-        timeoutSeconds,
-      });
-    },
-
-    async runGrader({
-      prompt,
-      schemaPath,
-      workdir,
-      runDir,
-      timeoutSeconds,
-    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildCodexGraderArgs({ prompt, schemaPath }),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
-        logPrefix: 'grader',
-      });
-      return parseGraderProcess({
-        label: 'codex grader',
-        proc,
-        timeoutSeconds,
-        parse: () =>
-          parseCodexGraderJson({
-            stdout: proc.stdout,
-            fallbackDurationMs: proc.durationMs,
-          }),
-      });
-    },
-  };
+    buildTaskArgs: ({ prompt }) => buildCodexTaskArgs(prompt),
+    parseTaskStream: ({ stdout, skillName, fallbackDurationMs }) =>
+      parseCodexStreamJson({ stdout, skillName, fallbackDurationMs }),
+    buildGraderArgs: ({ prompt, schemaPath }) =>
+      buildCodexGraderArgs({ prompt, schemaPath }),
+    parseGraderOutput: ({ stdout, fallbackDurationMs }) =>
+      parseCodexGraderJson({ stdout, fallbackDurationMs }),
+  });
 }

@@ -1,7 +1,11 @@
 import detectIndent from 'detect-indent';
 import {
+  applyEdits,
   findNodeAtLocation,
+  format,
+  type FormattingOptions,
   type JSONPath,
+  modify,
   type Node,
   parseTree,
 } from 'jsonc-parser';
@@ -11,25 +15,13 @@ import { lineEnding } from './lines.ts';
 
 const DEFAULT_INDENT = '  ';
 
-interface Layout {
-  eol: string;
-  unit: string;
-}
-
-interface Splice {
-  offset: number;
-  length: number;
-  content: string;
-}
-
-function splice(text: string, { offset, length, content }: Splice): string {
-  return `${text.slice(0, offset)}${content}${text.slice(offset + length)}`;
-}
-
-function layoutOf(text: string): Layout {
+function formattingOptions(text: string): FormattingOptions {
+  const { indent, type } = detectIndent(text);
+  const unit = indent || DEFAULT_INDENT;
   return {
+    insertSpaces: type !== 'tab',
+    tabSize: type === 'tab' ? 1 : unit.length,
     eol: lineEnding(text || null),
-    unit: detectIndent(text).indent || DEFAULT_INDENT,
   };
 }
 
@@ -63,68 +55,12 @@ function inlineJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-interface FormatParams {
-  value: unknown;
-  layout: Layout;
-  indent: string;
-  inline: boolean;
-}
-
-function formatValue({ value, layout, indent, inline }: FormatParams): string {
-  if (inline) return inlineJson(value);
-  return JSON.stringify(value, null, layout.unit)
-    .split('\n')
-    .join(`${layout.eol}${indent}`);
-}
-
-interface InsertPropertyParams {
-  text: string;
-  object: Node;
-  name: string;
-  value: unknown;
-}
-
-function insertProperty({
-  text,
-  object,
-  name,
-  value,
-}: InsertPropertyParams): string {
-  const layout = layoutOf(text);
-  const key = JSON.stringify(name);
-  const [first] = object.children ?? [];
-  const last = object.children?.at(-1);
-  if (!first || !last) {
-    const indent = lineIndent(text, object.offset);
-    const childIndent = `${indent}${layout.unit}`;
-    const formatted = formatValue({
-      value,
-      layout,
-      indent: childIndent,
-      inline: false,
-    });
-    return splice(text, {
-      offset: object.offset + 1,
-      length: object.length - 2,
-      content: `${layout.eol}${childIndent}${key}: ${formatted}${layout.eol}${indent}`,
-    });
+function nearestObject(root: Node, keys: JSONPath): Node {
+  for (let depth = keys.length - 1; depth > 0; depth -= 1) {
+    const ancestor = findNodeAtLocation(root, keys.slice(0, depth));
+    if (ancestor) return ancestor;
   }
-
-  const offset = last.offset + last.length;
-  if (!text.slice(object.offset, first.offset).includes('\n')) {
-    return splice(text, {
-      offset,
-      length: 0,
-      content: `, ${key}: ${inlineJson(value)}`,
-    });
-  }
-  const indent = lineIndent(text, first.offset);
-  const formatted = formatValue({ value, layout, indent, inline: false });
-  return splice(text, {
-    offset,
-    length: 0,
-    content: `,${layout.eol}${indent}${key}: ${formatted}`,
-  });
+  return root;
 }
 
 interface SetJsonValueParams {
@@ -140,41 +76,33 @@ export function setJsonValue({
 }: SetJsonValueParams): string {
   const root = rootObject(text);
   const node = findNodeAtLocation(root, keys);
-  if (node) {
-    const object = node.parent?.parent;
-    const inline =
-      (object !== undefined && isInline(text, object)) ||
-      (node.type === 'array' && isInline(text, node));
-    return splice(text, {
-      offset: node.offset,
-      length: node.length,
-      content: formatValue({
-        value,
-        layout: layoutOf(text),
-        indent: lineIndent(text, node.offset),
-        inline,
-      }),
-    });
+  const parent = node?.parent?.parent ?? nearestObject(root, keys);
+  const [first] = parent.children ?? [];
+  const inline =
+    (node !== undefined &&
+      ((node.parent?.parent !== undefined &&
+        isInline(text, node.parent.parent)) ||
+        (node.type === 'array' && isInline(text, node)))) ||
+    (node === undefined &&
+      first !== undefined &&
+      !text.slice(parent.offset, first.offset).includes('\n'));
+  const [edit] = modify(text, keys, value, {});
+  if (!edit) return text;
+  if (inline) {
+    const content = node
+      ? inlineJson(value)
+      : edit.content.replace(/^,/, ', ').replace(/":(?=\S)/g, '": ');
+    return applyEdits(text, [{ ...edit, content }]);
   }
-
-  let depth = keys.length - 1;
-  let object = root;
-  for (; depth > 0; depth -= 1) {
-    const ancestor = findNodeAtLocation(root, keys.slice(0, depth));
-    if (ancestor) {
-      object = ancestor;
-      break;
-    }
-  }
-  const nested = keys
-    .slice(depth + 1)
-    .reduceRight<unknown>((inner, key) => ({ [String(key)]: inner }), value);
-  return insertProperty({
-    text,
-    object,
-    name: String(keys[depth]),
-    value: nested,
-  });
+  const next = applyEdits(text, [edit]);
+  const emptyParent = (parent.children?.length ?? 0) === 0;
+  const range = emptyParent
+    ? {
+        offset: parent.offset,
+        length: parent.length + edit.content.length - edit.length,
+      }
+    : { offset: edit.offset, length: edit.content.length };
+  return applyEdits(next, format(next, range, formattingOptions(text)));
 }
 
 interface RemoveChildParams {
@@ -191,20 +119,26 @@ function removeChild({ text, container, child }: RemoveChildParams): string {
   const end = child.offset + child.length;
   if (previous) {
     const start = previous.offset + previous.length;
-    return splice(text, { offset: start, length: end - start, content: '' });
+    return applyEdits(text, [
+      { offset: start, length: end - start, content: '' },
+    ]);
   }
   if (next) {
-    return splice(text, {
-      offset: child.offset,
-      length: next.offset - child.offset,
-      content: '',
-    });
+    return applyEdits(text, [
+      {
+        offset: child.offset,
+        length: next.offset - child.offset,
+        content: '',
+      },
+    ]);
   }
-  return splice(text, {
-    offset: container.offset + 1,
-    length: container.length - 2,
-    content: '',
-  });
+  return applyEdits(text, [
+    {
+      offset: container.offset + 1,
+      length: container.length - 2,
+      content: '',
+    },
+  ]);
 }
 
 interface JsonLocationParams {
@@ -236,20 +170,24 @@ export function appendArrayElements({
   const [first] = array.children ?? [];
   const last = array.children?.at(-1);
   if (!first || !last) {
-    return splice(text, {
-      offset: array.offset + 1,
-      length: array.length - 2,
-      content: items.join(', '),
-    });
+    return applyEdits(text, [
+      {
+        offset: array.offset + 1,
+        length: array.length - 2,
+        content: items.join(', '),
+      },
+    ]);
   }
   const separator = text.slice(array.offset, first.offset).includes('\n')
-    ? `,${layoutOf(text).eol}${lineIndent(text, first.offset)}`
+    ? `,${lineEnding(text || null)}${lineIndent(text, first.offset)}`
     : ', ';
-  return splice(text, {
-    offset: last.offset + last.length,
-    length: 0,
-    content: items.map((item) => `${separator}${item}`).join(''),
-  });
+  return applyEdits(text, [
+    {
+      offset: last.offset + last.length,
+      length: 0,
+      content: items.map((item) => `${separator}${item}`).join(''),
+    },
+  ]);
 }
 
 export function removeArrayElements({
@@ -259,12 +197,14 @@ export function removeArrayElements({
 }: ArrayElementsParams): string {
   let result = text;
   for (const value of values) {
-    const array = findNodeAtLocation(rootObject(result), keys);
-    const child = array?.children?.find(
-      (item) => item.type === 'string' && item.value === value,
-    );
-    if (array && child)
+    for (;;) {
+      const array = findNodeAtLocation(rootObject(result), keys);
+      const child = array?.children?.find(
+        (item) => item.type === 'string' && item.value === value,
+      );
+      if (!array || !child) break;
       result = removeChild({ text: result, container: array, child });
+    }
   }
   return result;
 }
@@ -284,9 +224,11 @@ interface ReplaceRawParams extends JsonLocationParams {
 export function replaceRawJson({ text, keys, raw }: ReplaceRawParams): string {
   const node = findNodeAtLocation(rootObject(text), keys);
   if (!node) return text;
-  return splice(text, {
-    offset: node.offset,
-    length: node.length,
-    content: raw,
-  });
+  return applyEdits(text, [
+    {
+      offset: node.offset,
+      length: node.length,
+      content: raw,
+    },
+  ]);
 }
