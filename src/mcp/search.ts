@@ -1,89 +1,49 @@
 import { z } from 'zod';
 
-import {
-  DEFAULT_GITHUB_MCP_REGISTRY_URL,
-  DEFAULT_OFFICIAL_MCP_REGISTRY_URL,
-} from '../env.ts';
+import { resolveMcpRegistryUrl } from '../env.ts';
 import { McpError } from '../errors.ts';
+import { readBoundedResponseText } from '../http.ts';
 import {
-  isEnvVarName,
-  isMcpServerName,
-  type McpServerDefinition,
-  type McpValue,
-  parseMcpCatalog,
-} from './model.ts';
+  deriveShortServerName,
+  disambiguateShortServerName,
+  type McpSearchCandidate,
+  type RegistryServerInner,
+  registryServerInnerSchema,
+  toCandidate,
+} from './registry-candidate.ts';
+
+export {
+  deriveShortServerName,
+  disambiguateShortServerName,
+  type McpSearchCandidate,
+};
 
 const SEARCH_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_LIMIT = 10;
-const CONTROL_CHAR = /\p{Cc}/u;
-const UNSAFE_SPEC_TOKEN = /(?:^-|[\s\p{Cc}])/u;
+const MIN_UPSTREAM_LIMIT = 30;
+const MAX_UPSTREAM_LIMIT = 100;
 
-const registryEnvVarSchema = z.looseObject({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  isRequired: z.boolean().optional(),
-  isSecret: z.boolean().optional(),
-  default: z.string().optional(),
-  value: z.string().optional(),
+const registryMetaEntrySchema = z
+  .looseObject({ isLatest: z.boolean().optional() })
+  .or(z.unknown());
+
+const registryMetaSchema = z.record(z.string(), registryMetaEntrySchema);
+
+const registryServerWithMetaSchema = registryServerInnerSchema.extend({
+  isLatest: z.boolean().optional(),
+  _meta: registryMetaSchema.optional(),
 });
 
-const registryArgSchema = z.looseObject({
-  type: z.string().optional(),
-  name: z.string().optional(),
-  value: z.string().optional(),
-  default: z.string().optional(),
-  isRequired: z.boolean().optional(),
-  isSecret: z.boolean().optional(),
-});
-
-const registryPackageSchema = z.looseObject({
-  registryType: z.string().optional(),
-  registry_name: z.string().optional(),
-  identifier: z.string().optional(),
-  name: z.string().optional(),
-  version: z.string().optional(),
-  runtimeHint: z.string().optional(),
-  packageArguments: z.array(registryArgSchema).optional(),
-  environmentVariables: z.array(registryEnvVarSchema).optional(),
-});
-
-const registryHeaderSchema = z.looseObject({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  isRequired: z.boolean().optional(),
-  isSecret: z.boolean().optional(),
-  default: z.string().optional(),
-  value: z.string().optional(),
-});
-
-const registryRemoteSchema = z.looseObject({
-  type: z.string().optional(),
-  transport_type: z.string().optional(),
-  url: z.string().min(1),
-  headers: z.array(registryHeaderSchema).optional(),
-});
-
-const registryServerInnerSchema = z.looseObject({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  version: z.string().optional(),
-  packages: z.array(registryPackageSchema).optional(),
-  remotes: z.array(registryRemoteSchema).optional(),
+const registryItemWrapperSchema = z.looseObject({
+  server: registryServerWithMetaSchema.optional(),
+  isLatest: z.boolean().optional(),
+  _meta: registryMetaSchema.optional(),
 });
 
 const registryEnvelopeSchema = z.looseObject({
   servers: z.array(z.unknown()),
 });
-
-export interface McpSearchCandidate {
-  name: string;
-  fullName: string;
-  description: string;
-  transport: McpServerDefinition['transport'];
-  version?: string;
-  server: McpServerDefinition;
-}
 
 export interface SearchMcpRegistryParams {
   query: string;
@@ -93,405 +53,102 @@ export interface SearchMcpRegistryParams {
   fetchFn?: typeof globalThis.fetch;
 }
 
-async function readBoundedText(
-  response: Response,
-  label: string,
-): Promise<string> {
-  const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
-    throw new McpError(
-      `${label} response exceeded ${MAX_RESPONSE_BYTES} bytes`,
-    );
-  }
-  const body = response.body as ReadableStream<Uint8Array> | null;
-  const reader = body?.getReader();
-  if (!reader) {
-    const text = await response.text();
-    if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
-      throw new McpError(
-        `${label} response exceeded ${MAX_RESPONSE_BYTES} bytes`,
-      );
-    }
-    return text;
-  }
-
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > MAX_RESPONSE_BYTES) {
-        await reader.cancel().catch(() => {});
-        throw new McpError(
-          `${label} response exceeded ${MAX_RESPONSE_BYTES} bytes`,
-        );
-      }
-      chunks.push(value);
-    }
-    return Buffer.concat(chunks).toString('utf8');
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-export function deriveShortServerName(registryName: string): string | null {
-  const tail = registryName.split('/').at(-1) ?? registryName;
-  const normalized = tail
-    .toLowerCase()
-    .replace(/^@/, '')
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  if (!normalized || !isMcpServerName(normalized)) return null;
-  return normalized;
-}
-
-interface ToSecretEnvNameParams {
-  raw: string;
-  fallbackPrefix: string;
-}
-
-function toSecretEnvName({
-  raw,
-  fallbackPrefix,
-}: ToSecretEnvNameParams): string {
-  const cleaned = raw
-    .trim()
-    .replace(/[^A-Za-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase();
-  if (cleaned && isEnvVarName(cleaned)) return cleaned;
-  const rawPrefix = fallbackPrefix
-    .replace(/[^A-Za-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase();
-  const prefix = /^[0-9]/.test(rawPrefix) ? `MCP_${rawPrefix}` : rawPrefix;
-  const candidate = `${prefix}_${cleaned || 'SECRET'}`;
-  return isEnvVarName(candidate) ? candidate : 'MCP_SECRET_TOKEN';
-}
-
-function buildPackageArgs(
-  args: readonly z.infer<typeof registryArgSchema>[],
-): string[] {
-  const out: string[] = [];
-  for (const arg of args) {
-    if (arg.isSecret) continue;
-    const val = arg.value ?? arg.default;
-    if (!val || CONTROL_CHAR.test(val)) continue;
-    if (arg.type === 'named' && arg.name) {
-      if (CONTROL_CHAR.test(arg.name)) continue;
-      const flag = arg.name.startsWith('-') ? arg.name : `--${arg.name}`;
-      out.push(flag, val);
-    } else {
-      out.push(val);
-    }
-  }
-  return out;
-}
-
-function buildStdioEnv(
-  vars: readonly z.infer<typeof registryEnvVarSchema>[],
-  shortName: string,
-): Record<string, McpValue> {
-  const env: Record<string, McpValue> = {};
-  for (const item of vars) {
-    const key = toSecretEnvName({ raw: item.name, fallbackPrefix: shortName });
-    if (!isEnvVarName(key)) continue;
-    const literal = item.value ?? item.default;
-    if (item.isSecret || !literal) {
-      env[key] = {
-        secret: key,
-        ...(item.isRequired === true ? {} : { optional: true }),
-      };
-    } else {
-      env[key] = literal;
-    }
-  }
-  return env;
-}
-
-function buildRemoteHeaders(
-  headers: readonly z.infer<typeof registryHeaderSchema>[],
-  shortName: string,
-): Record<string, McpValue> {
-  const out: Record<string, McpValue> = {};
-  for (const header of headers) {
-    const literal = header.value ?? header.default;
-    if (header.isSecret || !literal) {
-      const defaultSecretName =
-        header.name.toLowerCase() === 'authorization'
-          ? toSecretEnvName({
-              raw: `${shortName}_AUTH_TOKEN`,
-              fallbackPrefix: 'MCP',
-            })
-          : toSecretEnvName({ raw: header.name, fallbackPrefix: shortName });
-      out[header.name] = {
-        secret: defaultSecretName,
-        ...(header.isRequired === true ? {} : { optional: true }),
-      };
-    } else {
-      out[header.name] = literal;
-    }
-  }
-  return out;
-}
-
 interface ExtractedRegistryServer {
-  inner: z.infer<typeof registryServerInnerSchema>;
+  inner: RegistryServerInner;
   isLatest: boolean;
 }
 
-function hasIsLatestFlag(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  if (record.isLatest === true) return true;
-  if (record._meta && typeof record._meta === 'object') {
-    for (const metaValue of Object.values(
-      record._meta as Record<string, unknown>,
-    )) {
-      if (
-        metaValue &&
-        typeof metaValue === 'object' &&
-        (metaValue as Record<string, unknown>).isLatest === true
-      ) {
-        return true;
-      }
+function hasMetaLatest(
+  meta: z.infer<typeof registryMetaSchema> | undefined,
+): boolean {
+  if (!meta) return false;
+  for (const entry of Object.values(meta)) {
+    if (
+      typeof entry === 'object' &&
+      entry !== null &&
+      'isLatest' in entry &&
+      entry.isLatest === true
+    ) {
+      return true;
     }
   }
   return false;
 }
 
 function extractInnerServer(rawItem: unknown): ExtractedRegistryServer | null {
-  if (!rawItem || typeof rawItem !== 'object') return null;
-  const wrapped = rawItem as { server?: unknown };
-  const candidate =
-    typeof wrapped.server === 'object' && wrapped.server !== null
-      ? wrapped.server
-      : rawItem;
-  const parsed = registryServerInnerSchema.safeParse(candidate);
-  if (!parsed.success) return null;
+  const wrapperResult = registryItemWrapperSchema.safeParse(rawItem);
+  if (wrapperResult.success && wrapperResult.data.server !== undefined) {
+    const { server, isLatest, _meta } = wrapperResult.data;
+    return {
+      inner: server,
+      isLatest:
+        isLatest === true ||
+        server.isLatest === true ||
+        hasMetaLatest(_meta) ||
+        hasMetaLatest(server._meta),
+    };
+  }
+  const directResult = registryServerWithMetaSchema.safeParse(rawItem);
+  if (!directResult.success) return null;
   return {
-    inner: parsed.data,
-    isLatest: hasIsLatestFlag(rawItem) || hasIsLatestFlag(candidate),
+    inner: directResult.data,
+    isLatest:
+      directResult.data.isLatest === true ||
+      hasMetaLatest(directResult.data._meta),
   };
 }
 
-function sanitizeDescription(raw: string | undefined): string {
-  return (raw ?? '').replace(/[\s\p{Cc}]+/gu, ' ').trim();
-}
-
-interface DisambiguateShortServerNameParams {
-  registryName: string;
-  baseName: string;
-  usedNames: ReadonlySet<string>;
-}
-
-function disambiguateShortServerName({
-  registryName,
-  baseName,
-  usedNames,
-}: DisambiguateShortServerNameParams): string | null {
-  if (!usedNames.has(baseName)) return baseName;
-  const slashIndex = registryName.lastIndexOf('/');
-  if (slashIndex > 0) {
-    const namespace = registryName.slice(0, slashIndex);
-    const ownerRaw =
-      namespace.split(/[./]/).filter(Boolean).at(-1) ?? namespace;
-    const ownerSlug = deriveShortServerName(ownerRaw);
-    if (ownerSlug && ownerSlug !== baseName) {
-      const ownerCandidate = `${ownerSlug}-${baseName}`;
-      if (isMcpServerName(ownerCandidate) && !usedNames.has(ownerCandidate)) {
-        return ownerCandidate;
-      }
-    }
-    const namespaceSlug = deriveShortServerName(namespace);
-    if (namespaceSlug && namespaceSlug !== baseName) {
-      const namespaceCandidate = `${namespaceSlug}-${baseName}`;
-      if (
-        isMcpServerName(namespaceCandidate) &&
-        !usedNames.has(namespaceCandidate)
-      ) {
-        return namespaceCandidate;
-      }
-    }
-  }
-  for (let suffix = 2; suffix < 1000; suffix += 1) {
-    const numbered = `${baseName}-${suffix}`;
-    if (isMcpServerName(numbered) && !usedNames.has(numbered)) {
-      return numbered;
-    }
-  }
-  return null;
-}
-
-interface ToCandidateParams {
-  inner: z.infer<typeof registryServerInnerSchema>;
-  shortName: string;
-}
-
-function toCandidate({
-  inner,
-  shortName,
-}: ToCandidateParams): McpSearchCandidate | null {
-  const description =
-    sanitizeDescription(inner.description) || `${shortName} MCP server`;
-
-  for (const pkg of inner.packages ?? []) {
-    const kind = (pkg.registryType ?? pkg.registry_name ?? '').toLowerCase();
-    const hint = (pkg.runtimeHint ?? '').toLowerCase();
-    const identifier = (pkg.identifier ?? pkg.name ?? '').trim();
-    if (!identifier || UNSAFE_SPEC_TOKEN.test(identifier)) continue;
-    const version = (pkg.version ?? inner.version ?? '').trim();
-    if (version && UNSAFE_SPEC_TOKEN.test(version)) continue;
-    const spec =
-      version && !identifier.includes('@', 1)
-        ? `${identifier}@${version}`
-        : identifier;
-    const extraArgs = buildPackageArgs(pkg.packageArguments ?? []);
-    const env = buildStdioEnv(pkg.environmentVariables ?? [], shortName);
-
-    if (kind === 'npm' || hint === 'npx') {
-      try {
-        const validated = parseMcpCatalog(
-          {
-            servers: [
-              {
-                name: shortName,
-                description,
-                scopes: ['global', 'project'],
-                defaults: [],
-                transport: 'stdio',
-                command: 'npx',
-                args: ['-y', spec, ...extraArgs],
-                ...(Object.keys(env).length > 0 ? { env } : {}),
-              },
-            ],
-          },
-          'registry',
-        );
-        const server = validated.servers[0]!;
-        return {
-          name: server.name,
-          fullName: inner.name,
-          description: server.description,
-          transport: server.transport,
-          ...(version ? { version } : {}),
-          server,
-        };
-      } catch {
-        continue;
-      }
-    }
-
-    if (kind === 'pypi' || hint === 'uvx') {
-      try {
-        const validated = parseMcpCatalog(
-          {
-            servers: [
-              {
-                name: shortName,
-                description,
-                scopes: ['global', 'project'],
-                defaults: [],
-                transport: 'stdio',
-                command: 'uvx',
-                args: [spec, ...extraArgs],
-                ...(Object.keys(env).length > 0 ? { env } : {}),
-              },
-            ],
-          },
-          'registry',
-        );
-        const server = validated.servers[0]!;
-        return {
-          name: server.name,
-          fullName: inner.name,
-          description: server.description,
-          transport: server.transport,
-          ...(version ? { version } : {}),
-          server,
-        };
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  for (const remote of inner.remotes ?? []) {
-    const rawType = (remote.type ?? remote.transport_type ?? '').toLowerCase();
-    const transport =
-      rawType === 'sse'
-        ? 'sse'
-        : rawType === 'http' || rawType === 'streamable-http'
-          ? 'http'
-          : null;
-    if (!transport) continue;
-    const headers = buildRemoteHeaders(remote.headers ?? [], shortName);
-    try {
-      const validated = parseMcpCatalog(
-        {
-          servers: [
-            {
-              name: shortName,
-              description,
-              scopes: ['global', 'project'],
-              defaults: [],
-              transport,
-              url: remote.url,
-              ...(Object.keys(headers).length > 0 ? { headers } : {}),
-            },
-          ],
-        },
-        'registry',
-      );
-      const server = validated.servers[0]!;
-      return {
-        name: server.name,
-        fullName: inner.name,
-        description: server.description,
-        transport: server.transport,
-        ...(inner.version ? { version: inner.version } : {}),
-        server,
-      };
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
-interface ResolveRegistryEndpointParams {
+interface BuildRegistrySearchUrlParams {
   baseUrl: string | ((options?: { official?: boolean }) => string) | undefined;
   official: boolean;
+  query: string;
+  limit: number;
 }
 
-function resolveRegistryEndpoint({
+function buildRegistrySearchUrl({
   baseUrl,
   official,
-}: ResolveRegistryEndpointParams): string {
+  query,
+  limit,
+}: BuildRegistrySearchUrlParams): string {
   const raw =
     typeof baseUrl === 'function'
       ? baseUrl({ official })
       : typeof baseUrl === 'string' && baseUrl.trim()
         ? baseUrl.trim()
-        : official
-          ? DEFAULT_OFFICIAL_MCP_REGISTRY_URL
-          : DEFAULT_GITHUB_MCP_REGISTRY_URL;
+        : resolveMcpRegistryUrl({ official, env: {} });
   const trimmed = raw.replace(/\/+$/, '');
+  const upstreamLimit = Math.min(
+    Math.max(limit * 3, MIN_UPSTREAM_LIMIT),
+    MAX_UPSTREAM_LIMIT,
+  );
   try {
-    const parsed = new URL(trimmed);
-    if (parsed.pathname === '' || parsed.pathname === '/') {
-      return `${trimmed}/v0.1/servers`;
+    const url = new URL(trimmed);
+    if (url.pathname === '' || url.pathname === '/') {
+      url.pathname = '/v0.1/servers';
     }
+    url.searchParams.set('search', query);
+    url.searchParams.set('version', 'latest');
+    url.searchParams.set('limit', String(upstreamLimit));
+    return url.toString();
   } catch {
-    return trimmed;
+    const params = new URLSearchParams({
+      search: query,
+      version: 'latest',
+      limit: String(upstreamLimit),
+    });
+    return `${trimmed}?${params.toString()}`;
   }
-  return trimmed;
 }
 
+/**
+ * Queries an MCP registry v0.1 endpoint, groups results by full server name
+ * preferring `isLatest` versions, and converts supported `npm`, `pypi`, `http`,
+ * and `sse` entries into validated `McpSearchCandidate` definitions.
+ *
+ * @throws {McpError} If the HTTP request fails, returns a non-2xx status,
+ *   exceeds `MAX_RESPONSE_BYTES`, or returns an invalid payload.
+ */
 export async function searchMcpRegistry({
   query,
   official = false,
@@ -499,8 +156,7 @@ export async function searchMcpRegistry({
   baseUrl,
   fetchFn = globalThis.fetch,
 }: SearchMcpRegistryParams): Promise<McpSearchCandidate[]> {
-  const serversUrl = resolveRegistryEndpoint({ baseUrl, official });
-  const endpoint = `${serversUrl}?search=${encodeURIComponent(query)}&version=latest&limit=${limit}`;
+  const endpoint = buildRegistrySearchUrl({ baseUrl, official, query, limit });
 
   let response: Response;
   try {
@@ -520,7 +176,23 @@ export async function searchMcpRegistry({
     );
   }
 
-  const text = await readBoundedText(response, 'MCP registry');
+  let text: string;
+  try {
+    text = await readBoundedResponseText({
+      response,
+      maxBytes: MAX_RESPONSE_BYTES,
+      onOverflow: () =>
+        new McpError(
+          `MCP registry response exceeded ${MAX_RESPONSE_BYTES} bytes`,
+        ),
+    });
+  } catch (error) {
+    if (error instanceof McpError) throw error;
+    throw new McpError(
+      `MCP registry response failed (${endpoint}): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
   let rawJson: unknown;
   try {
     rawJson = JSON.parse(text);

@@ -241,6 +241,23 @@ test('warns when a referenced file links to further references', async (t) => {
   ]);
 });
 
+test('ignores markdown links inside fenced code blocks and inline code spans', async (t) => {
+  const root = await tempDir(t);
+  const dir = await skillDir({
+    root,
+    folder: 'guide',
+    files: {
+      'SKILL.md': `${skillSource('guide')}\nSee [the API](references/api.md).\n`,
+      'references/api.md':
+        'Inline `[example](errors.md)` and fenced:\n```md\n[fenced](errors.md)\n```\n',
+    },
+  });
+
+  const report = await validateSkill(dir, { strict: true });
+
+  assert.deepEqual(report.warnings, []);
+});
+
 test('links that are absolute or leave the skill folder are errors', async (t) => {
   const root = await tempDir(t);
   const dir = await skillDir({

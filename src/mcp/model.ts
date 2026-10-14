@@ -19,6 +19,22 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
 ]);
 const YAML_OUTPUT = { lineWidth: 0, flowCollectionPadding: false } as const;
 
+export const BLOCKED_ENV_VARS: ReadonlySet<string> = new Set([
+  'BASH_ENV',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'ENV',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
+  'NODE_OPTIONS',
+  'NPM_CONFIG_REGISTRY',
+  'PATH',
+  'PYTHONPATH',
+  'PYTHONSTARTUP',
+  'UV_EXTRA_INDEX_URL',
+  'UV_INDEX_URL',
+]);
+
 export const MCP_TRANSPORTS = ['stdio', 'http', 'sse'] as const;
 export type McpTransport = (typeof MCP_TRANSPORTS)[number];
 
@@ -31,6 +47,10 @@ export function isMcpServerName(name: string): boolean {
 
 export function isEnvVarName(name: string): boolean {
   return ENV_VAR_NAME.test(name);
+}
+
+export function isBlockedEnvVarName(name: string): boolean {
+  return BLOCKED_ENV_VARS.has(name.toUpperCase());
 }
 
 function isHttpUrl(value: string): boolean {
@@ -60,32 +80,29 @@ export function isSecretValue(value: McpValue): value is McpSecretValue {
   return typeof value === 'object' && value !== null && 'secret' in value;
 }
 
-export function requiredServerSecrets(server: McpServerDefinition): string[] {
+function collectServerSecrets(
+  server: McpServerDefinition,
+  requiredOnly: boolean,
+): string[] {
   const values =
     server.transport === 'stdio'
       ? Object.values(server.env)
       : Object.values(server.headers);
-  const secrets: string[] = [];
+  const secrets = new Set<string>();
   for (const val of values) {
-    if (isSecretValue(val) && !val.optional && !secrets.includes(val.secret)) {
-      secrets.push(val.secret);
+    if (isSecretValue(val) && (!requiredOnly || !val.optional)) {
+      secrets.add(val.secret);
     }
   }
-  return secrets;
+  return [...secrets];
+}
+
+export function requiredServerSecrets(server: McpServerDefinition): string[] {
+  return collectServerSecrets(server, true);
 }
 
 export function allServerSecrets(server: McpServerDefinition): string[] {
-  const values =
-    server.transport === 'stdio'
-      ? Object.values(server.env)
-      : Object.values(server.headers);
-  const secrets: string[] = [];
-  for (const val of values) {
-    if (isSecretValue(val) && !secrets.includes(val.secret)) {
-      secrets.push(val.secret);
-    }
-  }
-  return secrets;
+  return collectServerSecrets(server, false);
 }
 
 const toolFilterSchema = z.strictObject({
@@ -119,29 +136,22 @@ const stdioServerSchema = z.strictObject({
   env: z.record(z.string().min(1), mcpValueSchema).default({}),
 });
 
-const httpServerSchema = z.strictObject({
-  ...baseServerFields,
-  transport: z.literal('http'),
-  url: z
-    .string()
-    .refine(
-      isHttpUrl,
-      'must be an https:// URL (or http:// on localhost) without credentials',
-    ),
-  headers: z.record(z.string().min(1), mcpValueSchema).default({}),
-});
+function remoteServerSchema<T extends 'http' | 'sse'>(transport: T) {
+  return z.strictObject({
+    ...baseServerFields,
+    transport: z.literal(transport),
+    url: z
+      .string()
+      .refine(
+        isHttpUrl,
+        'must be an https:// URL (or http:// on localhost) without credentials',
+      ),
+    headers: z.record(z.string().min(1), mcpValueSchema).default({}),
+  });
+}
 
-const sseServerSchema = z.strictObject({
-  ...baseServerFields,
-  transport: z.literal('sse'),
-  url: z
-    .string()
-    .refine(
-      isHttpUrl,
-      'must be an https:// URL (or http:// on localhost) without credentials',
-    ),
-  headers: z.record(z.string().min(1), mcpValueSchema).default({}),
-});
+const httpServerSchema = remoteServerSchema('http');
+const sseServerSchema = remoteServerSchema('sse');
 
 const serverSchema = z.discriminatedUnion('transport', [
   stdioServerSchema,
@@ -185,11 +195,23 @@ function checkServers(catalog: McpCatalog, file: string): void {
             `${file}: ${server.name} has invalid env variable name "${envKey}"`,
           );
         }
+        if (isBlockedEnvVarName(envKey)) {
+          throw new McpError(
+            `${file}: ${server.name} cannot set blocked env variable "${envKey}"`,
+          );
+        }
       }
     }
   }
 }
 
+/**
+ * Validates a parsed MCP catalog object against the catalog schema and checks
+ * cross-field invariants (unique server names, `defaults` subset of `scopes`,
+ * and safe `stdio` environment variable names).
+ *
+ * @throws {McpError} If `raw` fails schema validation or violates catalog invariants.
+ */
 export function parseMcpCatalog(raw: unknown, file: string): McpCatalog {
   const result = catalogSchema.safeParse(raw);
   if (!result.success) {
@@ -376,6 +398,13 @@ function catalogDocument({ source, file }: CatalogDocumentParams): Document {
   return doc;
 }
 
+/**
+ * Appends `servers` to the `servers` sequence in `file` while preserving
+ * existing YAML comments and formatting, and writes the updated document
+ * atomically.
+ *
+ * @throws {McpError} If `file` is not valid YAML or the extended catalog fails validation.
+ */
 export async function appendMcpServers(
   file: string,
   servers: readonly McpServerDefinition[],

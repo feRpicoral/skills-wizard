@@ -3,39 +3,51 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { z } from 'zod';
-
 import type { Environment } from '../env.ts';
 import { SourceError } from '../errors.ts';
+import { isDirectory } from '../install/fs.ts';
 import {
-  isDirectory,
-  readTextIfExists,
-  writeTextAtomic,
-} from '../install/fs.ts';
-import {
+  isCommitSha,
   isGitRef,
   isRepository,
   isRepositoryPath,
   WHOLE_REPOSITORY,
 } from './catalog.ts';
+import {
+  listRepositoryFiles,
+  type ListRepositoryFilesParams,
+  readRepositoryBlob,
+  type ReadRepositoryBlobParams,
+  type RepositoryTreeFile,
+} from './git-tree.ts';
 import { failureDetail } from './process.ts';
+import {
+  checkSource,
+  readState,
+  type SourceState,
+  writeState,
+} from './source-state.ts';
+
+export {
+  checkSource,
+  listRepositoryFiles,
+  type ListRepositoryFilesParams,
+  readRepositoryBlob,
+  type ReadRepositoryBlobParams,
+  type RepositoryTreeFile,
+};
 
 const run = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 5 * 60_000;
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
-const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
-const STATE_FILE = 'agents-config.json';
-const COMMIT = /^[0-9a-f]{40}$/;
-const REGULAR_MODES: ReadonlySet<string> = new Set(['100644', '100755']);
-const DEFAULT_REF = 'HEAD';
-const END_OF_OPTIONS = '--end-of-options';
+export const DEFAULT_REF = 'HEAD';
+export const END_OF_OPTIONS = '--end-of-options';
 
 export interface SourceSettings {
   url: (repo: string) => string;
   env: Environment;
   now: () => Date;
-  skillsShUrl?: string | (() => string);
   mcpRegistryUrl?: string | ((options?: { official?: boolean }) => string);
   fetch?: typeof globalThis.fetch;
 }
@@ -50,35 +62,18 @@ export interface SourceSpec {
   paths: readonly string[];
 }
 
-interface UpdateCheck {
-  current: string;
-  latest: string;
-}
-
-interface CheckSourceOptions {
-  force: boolean;
-}
-
-const stateSchema = z.object({
-  ref: z.string().nullable().default(null),
-  checkedAt: z.iso.datetime().optional(),
-  latest: z.string().optional(),
-});
-
-type SourceState = z.infer<typeof stateSchema>;
-
 export function githubUrl(repo: string): string {
   return `https://github.com/${repo}.git`;
 }
 
-function sourceDir(cache: SourceCache, repo: string): string {
+export function sourceDir(cache: SourceCache, repo: string): string {
   if (!isRepository(repo)) {
     throw new SourceError(`${repo} is not an owner/repo name`);
   }
   return join(cache.root, ...repo.split('/'));
 }
 
-function checkSpec(spec: SourceSpec): void {
+export function checkSpec(spec: SourceSpec): void {
   if (spec.ref !== undefined && !isGitRef(spec.ref)) {
     throw new SourceError(`${spec.repo}: ${spec.ref} is not a valid ref`);
   }
@@ -90,14 +85,14 @@ function checkSpec(spec: SourceSpec): void {
   }
 }
 
-interface GitRunParams {
+export interface GitRunParams {
   cache: SourceCache;
   args: string[];
   failure: string;
   cwd?: string;
 }
 
-async function gitRaw({
+export async function gitRaw({
   cache,
   args,
   failure,
@@ -118,30 +113,8 @@ async function gitRaw({
   }
 }
 
-async function git(params: GitRunParams): Promise<string> {
+export async function git(params: GitRunParams): Promise<string> {
   return (await gitRaw(params)).trim();
-}
-
-function stateFile(dir: string): string {
-  return join(dir, '.git', STATE_FILE);
-}
-
-async function readState(dir: string): Promise<SourceState> {
-  const content = await readTextIfExists(stateFile(dir));
-  if (content === null) return { ref: null };
-  try {
-    const result = stateSchema.safeParse(JSON.parse(content));
-    return result.success ? result.data : { ref: null };
-  } catch {
-    return { ref: null };
-  }
-}
-
-async function writeState(dir: string, state: SourceState): Promise<void> {
-  await writeTextAtomic({
-    path: stateFile(dir),
-    content: `${JSON.stringify(state, null, 2)}\n`,
-  });
 }
 
 async function isSparse(cache: SourceCache, dir: string): Promise<boolean> {
@@ -249,7 +222,7 @@ async function clone(
   spec: SourceSpec,
 ): Promise<void> {
   const staging = `${dir}.agents-config-${process.pid}.tmp`;
-  const pinnedCommit = spec.ref !== undefined && COMMIT.test(spec.ref);
+  const pinnedCommit = spec.ref !== undefined && isCommitSha(spec.ref);
   await rm(staging, { recursive: true, force: true });
   await mkdir(dirname(dir), { recursive: true });
   try {
@@ -289,6 +262,15 @@ async function clone(
   }
 }
 
+/**
+ * Ensures the repository described by `spec` is cloned into `cache`, checked
+ * out at `spec.ref`, and configured with cone-mode sparse checkout for
+ * `spec.paths`.
+ *
+ * Clones into a sibling staging directory on first download before atomically
+ * renaming into place; on subsequent calls, updates the sparse-checkout cone
+ * and fetches/checks out `spec.ref` if the recorded ref changed.
+ */
 export async function ensureSource(
   cache: SourceCache,
   spec: SourceSpec,
@@ -335,6 +317,11 @@ export interface SourceCheckoutSnapshot {
   state?: SourceState;
 }
 
+/**
+ * Captures the current sparse-checkout cone, `HEAD` commit, and state file of
+ * a cached repository so speculative checkout changes can be rolled back via
+ * {@link restoreSourceCheckout}.
+ */
 export async function snapshotSourceCheckout(
   cache: SourceCache,
   repo: string,
@@ -362,13 +349,21 @@ export async function snapshotSourceCheckout(
   return { repo, existed: true, sparse, paths, commit, state };
 }
 
+/**
+ * Restores a cached repository's sparse-checkout cone, detached `HEAD` commit,
+ * and `.git/agents-config.json` state to a prior {@link SourceCheckoutSnapshot},
+ * or deletes the cached checkout if `snapshot.existed` is `false`.
+ */
 export async function restoreSourceCheckout(
   cache: SourceCache,
   snapshot: SourceCheckoutSnapshot,
 ): Promise<void> {
-  if (!snapshot.existed) return;
   const dir = await cachedSource(cache, snapshot.repo);
   if (!dir) return;
+  if (!snapshot.existed) {
+    await rm(dir, { recursive: true, force: true });
+    return;
+  }
   const failure = `Could not restore checkout of ${snapshot.repo}`;
   if (snapshot.sparse === false) {
     if (await isSparse(cache, dir)) {
@@ -409,6 +404,11 @@ export interface RemoteRefsInfo {
   refCommits: ReadonlyMap<string, string>;
 }
 
+/**
+ * Queries `git ls-remote --symref` for `repo` and returns the remote `HEAD`
+ * commit, default branch name, and a map of branch and tag names to commits
+ * (preferring peeled `^{}` targets for annotated tags).
+ */
 export async function inspectRemoteRefs(
   cache: SourceCache,
   repo: string,
@@ -429,7 +429,7 @@ export async function inspectRemoteRefs(
       continue;
     }
     const commit = first;
-    if (!COMMIT.test(commit) || !rawName) continue;
+    if (!isCommitSha(commit) || !rawName) continue;
     if (rawName === DEFAULT_REF) {
       headCommit = commit;
       continue;
@@ -464,64 +464,11 @@ export async function sourceCommit(
   });
 }
 
-async function remoteCommit(
-  cache: SourceCache,
-  spec: SourceSpec,
-): Promise<string> {
-  const ref = spec.ref ?? DEFAULT_REF;
-  const output = await git({
-    cache,
-    args: ['ls-remote', END_OF_OPTIONS, cache.url(spec.repo), ref, `${ref}^{}`],
-    failure: `Could not check ${spec.repo} for updates`,
-  });
-  const commits = new Map(
-    output
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const [commit = '', name = ''] = line.split('\t');
-        return [name, commit] as const;
-      }),
-  );
-  const candidates =
-    ref === DEFAULT_REF
-      ? [DEFAULT_REF]
-      : [`refs/tags/${ref}^{}`, `refs/heads/${ref}`, `refs/tags/${ref}`];
-  for (const candidate of candidates) {
-    const commit = commits.get(candidate);
-    if (commit) return commit;
-  }
-  throw new SourceError(`${spec.repo} has no ref named ${ref}`);
-}
-
-export async function checkSource(
-  cache: SourceCache,
-  spec: SourceSpec,
-  { force }: CheckSourceOptions,
-): Promise<UpdateCheck> {
-  checkSpec(spec);
-  const dir = sourceDir(cache, spec.repo);
-  const current = await sourceCommit(cache, spec.repo);
-  if (spec.ref !== undefined && COMMIT.test(spec.ref)) {
-    return { current, latest: spec.ref };
-  }
-
-  const state = await readState(dir);
-  const now = cache.now();
-  const checkedAt = state.checkedAt ? Date.parse(state.checkedAt) : NaN;
-  if (
-    !force &&
-    state.latest !== undefined &&
-    state.ref === (spec.ref ?? null) &&
-    now.getTime() - checkedAt < CHECK_INTERVAL_MS
-  ) {
-    return { current, latest: state.latest };
-  }
-  const latest = await remoteCommit(cache, spec);
-  await writeState(dir, { ...state, checkedAt: now.toISOString(), latest });
-  return { current, latest };
-}
-
+/**
+ * Fetches and checks out the latest commit for `spec.ref` (or `HEAD`) in the
+ * cached repository for `spec.repo`, returning the `previous` and `current`
+ * commit SHAs.
+ */
 export async function updateSource(
   cache: SourceCache,
   spec: SourceSpec,
@@ -548,68 +495,6 @@ export async function restoreSource({
     cache,
     args: ['checkout', '--quiet', '--detach', commit],
     failure: `Could not restore ${repo}`,
-    cwd: sourceDir(cache, repo),
-  });
-}
-
-export interface RepositoryTreeFile {
-  path: string;
-  blobSha: string;
-}
-
-export interface ListRepositoryFilesParams {
-  cache: SourceCache;
-  repo: string;
-}
-
-export async function listRepositoryFiles({
-  cache,
-  repo,
-}: ListRepositoryFilesParams): Promise<RepositoryTreeFile[]> {
-  const output = await gitRaw({
-    cache,
-    args: ['--literal-pathspecs', 'ls-tree', '-r', '-z', '--full-tree', 'HEAD'],
-    failure: `Could not list files in ${repo}`,
-    cwd: sourceDir(cache, repo),
-  });
-  const files: RepositoryTreeFile[] = [];
-  for (const record of output.split('\0')) {
-    if (!record) continue;
-    const tabIndex = record.indexOf('\t');
-    if (tabIndex === -1) continue;
-    const meta = record.slice(0, tabIndex);
-    const path = record.slice(tabIndex + 1);
-    const [mode = '', type = '', blobSha = ''] = meta.split(' ');
-    if (
-      type === 'blob' &&
-      REGULAR_MODES.has(mode) &&
-      COMMIT.test(blobSha) &&
-      path.length > 0
-    ) {
-      files.push({ path, blobSha });
-    }
-  }
-  return files;
-}
-
-export interface ReadRepositoryBlobParams {
-  cache: SourceCache;
-  repo: string;
-  blobSha: string;
-}
-
-export async function readRepositoryBlob({
-  cache,
-  repo,
-  blobSha,
-}: ReadRepositoryBlobParams): Promise<string> {
-  if (!COMMIT.test(blobSha)) {
-    throw new SourceError(`${repo}: invalid blob object id "${blobSha}"`);
-  }
-  return gitRaw({
-    cache,
-    args: ['cat-file', 'blob', blobSha],
-    failure: `Could not read blob ${blobSha} in ${repo}`,
     cwd: sourceDir(cache, repo),
   });
 }

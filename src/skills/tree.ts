@@ -1,21 +1,16 @@
 import { createHash } from 'node:crypto';
-import {
-  chmod,
-  copyFile,
-  cp,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  readlink,
-  rename,
-  rm,
-  symlink,
-} from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 
-import { UnsafeWriteError } from '../errors.ts';
 import { lstatIfExists } from '../install/fs.ts';
+import {
+  copySkillTree,
+  removeTree,
+  replaceWithCopy,
+  replaceWithLink,
+} from './tree-replace.ts';
+
+export { copySkillTree, removeTree, replaceWithCopy, replaceWithLink };
 
 const GENERATED: ReadonlySet<string> = new Set([
   '.DS_Store',
@@ -61,7 +56,7 @@ function isGenerated(name: string, setup: boolean): boolean {
   );
 }
 
-function notCopied(name: string, segments: readonly string[]): boolean {
+export function notCopied(name: string, segments: readonly string[]): boolean {
   return (
     isGenerated(name, true) ||
     NOT_COPIED.has(name) ||
@@ -134,6 +129,15 @@ export async function snapshotTree(
   return snapshotEntries(await walk(root, notCopied));
 }
 
+/**
+ * Computes a deterministic `sha256:<hex>` content and permission digest of the
+ * copyable files and symlinks in a skill source directory `root`.
+ *
+ * Excludes repository metadata (`.git`, `.github`), agent instruction files
+ * (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`), root `evals/`, generated files
+ * (`.DS_Store`, `__pycache__`, `*.pyc`, `.pytest_cache`), and setup output
+ * (`node_modules`, `.venv`).
+ */
 export async function hashTree(root: string): Promise<string> {
   return hashFiles(await snapshotTree(root));
 }
@@ -143,6 +147,14 @@ interface HashInstalledCopyParams {
   setup: boolean;
 }
 
+/**
+ * Computes a `sha256:<hex>` digest of an installed skill copy at `dir` for
+ * ownership comparison against the recorded source hash.
+ *
+ * Unlike {@link hashTree}, this includes any user-added files (such as `.git`,
+ * `AGENTS.md`, or `evals/`) so local edits are detected, while ignoring OS/Python
+ * cache artifacts and—when `setup` is `true`—setup output (`node_modules`, `.venv`).
+ */
 export async function hashInstalledCopy({
   dir,
   setup,
@@ -186,6 +198,11 @@ export interface EscapingLink {
   target: string;
 }
 
+/**
+ * Finds all symlinks inside the copyable skill tree at `root` that are
+ * absolute, exceed the symlink hop limit, or resolve outside `root` when
+ * following intermediate links component by component.
+ */
 export async function escapingLinks(root: string): Promise<EscapingLink[]> {
   const links: EscapingLink[] = [];
   for (const entry of await walk(root, notCopied)) {
@@ -195,151 +212,4 @@ export async function escapingLinks(root: string): Promise<EscapingLink[]> {
     }
   }
   return links;
-}
-
-interface CopySkillTreeParams {
-  source: string;
-  destination: string;
-}
-
-export async function copySkillTree({
-  source,
-  destination,
-}: CopySkillTreeParams): Promise<void> {
-  await mkdir(destination, { recursive: true });
-  for (const entry of await walk(source, notCopied)) {
-    const target = join(destination, ...entry.path.split('/'));
-    await mkdir(dirname(target), { recursive: true });
-    if (entry.link) {
-      const linked = await readlink(entry.absolute);
-      if (await linkEscapes({ root: source, path: entry.path })) {
-        throw new UnsafeWriteError(
-          `refusing to copy ${entry.path}: it does not resolve inside the skill (${linked})`,
-        );
-      }
-      await symlink(linked, target);
-    } else {
-      await copyFile(entry.absolute, target);
-      await chmod(target, entry.mode);
-    }
-  }
-}
-
-interface SiblingPathParams {
-  path: string;
-  purpose: string;
-}
-
-function sibling({ path, purpose }: SiblingPathParams): string {
-  return join(
-    dirname(path),
-    `.${basename(path)}.agents-config-${process.pid}.${purpose}`,
-  );
-}
-
-function isCrossDevice(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'EXDEV';
-}
-
-interface MoveParams {
-  from: string;
-  to: string;
-}
-
-async function move({ from, to }: MoveParams): Promise<void> {
-  await mkdir(dirname(to), { recursive: true });
-  try {
-    await rename(from, to);
-  } catch (error) {
-    if (!isCrossDevice(error)) throw error;
-    await cp(from, to, { recursive: true, verbatimSymlinks: true });
-    await rm(from, { recursive: true, force: true });
-  }
-}
-
-interface SwapIntoParams {
-  staged: string;
-  destination: string;
-  backup?: string;
-}
-
-async function swapInto({
-  staged,
-  destination,
-  backup,
-}: SwapIntoParams): Promise<void> {
-  const existing = await lstatIfExists(destination);
-  if (existing && backup !== undefined) {
-    await move({ from: destination, to: backup });
-  }
-  const previous =
-    existing && backup === undefined
-      ? sibling({ path: destination, purpose: 'old' })
-      : null;
-  if (previous) await rename(destination, previous);
-  try {
-    await rename(staged, destination);
-  } catch (error) {
-    if (previous) await rename(previous, destination);
-    throw error;
-  }
-  if (previous) await rm(previous, { recursive: true, force: true });
-}
-
-interface ReplaceWithCopyParams {
-  source: string;
-  destination: string;
-  backup?: string;
-}
-
-export async function replaceWithCopy({
-  source,
-  destination,
-  backup,
-}: ReplaceWithCopyParams): Promise<void> {
-  await mkdir(dirname(destination), { recursive: true });
-  const staged = sibling({ path: destination, purpose: 'new' });
-  await rm(staged, { recursive: true, force: true });
-  try {
-    await copySkillTree({ source, destination: staged });
-    await swapInto({
-      staged,
-      destination,
-      ...(backup !== undefined ? { backup } : {}),
-    });
-  } catch (error) {
-    await rm(staged, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-interface ReplaceWithLinkParams {
-  target: string;
-  destination: string;
-  backup?: string;
-}
-
-export async function replaceWithLink({
-  target,
-  destination,
-  backup,
-}: ReplaceWithLinkParams): Promise<void> {
-  await mkdir(dirname(destination), { recursive: true });
-  const staged = sibling({ path: destination, purpose: 'new' });
-  await rm(staged, { recursive: true, force: true });
-  await symlink(target, staged);
-  try {
-    await swapInto({
-      staged,
-      destination,
-      ...(backup !== undefined ? { backup } : {}),
-    });
-  } catch (error) {
-    await rm(staged, { force: true });
-    throw error;
-  }
-}
-
-export async function removeTree(path: string): Promise<void> {
-  await rm(path, { recursive: true, force: true });
 }

@@ -197,6 +197,17 @@ interface CheckSkillEntriesParams {
   scope: Scope;
 }
 
+/**
+ * Validates that every `skill` and `symlink` entry in `entries` points to an
+ * expected canonical or tool skill folder for `scope`.
+ *
+ * Ensures skill entries are recorded at `<folders.copies>/<name>`, rejects
+ * link-mode skill entries in project manifests, and requires project symlinks
+ * (or global symlinks inside tool skill folders) to reside in `folders.links`
+ * with a valid skill name.
+ *
+ * @throws {ManifestError} If any skill or symlink entry violates folder or mode invariants.
+ */
 export function checkSkillEntries({
   file,
   entries,
@@ -209,6 +220,11 @@ export function checkSkillEntries({
       if (entry.path !== expected) {
         throw new ManifestError(
           `${file}: the ${entry.name} skill must be recorded at ${expected}, not ${entry.path}`,
+        );
+      }
+      if (scope === 'project' && entry.install.mode === 'link') {
+        throw new ManifestError(
+          `${file}: project skills must be installed as copies, not links (${entry.name})`,
         );
       }
     }
@@ -291,8 +307,13 @@ export async function readManifest(file: string): Promise<Manifest | null> {
   return result.data;
 }
 
-// System-wide entries are used as they are, so a relative path would resolve
-// against whatever directory the CLI runs from.
+/**
+ * Reads and validates the system-wide manifest at `file`.
+ *
+ * System-wide entries are used as they are, so relative `path` or symlink
+ * `target` values are rejected with {@link ManifestError} rather than resolved
+ * against whatever directory the CLI happens to run from.
+ */
 export async function readGlobalManifest(
   file: string,
 ): Promise<Manifest | null> {
@@ -308,10 +329,28 @@ export async function readGlobalManifest(
         `${file}: symlink targets must be absolute, got ${entry.target}`,
       );
     }
+    if (
+      entry.kind === 'skill' &&
+      entry.install.mode === 'link' &&
+      !isAbsolute(entry.install.target)
+    ) {
+      throw new ManifestError(
+        `${file}: skill link targets must be absolute, got ${entry.install.target}`,
+      );
+    }
   }
   return manifest;
 }
 
+/**
+ * Reads and validates a project manifest at `file`, resolving each entry's
+ * stored relative path against `dir`.
+ *
+ * Verifies that `file` itself resolves inside `dir`, rejects absolute entry
+ * paths or paths escaping `dir` with {@link ManifestError}, and drops stale
+ * `exclude-region` entries whose path no longer matches `gitExcludePath`
+ * (returning those dropped paths in `ignored`).
+ */
 export async function readProjectManifest(
   file: string,
   { dir, ...rest }: ProjectBase,

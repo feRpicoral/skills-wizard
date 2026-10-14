@@ -1,4 +1,5 @@
 import { ManagedRegionError } from '../errors.ts';
+import type { ManifestEntry } from '../state/manifest.ts';
 import {
   isBlank,
   joinLines,
@@ -7,6 +8,14 @@ import {
   lineEnding,
   splitLines,
 } from './lines.ts';
+import {
+  conflict,
+  type FileActionParams,
+  type PlannedAction,
+  type ResolvedTargetFile,
+  writeAction,
+} from './safety.ts';
+import type { ExcludeRegionTarget, RegionTarget } from './targets.ts';
 
 interface Markers {
   begin: string;
@@ -19,6 +28,11 @@ export const MARKDOWN_MARKERS: Markers = {
 };
 
 export function excludeMarkers(id: string): Markers {
+  if (/[\r\n]/.test(id)) {
+    throw new ManagedRegionError(
+      'exclude region id must not contain line breaks',
+    );
+  }
   return {
     begin: `# BEGIN:agents-config ${id}`,
     end: `# END:agents-config ${id}`,
@@ -64,7 +78,7 @@ interface RegionTextParams {
 function regionText({ body, markers, eol }: RegionTextParams): string {
   return [
     markers.begin,
-    ...body.replace(/\n+$/, '').split(/\r?\n/),
+    ...body.replace(/(?:\r?\n)+$/, '').split(/\r?\n/),
     markers.end,
   ].join(eol);
 }
@@ -132,4 +146,82 @@ function removeText(existing: string, markers: Markers): string {
 
   const remaining = joinLines([...before, ...after]);
   return remaining.trim() === '' ? '' : remaining;
+}
+
+interface RegionPreambleParams {
+  target: RegionTarget;
+  file: ResolvedTargetFile;
+  previous: ManifestEntry | null;
+}
+
+function regionPreamble({
+  target,
+  file,
+  previous,
+}: RegionPreambleParams): string | undefined {
+  // A file reached through a link is not the CLI's, so neither is its heading.
+  if (file.writePath !== target.path) return undefined;
+  const { existing } = file;
+  if (existing === null || isBlank(existing)) return target.preamble;
+  const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
+  return preamble && existing.trimStart().startsWith(preamble)
+    ? preamble
+    : undefined;
+}
+
+export function planRegion({
+  target,
+  file,
+  previous,
+}: FileActionParams<RegionTarget>): PlannedAction {
+  try {
+    // A heading is only written into a file the CLI may own, never through a
+    // link, so install and removal agree on who owns it.
+    const ownsHeading = file.writePath === target.path;
+    const next = upsertRegion({
+      existing: file.existing,
+      body: target.body,
+      markers: MARKDOWN_MARKERS,
+      ...(target.preamble && ownsHeading ? { preamble: target.preamble } : {}),
+    });
+    const preamble = regionPreamble({ target, file, previous });
+    const entry: ManifestEntry = {
+      kind: 'region',
+      path: target.path,
+      createdFile: file.createdFile,
+      ...(preamble ? { preamble } : {}),
+    };
+    return writeAction({ target, file, next, entry, previous });
+  } catch (error) {
+    if (error instanceof ManagedRegionError) {
+      return conflict({ target, previous, reason: error.message });
+    }
+    throw error;
+  }
+}
+
+export function planExcludeRegion({
+  target,
+  file,
+  previous,
+}: FileActionParams<ExcludeRegionTarget>): PlannedAction {
+  try {
+    const next = upsertRegion({
+      existing: file.existing,
+      body: target.body,
+      markers: excludeMarkers(target.id),
+    });
+    const entry: ManifestEntry = {
+      kind: 'exclude-region',
+      path: target.path,
+      id: target.id,
+      createdFile: file.createdFile,
+    };
+    return writeAction({ target, file, next, entry, previous });
+  } catch (error) {
+    if (error instanceof ManagedRegionError) {
+      return conflict({ target, previous, reason: error.message });
+    }
+    throw error;
+  }
 }

@@ -35,19 +35,23 @@ export interface RenderMcpJsonParams {
 
 const BARE_TOML_KEY = /^[A-Za-z0-9_-]+$/;
 
+function formatTomlString(value: string): string {
+  return JSON.stringify(value).replace(/\u007f/g, '\\u007f');
+}
+
 function formatTomlKey(key: string): string {
-  return BARE_TOML_KEY.test(key) ? key : JSON.stringify(key);
+  return BARE_TOML_KEY.test(key) ? key : formatTomlString(key);
 }
 
 function formatTomlStringArray(items: readonly string[]): string {
-  return `[${items.map((item) => JSON.stringify(item)).join(', ')}]`;
+  return `[${items.map((item) => formatTomlString(item)).join(', ')}]`;
 }
 
 function formatTomlInlineTable(
   entries: readonly (readonly [string, string])[],
 ): string {
   const members = entries.map(
-    ([key, value]) => `${formatTomlKey(key)} = ${JSON.stringify(value)}`,
+    ([key, value]) => `${formatTomlKey(key)} = ${formatTomlString(value)}`,
   );
   return `{ ${members.join(', ')} }`;
 }
@@ -238,6 +242,14 @@ function renderJsonServer({
   }
 }
 
+/**
+ * Renders MCP server definitions into the target JSON client's native `mcpServers`
+ * schema, collecting warnings for unsupported transport or tool-filter features.
+ *
+ * Servers that cannot be represented safely for `client` (such as Antigravity
+ * remote servers with required secret headers) are omitted from `servers` and
+ * `serverNames` with an explanatory warning.
+ */
 export function renderMcpJsonServers({
   client,
   servers,
@@ -276,13 +288,13 @@ function appendTomlToolFilters(
 function renderCodexStdioBlock(server: McpStdioServer): string {
   const lines = [
     `[mcp_servers.${server.name}]`,
-    `command = ${JSON.stringify(server.command)}`,
+    `command = ${formatTomlString(server.command)}`,
   ];
   if (server.args.length > 0) {
     lines.push(`args = ${formatTomlStringArray(server.args)}`);
   }
   if (server.cwd !== undefined) {
-    lines.push(`cwd = ${JSON.stringify(server.cwd)}`);
+    lines.push(`cwd = ${formatTomlString(server.cwd)}`);
   }
   const secretVars = [
     ...new Set(
@@ -302,7 +314,7 @@ function renderCodexStdioBlock(server: McpStdioServer): string {
   if (literalEnv.length > 0) {
     lines.push('', `[mcp_servers.${server.name}.env]`);
     for (const [key, val] of literalEnv) {
-      lines.push(`${formatTomlKey(key)} = ${JSON.stringify(val)}`);
+      lines.push(`${formatTomlKey(key)} = ${formatTomlString(val)}`);
     }
   }
   return lines.join('\n');
@@ -311,7 +323,7 @@ function renderCodexStdioBlock(server: McpStdioServer): string {
 function renderCodexHttpBlock(server: McpRemoteServer): string {
   const lines = [
     `[mcp_servers.${server.name}]`,
-    `url = ${JSON.stringify(server.url)}`,
+    `url = ${formatTomlString(server.url)}`,
   ];
   let bearerVar: string | undefined;
   const envHeaders: (readonly [string, string])[] = [];
@@ -329,7 +341,7 @@ function renderCodexHttpBlock(server: McpRemoteServer): string {
     }
   }
   if (bearerVar !== undefined) {
-    lines.push(`bearer_token_env_var = ${JSON.stringify(bearerVar)}`);
+    lines.push(`bearer_token_env_var = ${formatTomlString(bearerVar)}`);
   }
   if (envHeaders.length > 0) {
     lines.push(`env_http_headers = ${formatTomlInlineTable(envHeaders)}`);
@@ -341,6 +353,12 @@ function renderCodexHttpBlock(server: McpRemoteServer): string {
   return lines.join('\n');
 }
 
+/**
+ * Renders MCP server definitions into Codex `[mcp_servers.<name>]` TOML blocks.
+ *
+ * Skips `sse` servers with a warning because Codex supports only `stdio` and
+ * Streamable HTTP transports.
+ */
 export function renderMcpTomlServers(
   servers: readonly McpServerDefinition[],
 ): RenderedMcpTomlResult {
@@ -370,6 +388,10 @@ export function renderMcpTomlServers(
   };
 }
 
+/**
+ * Formats `tools.deny` entries across `servers` as Claude Code `permissions.deny`
+ * rules (`mcp__<server>__<tool>`), preserving order and deduplicating rules.
+ */
 export function claudeDeniedToolPermissions(
   servers: readonly McpServerDefinition[],
 ): string[] {

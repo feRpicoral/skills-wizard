@@ -1,7 +1,10 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import { getProperty, hasProperty, parsePath } from 'dot-prop';
 import type { JSONPath } from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
+import type { ManifestEntry } from '../state/manifest.ts';
 import {
   appendArrayElements,
   rawJson,
@@ -11,12 +14,19 @@ import {
   setJsonValue,
 } from './json-text.ts';
 import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
+import {
+  conflict,
+  type FileActionParams,
+  type PlannedAction,
+  writeAction,
+} from './safety.ts';
+import type { JsonArrayTarget } from './targets.ts';
 
 type JsonObject = Record<string, unknown>;
 
-const DEFAULT_INDENT = 2;
+export const DEFAULT_INDENT = 2;
 
-function isObject(value: unknown): value is JsonObject {
+export function isObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -171,6 +181,15 @@ function originalText({
     : undefined;
 }
 
+/**
+ * Ensures `values` are present in the string or string-array property at
+ * `keyPath` while preserving surrounding JSON formatting, indentation, line
+ * endings, and UTF-8 BOM.
+ *
+ * Returns the updated JSON text along with rollback provenance (`added`,
+ * `wasString`, `wasEmpty`, `blankText`, `createdKeys`, `original`) so
+ * {@link removeArrayValues} can restore the file's prior shape on removal.
+ */
 export function ensureArrayValues({
   existing,
   keyPath,
@@ -214,8 +233,8 @@ export function ensureArrayValues({
   };
 }
 
-function canonical(value: unknown): string {
-  return JSON.stringify(typeof value === 'string' ? [value] : value);
+function normalizedValue(value: unknown): unknown {
+  return typeof value === 'string' ? [value] : value;
 }
 
 interface RestoreOriginalParams {
@@ -232,7 +251,10 @@ function restoreOriginal({
   return keepBom(content, (text) => {
     const raw = rawJson({ text, keys });
     if (raw === undefined) return text;
-    const same = canonical(JSON.parse(raw)) === canonical(JSON.parse(original));
+    const same = isDeepStrictEqual(
+      normalizedValue(JSON.parse(raw)),
+      normalizedValue(JSON.parse(original)),
+    );
     return same ? replaceRawJson({ text, keys, raw: original }) : text;
   });
 }
@@ -258,6 +280,16 @@ function pruneCreated({ existing, keys, createdKeys }: OriginalParams): string {
   return content;
 }
 
+/**
+ * Removes `values` from the string or string-array property at `keyPath` and
+ * restores the file's pre-install shape using the provenance captured by
+ * {@link ensureArrayValues} (`restoreString`, `createdKeys`, `original`).
+ *
+ * Prunes up to `createdKeys` empty ancestor objects that were created on
+ * install, converts a single remaining element back to a string when
+ * `restoreString` is true, and restores `original` verbatim when the remaining
+ * value matches the pre-install value.
+ */
 export function removeArrayValues({
   existing,
   keyPath,
@@ -311,4 +343,107 @@ export function legacyCreatedKeys({
 
 export function isEmptyJsonObject(content: string): boolean {
   return Object.keys(parseJsonObject(content)).length === 0;
+}
+
+export interface EmptyJsonState {
+  wasEmpty?: true;
+  blankText?: string;
+  rootOriginal?: string;
+}
+
+type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
+
+interface CreatedShape {
+  createdKeys?: number;
+  original?: string;
+}
+
+function shapeOf({ createdKeys, original }: CreatedShape): CreatedShape {
+  return {
+    ...(createdKeys === undefined ? {} : { createdKeys }),
+    ...(original === undefined ? {} : { original }),
+  };
+}
+
+interface CreatedShapeParams {
+  earlier: JsonArrayEntry | null;
+  result: EnsureResult;
+}
+
+function createdShape({ earlier, result }: CreatedShapeParams): CreatedShape {
+  if (!earlier) return shapeOf(result);
+  if (earlier.createdKeys === undefined) {
+    return result.createdKeys > 0 ? shapeOf(result) : {};
+  }
+  return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
+}
+
+export interface PlanJsonArrayParams extends FileActionParams<JsonArrayTarget> {
+  emptyJson?: EmptyJsonState;
+}
+
+export function planJsonArray({
+  target,
+  file,
+  previous,
+  emptyJson,
+}: PlanJsonArrayParams): PlannedAction {
+  try {
+    const earlier =
+      file.existing !== null && previous?.kind === 'json-array'
+        ? previous
+        : null;
+    const result = ensureArrayValues({
+      existing: file.existing,
+      keyPath: target.key,
+      values: target.values,
+      ...(earlier ? { ownedValues: earlier.added } : {}),
+    });
+    const added = [
+      ...new Set([
+        ...(earlier?.added ?? []).filter((value) =>
+          target.values.includes(value),
+        ),
+        ...result.added,
+      ]),
+    ];
+    const wasEmpty = earlier
+      ? earlier.wasEmpty
+      : (emptyJson?.wasEmpty ?? result.wasEmpty);
+    const blankText = earlier
+      ? earlier.blankText
+      : (emptyJson?.blankText ?? result.blankText);
+    const shape = createdShape({ earlier, result });
+    const effectiveShape =
+      !earlier &&
+      shape.original === undefined &&
+      emptyJson?.rootOriginal !== undefined
+        ? {
+            createdKeys: parsePath(target.key).length,
+            original: emptyJson.rootOriginal,
+          }
+        : shape;
+    return writeAction({
+      target,
+      file,
+      next: result.content,
+      entry: {
+        kind: 'json-array',
+        path: target.path,
+        key: target.key,
+        added,
+        wasString: earlier?.wasString ?? result.wasString,
+        ...effectiveShape,
+        ...(wasEmpty ? { wasEmpty: true } : {}),
+        ...(blankText !== undefined ? { blankText } : {}),
+        createdFile: file.createdFile,
+      },
+      previous,
+    });
+  } catch (error) {
+    if (error instanceof JsonMergeError) {
+      return conflict({ target, previous, reason: error.message });
+    }
+    throw error;
+  }
 }

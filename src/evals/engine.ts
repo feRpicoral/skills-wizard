@@ -1,10 +1,12 @@
-import { chmod, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
-import { isDirectory, lstatIfExists, statIfExists } from '../install/fs.ts';
-import { escapingLinks } from '../skills/tree.ts';
+import { statIfExists } from '../install/fs.ts';
+import { runSetup } from '../skills/setup.ts';
+import { copySkillTree, escapingLinks } from '../skills/tree.ts';
 import { isSkillName } from '../skills/validate.ts';
 import {
   aggregateBenchmark,
@@ -24,6 +26,13 @@ import {
   type TriggerSplit,
 } from './cases.ts';
 import { gradeEvalRun, recordFailedRun, runFailure } from './grade.ts';
+import {
+  allocateIterationDir,
+  type AllocateIterationDirParams,
+  findLatestIterationDir,
+  type FindLatestIterationDirParams,
+  removeWorkdir,
+} from './iterations.ts';
 import { renderBenchmarkReport, renderTriggerReport } from './report.ts';
 import type { EvalRunner, RunnerTaskResult } from './runners/types.ts';
 import {
@@ -40,6 +49,13 @@ import {
   variantDirName,
   verifySkillAtRef,
 } from './workspace.ts';
+
+export {
+  allocateIterationDir,
+  type AllocateIterationDirParams,
+  findLatestIterationDir,
+  type FindLatestIterationDirParams,
+};
 
 interface BoundedConcurrencyParams<T, R> {
   items: readonly T[];
@@ -81,138 +97,6 @@ async function runWithConcurrency<T, R>({
   return results;
 }
 
-const MAX_ITERATION_ATTEMPTS = 1000;
-
-// Gives the owner write and search permission on every folder below `path`,
-// so folders the agent made read-only can be removed. Best effort.
-async function makeTreeWritable(path: string): Promise<void> {
-  const info = await lstatIfExists(path);
-  if (!info?.isDirectory()) return;
-  try {
-    await chmod(path, (info.mode & 0o7777) | 0o700);
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (entry.isDirectory()) await makeTreeWritable(join(path, entry.name));
-    }
-  } catch {
-    // Not ours to change; the retry below reports what is left.
-  }
-}
-
-interface RemoveWorkdirParams {
-  path: string;
-  onLog?: (line: string) => void;
-}
-
-// Agents can leave read-only folders behind. Cleanup must not turn a graded
-// run into a fatal error, so a workdir that cannot be removed is left with a
-// warning.
-async function removeWorkdir({
-  path,
-  onLog,
-}: RemoveWorkdirParams): Promise<void> {
-  try {
-    await rm(path, { recursive: true, force: true });
-    return;
-  } catch {
-    await makeTreeWritable(path);
-  }
-  try {
-    await rm(path, { recursive: true, force: true });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    onLog?.(
-      `warning: could not remove workdir ${path} (${reason}); left it in place`,
-    );
-  }
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
-}
-
-export interface AllocateIterationDirParams {
-  evalsRootDir: string;
-  skillName: string;
-  prefix?: string;
-}
-
-// The final mkdir is not recursive, so two evals started together never share
-// a directory: the loser gets EEXIST and moves on to the next number.
-export async function allocateIterationDir({
-  evalsRootDir,
-  skillName,
-  prefix = 'iteration',
-}: AllocateIterationDirParams): Promise<string> {
-  const skillEvalsDir = join(evalsRootDir, skillName);
-  await mkdir(skillEvalsDir, { recursive: true });
-  const numbers = await iterationNumbers({ dir: skillEvalsDir, prefix });
-  let candidate = (numbers[0] ?? 0) + 1;
-  for (let attempt = 0; attempt < MAX_ITERATION_ATTEMPTS; attempt += 1) {
-    const iterationDir = join(skillEvalsDir, `${prefix}-${candidate}`);
-    try {
-      await mkdir(iterationDir);
-      return iterationDir;
-    } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
-      candidate += 1;
-    }
-  }
-  throw new EvalError(
-    `Could not allocate a new ${prefix} directory in ${skillEvalsDir}`,
-  );
-}
-
-interface IterationNumbersParams {
-  dir: string;
-  prefix: string;
-}
-
-/** Iteration numbers found in `dir`, highest first. */
-async function iterationNumbers({
-  dir,
-  prefix,
-}: IterationNumbersParams): Promise<number[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const pattern = new RegExp(`^${prefix}-(\\d+)$`);
-  const numbers: number[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const match = pattern.exec(entry.name);
-    if (match?.[1]) numbers.push(Number.parseInt(match[1], 10));
-  }
-  return numbers.sort((left, right) => right - left);
-}
-
-export interface FindLatestIterationDirParams {
-  evalsRootDir: string;
-  skillName: string;
-}
-
-/** The newest iteration that finished, i.e. has a benchmark.json. */
-export async function findLatestIterationDir({
-  evalsRootDir,
-  skillName,
-}: FindLatestIterationDirParams): Promise<string> {
-  const skillEvalsDir = join(evalsRootDir, skillName);
-  if (!(await isDirectory(skillEvalsDir))) {
-    throw new EvalError(`No evaluation iterations found for "${skillName}"`);
-  }
-  const numbers = await iterationNumbers({
-    dir: skillEvalsDir,
-    prefix: 'iteration',
-  });
-  for (const num of numbers) {
-    const iterationDir = join(skillEvalsDir, `iteration-${num}`);
-    const benchmark = await statIfExists(join(iterationDir, 'benchmark.json'));
-    if (benchmark?.isFile()) return iterationDir;
-  }
-  throw new EvalError(
-    numbers.length === 0
-      ? `No evaluation iterations found for "${skillName}"`
-      : `No completed evaluation iterations found for "${skillName}" (${numbers.length} without benchmark.json)`,
-  );
-}
-
 export interface RunSkillEvalParams {
   skillName: string;
   skillDir: string;
@@ -245,6 +129,209 @@ interface EvalJob {
   runIndex: number;
 }
 
+async function validateComparedSkillSpecs(
+  skillName: string,
+  compareSkills: readonly ComparedSkillSpec[] | undefined,
+): Promise<Map<string, ComparedSkillSpec>> {
+  const compareSkillsByName = new Map<string, ComparedSkillSpec>();
+  for (const item of compareSkills ?? []) {
+    if (!isSkillName(item.skillName)) {
+      throw new EvalError(
+        `Compared skill name "${item.skillName}" is not a valid skill name`,
+      );
+    }
+    if (item.skillName === skillName) {
+      throw new EvalError(
+        `Compared skill "${item.skillName}" must have a different name from the target skill "${skillName}"`,
+      );
+    }
+    if (compareSkillsByName.has(item.skillName)) {
+      throw new EvalError(
+        `Duplicate compared skill name "${item.skillName}" in compareSkills`,
+      );
+    }
+    const skillMd = await statIfExists(join(item.skillDir, 'SKILL.md'));
+    if (!skillMd?.isFile()) {
+      throw new EvalError(
+        `Compared skill "${item.skillName}" is missing SKILL.md in ${item.skillDir}`,
+      );
+    }
+    const itemEscaping = await escapingLinks(item.skillDir);
+    if (itemEscaping.length > 0) {
+      throw new EvalError(
+        `Compared skill "${item.skillName}" has links that point outside the skill folder: ${itemEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
+      );
+    }
+    compareSkillsByName.set(item.skillName, item);
+  }
+  return compareSkillsByName;
+}
+
+async function prepareComparedSkillSetups(
+  compareSkillsByName: Map<string, ComparedSkillSpec>,
+  tempDirs: string[],
+): Promise<void> {
+  for (const [name, item] of compareSkillsByName) {
+    if (!item.setup) continue;
+    const tempRoot = await mkdtemp(join(tmpdir(), 'agents-config-compare-'));
+    tempDirs.push(tempRoot);
+    const preparedDir = join(tempRoot, item.skillName);
+    await copySkillTree({ source: item.skillDir, destination: preparedDir });
+    await runSetup({ dir: preparedDir, command: item.setup });
+    compareSkillsByName.set(name, {
+      skillName: item.skillName,
+      skillDir: preparedDir,
+    });
+  }
+}
+
+interface ExecuteEvalJobParams {
+  job: EvalJob;
+  iterationDir: string;
+  skillDir: string;
+  skillName: string;
+  runner: EvalRunner;
+  runs: number;
+  timeoutSeconds: number;
+  sandbox: boolean;
+  keepWorkdirs: boolean;
+  paths?: Paths;
+  repoRoot?: string;
+  compareRef?: string;
+  compareSkillsByName: ReadonlyMap<string, ComparedSkillSpec>;
+  env: Environment;
+  onLog?: (line: string) => void;
+  onContamination: (flags: {
+    variant: EvalVariant;
+    possiblyContaminated: boolean;
+    skillShadowed: boolean;
+    warning?: string;
+  }) => void;
+}
+
+async function executeEvalJob({
+  job,
+  iterationDir,
+  skillDir,
+  skillName,
+  runner,
+  runs,
+  timeoutSeconds,
+  sandbox,
+  keepWorkdirs,
+  paths,
+  repoRoot,
+  compareRef,
+  compareSkillsByName,
+  env,
+  onLog,
+  onContamination,
+}: ExecuteEvalJobParams): Promise<EvalRunRecord> {
+  const label = `[${job.evalCase.id}] ${job.variant} run ${job.runIndex}/${runs}`;
+  const runDir = join(
+    iterationDir,
+    `eval-${job.evalCase.id}`,
+    variantDirName(job.variant),
+    `run-${job.runIndex}`,
+  );
+  await mkdir(runDir, { recursive: true });
+  const comparedName = parseCompareSkillVariant(job.variant);
+  const compareSkill =
+    comparedName !== undefined
+      ? compareSkillsByName.get(comparedName)
+      : undefined;
+  const activeSkillName = compareSkill?.skillName ?? skillName;
+  // A workspace that cannot be prepared is a harness problem shared by
+  // every job, so it is fatal rather than a failed run.
+  const prepared = await prepareEvalWorkspace({
+    runDir,
+    skillDir,
+    skillName,
+    evalCase: job.evalCase,
+    variant: job.variant,
+    runner: runner.name,
+    paths,
+    repoRoot,
+    compareRef,
+    compareSkill,
+    compareSkills: [...compareSkillsByName.values()],
+    env,
+  });
+
+  onContamination({
+    variant: job.variant,
+    possiblyContaminated: prepared.possiblyContaminated,
+    skillShadowed: Boolean(prepared.skillShadowed),
+    warning: prepared.warning,
+  });
+
+  try {
+    const startedAt = Date.now();
+    let taskResult: RunnerTaskResult | undefined;
+    let launchError: string | undefined;
+    try {
+      taskResult = await runner.runTask({
+        prompt: job.evalCase.prompt,
+        workdir: prepared.workdir,
+        runDir,
+        skillName: activeSkillName,
+        timeoutSeconds,
+        sandbox,
+        excludeSkill: job.variant === 'without_skill',
+      });
+    } catch (error) {
+      launchError = error instanceof Error ? error.message : String(error);
+    }
+
+    const { grading, timing } =
+      taskResult === undefined
+        ? await recordFailedRun({
+            evalCase: job.evalCase,
+            runDir,
+            error: launchError ?? 'Runner failed',
+            durationMs: Date.now() - startedAt,
+          })
+        : await gradeEvalRun({
+            evalCase: job.evalCase,
+            workdir: prepared.workdir,
+            runDir,
+            taskResult,
+            runner,
+            timeoutSeconds,
+            env,
+          });
+
+    onLog?.(
+      timing.error === undefined
+        ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds.toFixed(1)}s)`
+        : `${label}: agent run failed: ${timing.error}`,
+    );
+
+    return {
+      case_id: job.evalCase.id,
+      prompt: job.evalCase.prompt,
+      variant: job.variant,
+      run_index: job.runIndex,
+      grading,
+      timing,
+    };
+  } finally {
+    if (!keepWorkdirs) {
+      await removeWorkdir({ path: prepared.workdir, onLog });
+    }
+  }
+}
+
+/**
+ * Runs a skill evaluation suite across the selected cases and variants
+ * (`with_skill`, optional `without_skill` baseline, optional `old_skill`
+ * at `compareRef`, and optional competing `compareSkills`), grades each run,
+ * and writes `benchmark.json` and `report.md` into a newly allocated
+ * `iteration-<N>` directory.
+ *
+ * Performs runner preflight and git ref verification before allocating the
+ * iteration directory so invalid configuration leaves no empty directory behind.
+ */
 export async function runSkillEval({
   skillName,
   skillDir,
@@ -294,37 +381,10 @@ export async function runSkillEval({
       `Skill "${skillName}" has links that point outside the skill folder: ${primaryEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
     );
   }
-  const compareSkillsByName = new Map<string, ComparedSkillSpec>();
-  for (const item of compareSkills ?? []) {
-    if (!isSkillName(item.skillName)) {
-      throw new EvalError(
-        `Compared skill name "${item.skillName}" is not a valid skill name`,
-      );
-    }
-    if (item.skillName === skillName) {
-      throw new EvalError(
-        `Compared skill "${item.skillName}" must have a different name from the target skill "${skillName}"`,
-      );
-    }
-    if (compareSkillsByName.has(item.skillName)) {
-      throw new EvalError(
-        `Duplicate compared skill name "${item.skillName}" in compareSkills`,
-      );
-    }
-    const skillMd = await statIfExists(join(item.skillDir, 'SKILL.md'));
-    if (!skillMd?.isFile()) {
-      throw new EvalError(
-        `Compared skill "${item.skillName}" is missing SKILL.md in ${item.skillDir}`,
-      );
-    }
-    const itemEscaping = await escapingLinks(item.skillDir);
-    if (itemEscaping.length > 0) {
-      throw new EvalError(
-        `Compared skill "${item.skillName}" has links that point outside the skill folder: ${itemEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
-      );
-    }
-    compareSkillsByName.set(item.skillName, item);
-  }
+  const compareSkillsByName = await validateComparedSkillSpecs(
+    skillName,
+    compareSkills,
+  );
   const compareSkillNames = [...compareSkillsByName.keys()];
   validateEvalSuiteFileDestinations({
     cases: selectedCases,
@@ -349,159 +409,101 @@ export async function runSkillEval({
     await verifySkillAtRef({ repoRoot, skillDir, ref: compareRef, env });
   }
 
-  const iterationDir = await allocateIterationDir({
-    evalsRootDir,
-    skillName,
-  });
+  const tempDirs: string[] = [];
+  try {
+    await prepareComparedSkillSetups(compareSkillsByName, tempDirs);
 
-  const jobs: EvalJob[] = [];
-  for (const evalCase of selectedCases) {
-    for (const variant of variants) {
-      for (let runIndex = 1; runIndex <= runs; runIndex += 1) {
-        jobs.push({ evalCase, variant, runIndex });
+    const iterationDir = await allocateIterationDir({
+      evalsRootDir,
+      skillName,
+    });
+
+    const jobs: EvalJob[] = [];
+    for (const evalCase of selectedCases) {
+      for (const variant of variants) {
+        for (let runIndex = 1; runIndex <= runs; runIndex += 1) {
+          jobs.push({ evalCase, variant, runIndex });
+        }
       }
     }
+
+    const warnings = new Set<string>();
+    let possiblyContaminated = false;
+    let withSkillContaminated = false;
+
+    const records = await runWithConcurrency({
+      items: jobs,
+      concurrency: parallel,
+      worker: (job) =>
+        executeEvalJob({
+          job,
+          iterationDir,
+          skillDir,
+          skillName,
+          runner,
+          runs,
+          timeoutSeconds,
+          sandbox,
+          keepWorkdirs,
+          paths,
+          repoRoot,
+          compareRef,
+          compareSkillsByName,
+          env,
+          onLog,
+          onContamination(flags) {
+            if (
+              flags.variant === 'without_skill' &&
+              flags.possiblyContaminated
+            ) {
+              possiblyContaminated = true;
+            }
+            if (
+              flags.variant !== 'without_skill' &&
+              (flags.possiblyContaminated || flags.skillShadowed)
+            ) {
+              withSkillContaminated = true;
+            }
+            if (flags.warning && !warnings.has(flags.warning)) {
+              warnings.add(flags.warning);
+              onLog?.(`warning: ${flags.warning}`);
+            }
+          },
+        }),
+    });
+
+    const benchmark = aggregateBenchmark({
+      skillName,
+      skillPath: skillDir,
+      runner: runner.name,
+      runsPerConfig: runs,
+      cases: selectedCases,
+      runs: records,
+      baselineEnabled: baseline,
+      possiblyContaminated,
+      withSkillContaminated,
+      compareRef,
+      compareSkills: compareSkillNames,
+      warnings: [...warnings],
+    });
+    const reportMarkdown = renderBenchmarkReport(benchmark);
+
+    await writeFile(
+      join(iterationDir, 'benchmark.json'),
+      `${JSON.stringify(benchmark, null, 2)}\n`,
+    );
+    await writeFile(join(iterationDir, 'report.md'), reportMarkdown);
+
+    return {
+      iterationDir,
+      benchmark,
+      reportMarkdown,
+    };
+  } finally {
+    await Promise.all(
+      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   }
-
-  const warnings = new Set<string>();
-  let possiblyContaminated = false;
-  let withSkillContaminated = false;
-
-  const records = await runWithConcurrency({
-    items: jobs,
-    concurrency: parallel,
-    async worker(job) {
-      const label = `[${job.evalCase.id}] ${job.variant} run ${job.runIndex}/${runs}`;
-      const runDir = join(
-        iterationDir,
-        `eval-${job.evalCase.id}`,
-        variantDirName(job.variant),
-        `run-${job.runIndex}`,
-      );
-      await mkdir(runDir, { recursive: true });
-      const comparedName = parseCompareSkillVariant(job.variant);
-      const compareSkill =
-        comparedName !== undefined
-          ? compareSkillsByName.get(comparedName)
-          : undefined;
-      const activeSkillName = compareSkill?.skillName ?? skillName;
-      // A workspace that cannot be prepared is a harness problem shared by
-      // every job, so it is fatal rather than a failed run.
-      const prepared = await prepareEvalWorkspace({
-        runDir,
-        skillDir,
-        skillName,
-        evalCase: job.evalCase,
-        variant: job.variant,
-        runner: runner.name,
-        paths,
-        repoRoot,
-        compareRef,
-        compareSkill,
-        compareSkills: [...compareSkillsByName.values()],
-        env,
-      });
-
-      if (prepared.possiblyContaminated) {
-        possiblyContaminated = true;
-        if (job.variant !== 'without_skill') {
-          withSkillContaminated = true;
-        }
-      }
-      if (prepared.skillShadowed) {
-        withSkillContaminated = true;
-      }
-      if (prepared.warning && !warnings.has(prepared.warning)) {
-        warnings.add(prepared.warning);
-        onLog?.(`warning: ${prepared.warning}`);
-      }
-
-      try {
-        const startedAt = Date.now();
-        let taskResult: RunnerTaskResult | undefined;
-        let launchError: string | undefined;
-        try {
-          taskResult = await runner.runTask({
-            prompt: job.evalCase.prompt,
-            workdir: prepared.workdir,
-            runDir,
-            skillName: activeSkillName,
-            timeoutSeconds,
-            sandbox,
-            excludeSkill: job.variant === 'without_skill',
-          });
-        } catch (error) {
-          launchError = error instanceof Error ? error.message : String(error);
-        }
-
-        const { grading, timing } =
-          taskResult === undefined
-            ? await recordFailedRun({
-                evalCase: job.evalCase,
-                runDir,
-                error: launchError ?? 'Runner failed',
-                durationMs: Date.now() - startedAt,
-              })
-            : await gradeEvalRun({
-                evalCase: job.evalCase,
-                workdir: prepared.workdir,
-                runDir,
-                taskResult,
-                runner,
-                timeoutSeconds,
-                env,
-              });
-
-        onLog?.(
-          timing.error === undefined
-            ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds.toFixed(1)}s)`
-            : `${label}: agent run failed: ${timing.error}`,
-        );
-
-        const record: EvalRunRecord = {
-          case_id: job.evalCase.id,
-          prompt: job.evalCase.prompt,
-          variant: job.variant,
-          run_index: job.runIndex,
-          grading,
-          timing,
-        };
-        return record;
-      } finally {
-        if (!keepWorkdirs) {
-          await removeWorkdir({ path: prepared.workdir, onLog });
-        }
-      }
-    },
-  });
-
-  const benchmark = aggregateBenchmark({
-    skillName,
-    skillPath: skillDir,
-    runner: runner.name,
-    runsPerConfig: runs,
-    cases: selectedCases,
-    runs: records,
-    baselineEnabled: baseline,
-    possiblyContaminated,
-    withSkillContaminated,
-    compareRef,
-    compareSkills: compareSkillNames,
-    warnings: [...warnings],
-  });
-  const reportMarkdown = renderBenchmarkReport(benchmark);
-
-  await writeFile(
-    join(iterationDir, 'benchmark.json'),
-    `${JSON.stringify(benchmark, null, 2)}\n`,
-  );
-  await writeFile(join(iterationDir, 'report.md'), reportMarkdown);
-
-  return {
-    iterationDir,
-    benchmark,
-    reportMarkdown,
-  };
 }
 
 export interface RunSkillTriggersParams {
@@ -534,6 +536,12 @@ interface TriggerJob {
   runIndex: number;
 }
 
+/**
+ * Runs a skill trigger evaluation across the selected `train`, `validation`,
+ * or `all` query split, records whether the skill was read on each run, and
+ * writes `triggers.json` and `triggers.md` into a newly allocated
+ * `triggers-<N>` directory.
+ */
 export async function runSkillTriggers({
   skillName,
   skillDir,

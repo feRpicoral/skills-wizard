@@ -15,10 +15,16 @@ interface StagedText {
   onDisk: string | null;
 }
 
-// Looks the path up by its real location, resolving links that are still on
-// disk; deletions are staged under the deleted path itself. A link deleted in
-// the plan is never read through afterwards because deletions only happen in
-// the removal phase, after every target action has been planned.
+/**
+ * Reads `path` as it exists after earlier actions in the same plan (`current`)
+ * alongside its raw on-disk text (`onDisk`).
+ *
+ * Looks `path` up by its canonical `realLocation` so multiple targets that
+ * resolve through symlinks to the same underlying file see each other's staged
+ * writes. Deletions are staged under the deleted path itself; a link deleted in
+ * the plan is never read through afterwards because deletions only happen in
+ * the removal phase, after every target action has been planned.
+ */
 export async function readStaged({
   staged,
   path,
@@ -41,6 +47,10 @@ interface StageActionParams {
   action: PlannedAction;
 }
 
+/**
+ * Records the effect of `action` in `staged` keyed by canonical `realLocation`
+ * so subsequent actions in the same plan observe in-flight writes and deletes.
+ */
 export async function stageAction({
   staged,
   action,
