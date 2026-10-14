@@ -120,7 +120,7 @@ export async function replaceWithCopy({
     await swapInto({
       staged,
       destination,
-      ...(backup !== undefined ? { backup } : {}),
+      backup,
     });
   } catch (error) {
     await rm(staged, { recursive: true, force: true });
@@ -147,7 +147,7 @@ export async function replaceWithLink({
     await swapInto({
       staged,
       destination,
-      ...(backup !== undefined ? { backup } : {}),
+      backup,
     });
   } catch (error) {
     await rm(staged, { force: true });

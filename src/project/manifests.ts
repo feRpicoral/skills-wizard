@@ -359,7 +359,7 @@ export async function detectPackageManager({
     hasProjectFile({
       projectDir,
       relativePath,
-      ...(root !== undefined ? { root } : {}),
+      root,
     });
 
   if (await hasFile('yarn.lock')) {

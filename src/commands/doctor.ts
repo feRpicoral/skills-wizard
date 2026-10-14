@@ -3,6 +3,7 @@ import { styleText } from 'node:util';
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath } from '../install/describe.ts';
+import type { Manifest } from '../state/manifest.ts';
 import {
   type Finding,
   globalFindings,
@@ -60,7 +61,7 @@ export async function runDoctor(
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const manifest = await readLocationManifest({
     ctx,
@@ -136,13 +137,21 @@ export async function runDoctor(
     })),
     ...mcpFindings({ ctx, scope, manifest, mcpCatalog, mcp }),
     ...(await symlinkFindings(ctx, manifest)),
-    ...(scope === 'global'
-      ? [
-          ...(await globalFindings(ctx, manifest)),
-          ...(await skillFindings(ctx, manifest)),
-        ]
-      : []),
+    ...(await globalOnlyFindings(ctx, scope, manifest)),
   ];
 
   return printDoctorReport(ctx, findings);
+}
+
+async function globalOnlyFindings(
+  ctx: Context,
+  scope: Scope,
+  manifest: Manifest,
+): Promise<Finding[]> {
+  if (scope !== 'global') return [];
+
+  return [
+    ...(await globalFindings(ctx, manifest)),
+    ...(await skillFindings(ctx, manifest)),
+  ];
 }

@@ -54,7 +54,7 @@ export async function validateCatalog(ctx: Context): Promise<SkillReport[]> {
     try {
       root = await ensureSource(cache, {
         repo,
-        ...(first.ref ? { ref: first.ref } : {}),
+        ref: first.ref || undefined,
         paths: repositoryPaths(library.catalog, repo),
       });
     } catch (error) {

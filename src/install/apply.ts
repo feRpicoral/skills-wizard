@@ -105,7 +105,7 @@ async function recordManifest({ plan, applied }: RecordManifestParams) {
     await writeManifest({
       file: plan.manifestPath,
       manifest,
-      ...(plan.projectDir ? { projectDir: plan.projectDir } : {}),
+      projectDir: plan.projectDir,
     });
   }
 }

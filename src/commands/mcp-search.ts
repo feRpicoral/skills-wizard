@@ -126,11 +126,9 @@ export async function runMcpSearch({
   const candidates = await searchMcpRegistry({
     query: trimmed,
     official,
-    ...(ctx.sources.mcpRegistryUrl !== undefined
-      ? { baseUrl: ctx.sources.mcpRegistryUrl }
-      : {}),
-    ...(limit !== undefined ? { limit } : {}),
-    ...(ctx.sources.fetch ? { fetchFn: ctx.sources.fetch } : {}),
+    baseUrl: ctx.sources.mcpRegistryUrl,
+    limit,
+    fetchFn: ctx.sources.fetch,
   });
 
   if (candidates.length === 0) {

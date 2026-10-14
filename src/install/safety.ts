@@ -134,7 +134,7 @@ export async function checkManifestPath({
   }
   const problem = await locationProblem({
     path: manifestPath,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   if (problem) {
     throw new ManifestError(
@@ -187,7 +187,7 @@ export async function inspectTargetFile({
     target.kind === 'exclude-region' ? undefined : boundary;
   const problem = await locationProblem({
     path: writePath,
-    ...(effectiveBoundary ? { boundary: effectiveBoundary } : {}),
+    boundary: effectiveBoundary,
   });
   if (problem) {
     return {
@@ -290,7 +290,7 @@ export async function resolveTargetFile({
     target,
     previous,
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
     danglingTargetReason: 'is a symlink to a missing file',
   });
   if (!inspection.ok) return inspection;

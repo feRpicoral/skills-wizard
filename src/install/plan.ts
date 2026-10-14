@@ -87,21 +87,20 @@ function dispatchTarget({
   emptyJson,
   sharedMcp,
 }: DispatchTargetParams): Promise<PlannedAction> {
-  const location = boundary ? { boundary } : {};
   switch (target.kind) {
     case 'symlink':
-      return planSymlink({ target, previous, ...location });
+      return planSymlink({ target, previous, boundary });
     case 'skill':
-      return planSkill({ target, previous, scope, ...location });
+      return planSkill({ target, previous, scope, boundary });
     default:
       return planFile({
         target,
         previous,
         staged,
-        ...location,
-        ...(pathCreated !== undefined ? { pathCreated } : {}),
-        ...(emptyJson ? { emptyJson } : {}),
-        ...(sharedMcp ? { sharedMcp } : {}),
+        boundary,
+        pathCreated,
+        emptyJson,
+        sharedMcp,
       });
   }
 }
@@ -112,6 +111,13 @@ interface PlanTargetActionsParams {
   scope: Scope;
   staged: StagedContents;
   boundary?: string;
+}
+
+function unionValues(
+  first: readonly string[],
+  second: readonly string[],
+): string[] {
+  return [...new Set([...first, ...second])];
 }
 
 async function planTargetActions({
@@ -143,7 +149,7 @@ async function planTargetActions({
     ) {
       const candidateValues =
         claudeMcpConflicted && previous?.kind === 'json-array'
-          ? [...new Set([...previous.added, ...target.values])]
+          ? unionValues(previous.added, target.values)
           : target.values;
       const values = filterClaudeDeniedValues({
         values: candidateValues,
@@ -187,12 +193,12 @@ async function planTargetActions({
           previous,
           scope,
           staged,
-          ...(boundary ? { boundary } : {}),
+          boundary,
           pathCreated:
             coowned.createdPaths.has(target.path) ||
             coowned.createdPaths.has(real),
-          ...(emptyJson ? { emptyJson } : {}),
-          ...(sharedMcp ? { sharedMcp } : {}),
+          emptyJson,
+          sharedMcp,
         }),
     });
     if (target.kind === 'skill' && action.status === 'conflict') {
@@ -213,12 +219,14 @@ async function planTargetActions({
         claudeMcpConflicted = true;
       }
     }
+
     await recordPlannedCoownedEntry(coowned, action);
     await stageAction({ staged, action });
     actions.push(
       target.kind === 'skill' ? { ...action, skill: target.name } : action,
     );
   }
+
   return { actions, plannedKeys };
 }
 
@@ -268,15 +276,16 @@ async function planRemovalActions({
         return planRemoval({
           entry,
           staged,
-          ...(sharedWith ? { sharedWith } : {}),
-          ...(boundary ? { boundary } : {}),
-          ...(retainedMcpServers !== undefined ? { retainedMcpServers } : {}),
+          sharedWith,
+          boundary,
+          retainedMcpServers,
         });
       },
     });
     await stageAction({ staged, action });
     actions.push(action);
   }
+
   return actions;
 }
 
@@ -298,13 +307,10 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
   const boundary = scope === 'project' ? project?.dir : undefined;
   await checkManifestPath({
     manifestPath,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
-  const folders = skillFolders({
-    scope,
-    paths,
-    ...(project ? { project } : {}),
-  });
+
+  const folders = skillFolders({ scope, paths, project });
   if (previous && folders) {
     checkSkillEntries({
       file: manifestPath,
@@ -332,7 +338,7 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
     previousEntries,
     scope,
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   const removalActions = await planRemovalActions({
     previousEntries,
@@ -340,7 +346,7 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
     targetActions,
     owners: await ownersByRealLocation(targetActions),
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   const actions = [...targetActions, ...removalActions];
 
@@ -354,7 +360,7 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
     manifest: effective.manifest,
     entries: effective.entries,
     manifestPath,
-    ...(project ? { projectDir: project.dir } : {}),
+    projectDir: project?.dir,
   });
 
   return {

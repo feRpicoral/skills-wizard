@@ -152,8 +152,6 @@ export async function planFile({
   if (!resolved.ok) return resolved.action;
   const { file } = resolved;
 
-  const emptyState = emptyJson ? { emptyJson } : {};
-  const mcpState = sharedMcp ? { sharedMcp } : {};
   switch (target.kind) {
     case 'region':
       return planRegion({ target, file, previous });
@@ -162,15 +160,9 @@ export async function planFile({
     case 'line':
       return planLine({ target, file, previous });
     case 'json-array':
-      return planJsonArray({ target, file, previous, ...emptyState });
+      return planJsonArray({ target, file, previous, emptyJson });
     case 'mcp-json':
-      return planMcpJson({
-        target,
-        file,
-        previous,
-        ...emptyState,
-        ...mcpState,
-      });
+      return planMcpJson({ target, file, previous, emptyJson, sharedMcp });
     case 'mcp-toml':
       return planMcpToml({ target, file, previous });
   }

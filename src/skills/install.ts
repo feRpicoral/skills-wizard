@@ -76,7 +76,7 @@ async function resolveRepository({
     root = fetch
       ? await ensureSource(cache, {
           repo,
-          ...(ref ? { ref } : {}),
+          ref: ref || undefined,
           paths: repositoryPaths(library.catalog, repo),
         })
       : await cachedSource(cache, repo);
@@ -109,7 +109,7 @@ async function resolveRepository({
           commit,
         },
         linkable: false,
-        ...(entry.setup ? { setup: entry.setup } : {}),
+        setup: entry.setup,
       },
       resolution,
     );

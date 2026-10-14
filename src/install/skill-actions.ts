@@ -139,7 +139,7 @@ export async function planSymlink({
   }
   const problem = await locationProblem({
     path: dirname(target.path),
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   if (problem) {
     return conflict({ target, previous, reason: leftInPlace(problem) });
@@ -204,7 +204,7 @@ export async function planSkill({
 }: PlanSkillParams): Promise<PlannedAction> {
   const problem = await locationProblem({
     path: dirname(target.path),
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   if (problem) {
     return conflict({ target, previous, reason: leftInPlace(problem) });

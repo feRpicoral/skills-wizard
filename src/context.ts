@@ -65,17 +65,15 @@ export function createContext({
   const mcpRegistryUrl =
     discovery?.mcpRegistryUrl ??
     sources?.mcpRegistryUrl ??
-    (({ official } = {}) =>
-      resolveMcpRegistryUrl({
-        ...(official !== undefined ? { official } : {}),
-      }));
+    (({ official } = {}) => resolveMcpRegistryUrl({ official }));
   const sourcesSettings: SourceSettings = {
     url: sources?.url ?? githubUrl,
     env,
     now: sources?.now ?? (() => new Date()),
     mcpRegistryUrl,
-    ...(sources?.fetch !== undefined ? { fetch: sources.fetch } : {}),
+    fetch: sources?.fetch,
   };
+
   return {
     paths,
     repoRoot,
@@ -86,7 +84,7 @@ export function createContext({
     discovery: {
       skillsShUrl: discovery?.skillsShUrl ?? (() => resolveSkillsShUrl()),
       mcpRegistryUrl,
-      ...(discovery?.fetch !== undefined ? { fetch: discovery.fetch } : {}),
+      fetch: discovery?.fetch,
     },
     agy: {
       bin: () => resolveAgyBin(),

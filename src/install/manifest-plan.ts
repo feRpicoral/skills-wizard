@@ -28,6 +28,7 @@ export function composeManifestMetadata({
       return value === undefined ? [] : [[name, value]];
     }),
   );
+
   return {
     version: MANIFEST_VERSION,
     scope,

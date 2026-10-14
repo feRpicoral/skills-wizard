@@ -284,7 +284,8 @@ async function prepareEvalSuiteContext(params: RunSkillEvalParams): Promise<{
     );
   }
   const suite = await loadEvalSuite(skillDir);
-  const requestedIds = [...(caseId ? [caseId] : []), ...(caseIds ?? [])];
+  const singleId = caseId ? [caseId] : [];
+  const requestedIds = [...singleId, ...(caseIds ?? [])];
   for (const id of requestedIds) {
     if (!suite.evals.some((item) => item.id === id)) {
       throw new EvalError(`Eval case "${id}" was not found in ${skillName}`);

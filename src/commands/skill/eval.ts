@@ -121,7 +121,7 @@ export async function resolveEvalRunner({
   const agyConfig =
     runnerName === 'agy'
       ? {
-          ...(agyBin ? { bin: agyBin } : {}),
+          bin: agyBin || undefined,
           extraArgs: ctx.agy?.extraArgs() ?? [],
         }
       : undefined;
@@ -189,22 +189,23 @@ export function printBenchmarkSummary(
 ): void {
   const { metadata, run_summary: summary } = benchmark;
   const withMean = formatRate(summary.with_skill.pass_rate.mean);
-  const deltas = [
-    ...(summary.without_skill
-      ? [
-          `${formatPassRateDelta(summary.with_skill, summary.without_skill)} vs baseline`,
-        ]
-      : []),
-    ...(summary.old_skill
-      ? [
-          `${formatPassRateDelta(summary.with_skill, summary.old_skill)} vs old_skill`,
-        ]
-      : []),
-    ...Object.entries(summary.compare_skills ?? {}).map(
-      ([name, variant]) =>
-        `${formatPassRateDelta(summary.with_skill, variant)} vs ${name}`,
-    ),
-  ];
+  const deltas: string[] = [];
+  if (summary.without_skill) {
+    deltas.push(
+      `${formatPassRateDelta(summary.with_skill, summary.without_skill)} vs baseline`,
+    );
+  }
+  if (summary.old_skill) {
+    deltas.push(
+      `${formatPassRateDelta(summary.with_skill, summary.old_skill)} vs old_skill`,
+    );
+  }
+  for (const [name, variant] of Object.entries(summary.compare_skills ?? {})) {
+    deltas.push(
+      `${formatPassRateDelta(summary.with_skill, variant)} vs ${name}`,
+    );
+  }
+
   const deltaStr = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
   ctx.print(
     `Evaluated ${metadata.skill_name} with ${metadata.runner}: with_skill pass rate ${withMean}${deltaStr}.`,

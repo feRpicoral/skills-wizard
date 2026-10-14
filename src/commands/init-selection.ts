@@ -239,6 +239,25 @@ export interface ResolveInstallOptionsParams {
   reconciled: ReconciledManifest | null;
 }
 
+async function resolveLinkCommand({
+  ctx,
+  scope,
+  prompting,
+  requestedLinkCommand,
+  previous,
+}: Pick<
+  ResolveInstallOptionsParams,
+  'ctx' | 'scope' | 'prompting' | 'requestedLinkCommand' | 'previous'
+>): Promise<boolean> {
+  if (scope !== 'global') return false;
+  if (requestedLinkCommand !== undefined) return requestedLinkCommand;
+
+  const previousLink = previous?.options.linkCommand ?? false;
+  if (!prompting) return previousLink;
+
+  return promptLinkCommand(previous ? previousLink : true, ctx.paths);
+}
+
 export async function resolveInstallOptions({
   ctx,
   scope,
@@ -252,14 +271,13 @@ export async function resolveInstallOptions({
   linkCommand: boolean;
   keepLocal: boolean;
 }> {
-  const previousLink = previous?.options.linkCommand ?? false;
-  const linkCommand =
-    scope === 'global'
-      ? (requestedLinkCommand ??
-        (prompting
-          ? await promptLinkCommand(previous ? previousLink : true, ctx.paths)
-          : previousLink))
-      : false;
+  const linkCommand = await resolveLinkCommand({
+    ctx,
+    scope,
+    prompting,
+    requestedLinkCommand,
+    previous,
+  });
   const git = location.project?.git;
   if (requestedKeepLocal && !git) {
     throw new UsageError(

@@ -67,9 +67,9 @@ export async function searchCandidates({
     return searchAwesomeIndex({
       cache,
       query,
-      ...(category ? { category } : {}),
+      category,
       includeOffensive,
-      ...(awesomeExisting?.ref ? { ref: awesomeExisting.ref } : {}),
+      ref: awesomeExisting?.ref,
       existingPaths: awesomePaths,
     });
   }
@@ -80,22 +80,22 @@ export async function searchCandidates({
   if (source === 'skills-sh') {
     return searchSkillsSh({
       query,
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(fetchFn ? { fetchFn } : {}),
+      baseUrl,
+      fetchFn,
     });
   }
 
   const [skillsShOutcome, awesomeOutcome] = await Promise.allSettled([
     searchSkillsSh({
       query,
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(fetchFn ? { fetchFn } : {}),
+      baseUrl,
+      fetchFn,
     }),
     searchAwesomeIndexWithAll({
       cache,
       query,
       includeOffensive: true,
-      ...(awesomeExisting?.ref ? { ref: awesomeExisting.ref } : {}),
+      ref: awesomeExisting?.ref,
       existingPaths: awesomePaths,
     }),
   ]);

@@ -410,13 +410,15 @@ export async function buildSyncPlanForLocation({
     previous,
     library,
     skillLibrary,
-    ...(mcpCatalog ? { mcpCatalog } : {}),
+    mcpCatalog,
     extraSkills,
-    ...(mcpOverride !== undefined ? { mcpOverride } : {}),
+    mcpOverride,
   });
+
   if (warnLocked && location.scope === 'global') {
     await warnLockedSkills(ctx, prompting, reconciled.skills);
   }
+
   const namesToFetch =
     tools.length > 0
       ? reconciled.skills.filter((name) => !extraSkillSources?.has(name))
@@ -430,6 +432,7 @@ export async function buildSyncPlanForLocation({
   for (const [name, source] of extraSkillSources ?? []) {
     skillSources.set(name, source);
   }
+
   const plan = await buildPlan({
     scope: location.scope,
     selection: {
@@ -451,18 +454,20 @@ export async function buildSyncPlanForLocation({
     repoRoot: ctx.repoRoot,
     previous,
     manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
+    project: location.project,
     skillSources,
-    ...(mcpCatalog ? { mcpCatalog } : {}),
-    ...(adopt ? { adopt } : {}),
+    mcpCatalog,
+    adopt,
   });
+
   if (reconciled.keepLocal) {
     await warnTrackedFiles({
       ctx,
       prompting,
       plan,
-      ...(location.project ? { project: location.project } : {}),
+      project: location.project,
     });
   }
+
   return plan;
 }
