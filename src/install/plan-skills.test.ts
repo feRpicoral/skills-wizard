@@ -61,7 +61,6 @@ function selection(
     blocks: [],
     skills,
     variables: {},
-    linkCommand: false,
     keepLocal: false,
     skillMode: 'copy',
     ...overrides,
@@ -241,7 +240,7 @@ test('a changed source updates the installed copy', async (t) => {
   );
 });
 
-test('a skill folder agents-config does not own is a conflict and stays untouched', async (t) => {
+test('a skill folder skills-wizard does not own is a conflict and stays untouched', async (t) => {
   const paths = await tempPaths(t);
   const skill = await localSkill({ root: await tempDir(t), name: 'notes' });
   await writeFiles(paths.skillsDir, { 'notes/SKILL.md': 'mine\n' });
@@ -255,7 +254,7 @@ test('a skill folder agents-config does not own is a conflict and stays untouche
     (action) => action.path === join(paths.skillsDir, 'notes'),
   );
   assert.equal(canonical?.status, 'conflict');
-  assert.match(canonical?.reason ?? '', /run agents-config adopt notes/);
+  assert.match(canonical?.reason ?? '', /run skills-wizard adopt notes/);
   assert.equal(
     statuses(plan)[join(paths.claudeHome, 'skills', 'notes')],
     'conflict',
@@ -307,7 +306,7 @@ test('a copy edited after install is a conflict and is not overwritten', async (
   assert.equal(canonical?.status, 'conflict');
   assert.equal(
     canonical?.reason,
-    'changed outside agents-config, left in place',
+    'changed outside skills-wizard, left in place',
   );
   assert.equal(
     await readFile(join(paths.skillsDir, 'notes', 'SKILL.md'), 'utf8'),
@@ -571,7 +570,7 @@ test('a committed manifest that records a project folder as a skill is refused a
   const dir = await realpath(await tempDir(t));
   await writeFiles(dir, { 'src/lib/index.ts': 'export {};\n' });
   await writeFiles(dir, {
-    '.agents/agents-config.json': JSON.stringify({
+    '.agents/skills-wizard.json': JSON.stringify({
       version: MANIFEST_VERSION,
       scope: 'project',
       tools: ['claude-code'],
@@ -746,11 +745,11 @@ for (const added of ['evals/mine.json', 'references/AGENTS.md', '.git/HEAD']) {
 
     assert.equal(
       update.actions.find((action) => action.path === canonical)?.reason,
-      'changed outside agents-config, left in place',
+      'changed outside skills-wizard, left in place',
     );
     assert.equal(
       removal.actions.find((action) => action.path === canonical)?.reason,
-      'changed outside agents-config, left in place',
+      'changed outside skills-wizard, left in place',
     );
     assert.equal(await readFile(join(canonical, added), 'utf8'), 'mine\n');
   });
@@ -831,7 +830,7 @@ test('dependencies added to a copy without a setup command make it look edited',
 
   assert.equal(
     plan.actions.find((action) => action.path === canonical)?.reason,
-    'changed outside agents-config, left in place',
+    'changed outside skills-wizard, left in place',
   );
 });
 
@@ -925,7 +924,7 @@ test('a legacy setup copy deselected before any sync is left in place', async (t
 
   assert.equal(
     plan.actions.find((action) => action.path === canonical)?.reason,
-    'changed outside agents-config, left in place',
+    'changed outside skills-wizard, left in place',
   );
   assert.ok((await stat(join(canonical, 'node_modules/dep/x.js'))).isFile());
 });

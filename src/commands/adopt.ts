@@ -155,7 +155,7 @@ async function pickUnmanagedSkills({
 
   if (!prompting) {
     throw new UsageError(
-      'Pass the unmanaged skill names to adopt, for example: agents-config adopt pretty-mermaid',
+      'Pass the unmanaged skill names to adopt, for example: skills-wizard adopt pretty-mermaid',
     );
   }
 
@@ -179,7 +179,7 @@ export async function runAdopt(
 
   if (!previous) {
     throw new UsageError(
-      'No system-wide install recorded; run agents-config init --global first.',
+      'No system-wide install recorded; run skills-wizard init --global first.',
     );
   }
 
@@ -234,7 +234,7 @@ export async function runAdopt(
 
   if (tools.length === 0) {
     throw new UsageError(
-      'No tools recorded; pass --tools <ids> or run agents-config init --global.',
+      'No tools recorded; pass --tools <ids> or run skills-wizard init --global.',
     );
   }
 

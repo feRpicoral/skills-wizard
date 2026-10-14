@@ -23,8 +23,8 @@ import {
 import type { ToolId } from '../tools/registry.ts';
 
 export const run = promisify(execFile);
-export const BEGIN = '<!-- BEGIN:agents-config -->';
-export const END = '<!-- END:agents-config -->';
+export const BEGIN = '<!-- BEGIN:skills-wizard -->';
+export const END = '<!-- END:skills-wizard -->';
 export const REPO = '/repo';
 
 export const library: BlockLibrary = {
@@ -65,7 +65,6 @@ export function selection(
     blocks: ['core/identity', 'core/style'],
     skills: [],
     variables: { githubUsername: 'octocat' },
-    linkCommand: false,
     keepLocal: false,
     skillMode: 'copy',
     ...overrides,

@@ -330,7 +330,7 @@ test('replaceWithCopy clears a leftover .old directory from an interrupted swap'
   await writeFiles(root, {
     'source/SKILL.md': 'new\n',
     'skills/demo/SKILL.md': 'old\n',
-    [`skills/.demo.agents-config-${process.pid}.old/SKILL.md`]: 'leftover\n',
+    [`skills/.demo.skills-wizard-${process.pid}.old/SKILL.md`]: 'leftover\n',
   });
 
   await replaceWithCopy({

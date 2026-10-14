@@ -170,8 +170,8 @@ async function applyMcpSelectionChange({
   if (names.length === 0) {
     throw new UsageError(
       mode === 'add'
-        ? 'Pass one or more MCP server names to add, for example: agents-config mcp add context7'
-        : 'Pass one or more MCP server names to remove, for example: agents-config mcp remove context7',
+        ? 'Pass one or more MCP server names to add, for example: skills-wizard mcp add context7'
+        : 'Pass one or more MCP server names to remove, for example: skills-wizard mcp remove context7',
     );
   }
 
@@ -184,7 +184,7 @@ async function applyMcpSelectionChange({
   const previous = await readLocationManifest({ ctx, prompting, location });
   if (!previous) {
     throw new UsageError(
-      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init ${scope === 'project' ? '--project' : '--global'} first.`,
+      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run skills-wizard init ${scope === 'project' ? '--project' : '--global'} first.`,
     );
   }
 

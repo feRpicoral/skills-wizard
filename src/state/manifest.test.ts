@@ -277,11 +277,6 @@ test('global skill entries and the command link pass the check', () => {
           path: '/home/me/.claude/skills/notes',
           target: '/home/me/.agents/skills/notes',
         },
-        {
-          kind: 'symlink',
-          path: '/home/me/.local/bin/agents-config',
-          target: '/repo/src/cli.ts',
-        },
       ],
       folders: {
         copies: '/home/me/.agents/skills',
@@ -308,7 +303,7 @@ test('system-wide manifests cannot record relative symlink targets', async (t) =
   await storeRaw(file, [
     {
       kind: 'symlink',
-      path: join(dir, 'agents-config'),
+      path: join(dir, 'skills-wizard'),
       target: 'src/cli.ts',
     },
   ]);

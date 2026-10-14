@@ -114,7 +114,7 @@ test('without a terminal, no arguments print the help', async (t) => {
   const result = await cli([]);
 
   assert.equal(result.code, 0);
-  assert.match(result.stdout, /^Usage: agents-config/);
+  assert.match(result.stdout, /^Usage: skills-wizard/);
 });
 
 test('without a terminal, flags without a command are a usage error', async (t) => {
@@ -226,7 +226,7 @@ test('rejects disallowed flags on update, adopt and skill validate', async (t) =
   assert.equal(skillResult.code, 2);
   assert.match(
     skillResult.stderr,
-    /Usage: agents-config skill validate \[path\.\.\.\] \[--catalog\]/,
+    /Usage: skills-wizard skill validate \[path\.\.\.\] \[--catalog\]/,
   );
 });
 
@@ -286,7 +286,7 @@ test('init with --preset defaults to lean style when a global install exists and
   const doctorResult = await cli(['doctor', '--project', project]);
   const agentsMd = await readFile(join(project, 'AGENTS.md'), 'utf8');
   const manifest = JSON.parse(
-    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+    await readFile(join(project, '.agents', 'skills-wizard.json'), 'utf8'),
   ) as {
     blocks: string[];
     skills: string[];
@@ -338,7 +338,7 @@ test('init without a global install defaults to self-contained style and sync pr
   const syncResult = await cli(['sync', '--project', project, '--yes']);
   const afterSync = await readFile(join(project, 'AGENTS.md'), 'utf8');
   const manifest = JSON.parse(
-    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+    await readFile(join(project, '.agents', 'skills-wizard.json'), 'utf8'),
   ) as { options: { style?: string } };
 
   assert.equal(initResult.code, 0);
@@ -520,7 +520,7 @@ test('--baseline before the skill name without a ref keeps the name', async (t) 
   assert.equal(missing.code, 2);
   assert.match(missing.stderr, /Skill "no-such-skill" was not found/);
   assert.equal(extraArg.code, 2);
-  assert.match(extraArg.stderr, /Usage: agents-config skill eval <name>/);
+  assert.match(extraArg.stderr, /Usage: skills-wizard skill eval <name>/);
 });
 
 test('--baseline <ref> cannot be combined with --compare or another --baseline', async (t) => {
@@ -596,7 +596,7 @@ test('doctor warns that sync will stop keeping files local once the project leav
   assert.equal(result.code, 0);
   assert.match(
     result.stdout,
-    /^warn\s+.*no longer in a git repository; agents-config sync will stop keeping its files local/m,
+    /^warn\s+.*no longer in a git repository; skills-wizard sync will stop keeping its files local/m,
   );
   assert.doesNotMatch(result.stdout, /another repository/);
 });

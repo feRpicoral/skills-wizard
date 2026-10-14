@@ -60,11 +60,11 @@ export async function commandSandbox(t: TestContext): Promise<CommandSandbox> {
 }
 
 export function manifestPath(home: string): string {
-  return join(home, '.agents', 'agents-config', 'manifest.json');
+  return join(home, '.agents', 'skills-wizard', 'manifest.json');
 }
 
 export function projectManifestPath(project: string): string {
-  return join(project, '.agents', 'agents-config.json');
+  return join(project, '.agents', 'skills-wizard.json');
 }
 
 export interface RecordedBlockParams {

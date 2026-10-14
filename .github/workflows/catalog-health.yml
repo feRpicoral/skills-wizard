@@ -31,4 +31,4 @@ jobs:
           node-version-file: .nvmrc
       - run: corepack enable
       - run: yarn install --immutable
-      - run: yarn agents-config skill validate --catalog
+      - run: yarn skills-wizard skill validate --catalog

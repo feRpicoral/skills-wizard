@@ -1,21 +1,40 @@
 {
-  "name": "agents-config",
+  "name": "skills-wizard",
   "version": "0.1.0",
-  "private": true,
   "description": "Compose AGENTS.md from blocks and install it into coding agents",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/feRpicoral/skills-wizard.git"
+  },
   "type": "module",
   "packageManager": "yarn@4.18.1",
   "engines": {
     "node": ">=24"
   },
-  "bin": "./src/cli.ts",
+  "bin": "./dist/cli.js",
+  "files": [
+    "dist",
+    "blocks",
+    "presets",
+    "skills",
+    "!skills/*/evals",
+    "catalog.yaml",
+    "mcp",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
-    "agents-config": "node src/cli.ts",
+    "skills-wizard": "node src/cli.ts",
     "lint": "eslint .",
     "typecheck": "tsc",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "test": "node --test 'src/**/*.test.ts'",
     "format": "prettier --write .",
-    "postinstall": "husky"
+    "readme:screenshot": "node scripts/readme-screenshot.ts",
+    "postinstall": "husky",
+    "prepack": "pinst --disable && yarn build",
+    "postpack": "pinst --enable"
   },
   "lint-staged": {
     "*.{ts,js,mjs}": [
@@ -51,6 +70,7 @@
     "eslint-plugin-simple-import-sort": "^14.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
+    "pinst": "^3",
     "prettier": "^3.9.9",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.1"

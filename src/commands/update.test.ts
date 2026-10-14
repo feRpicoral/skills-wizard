@@ -223,7 +223,7 @@ test('update skips a project with a broken manifest and refreshes the others', a
   const broken = await realpath(await tempDir(t));
   await initProject({ ctx, projectDir: good });
   await initProject({ ctx, projectDir: broken });
-  await writeFiles(broken, { '.agents/agents-config.json': '{ broken' });
+  await writeFiles(broken, { '.agents/skills-wizard.json': '{ broken' });
   await writeFiles(repoRoot, {
     'blocks/core/identity.md': blockSource('Follow the new rules.', {
       title: 'Identity',
@@ -294,7 +294,7 @@ test('update skips a project whose manifest records a skill outside its skills f
     yes: true,
     dryRun: false,
   });
-  const manifestFile = join(project, '.agents', 'agents-config.json');
+  const manifestFile = join(project, '.agents', 'skills-wizard.json');
   const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
     entries: { kind: string; path: string }[];
   };
@@ -419,7 +419,7 @@ test('update skips an install whose blocks gained a variable with no value and u
   assert.equal(code, 0);
   assert.match(
     output.join('\n'),
-    /Skipping the system-wide install: The blocks now use variables with no recorded value: teamName\. Set them with agents-config init --global --var teamName=<value>/,
+    /Skipping the system-wide install: The blocks now use variables with no recorded value: teamName\. Set them with skills-wizard init --global --var teamName=<value>/,
   );
   assert.match(
     await readFile(join(project, 'AGENTS.md'), 'utf8'),
@@ -481,7 +481,7 @@ test('adopt asks for a variable a block gained before changing anything', async 
     runAdopt(ctx, { names: ['deploy'], yes: true, dryRun: false }),
     (error: unknown) =>
       error instanceof UsageError &&
-      /teamName\. Set them with agents-config init --global --var teamName=<value>/.test(
+      /teamName\. Set them with skills-wizard init --global --var teamName=<value>/.test(
         error.message,
       ),
   );

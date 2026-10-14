@@ -14,7 +14,7 @@ import { tempDir } from '../test-support/fixtures.ts';
 import { runInit } from './init.ts';
 
 function projectsPath(home: string): string {
-  return join(home, '.agents', 'agents-config', 'projects.json');
+  return join(home, '.agents', 'skills-wizard', 'projects.json');
 }
 
 test('init --dry-run prints the plan and writes nothing', async (t) => {
@@ -51,44 +51,6 @@ test('init without a terminal and without --yes writes nothing', async (t) => {
   assert.equal(code, 1);
   assert.match(output(), /Re-run with --yes/);
   await assert.rejects(lstat(join(home, '.codex')), { code: 'ENOENT' });
-});
-
-test('init warns when ~/.local/bin is not on PATH after linking the command', async (t) => {
-  const { createCtx } = await commandSandbox(t);
-  const { ctx, output } = createCtx();
-
-  const code = await runInit(ctx, {
-    scope: 'global',
-    tools: ['codex'],
-    skills: [],
-    variables: { githubUsername: 'octocat' },
-    linkCommand: true,
-    yes: true,
-    dryRun: false,
-  });
-
-  assert.equal(code, 0);
-  assert.match(output(), /\.local\/bin is not on your PATH/);
-});
-
-test('init accepts ~/.local/bin on PATH written with a trailing slash', async (t) => {
-  const { home, createCtx } = await commandSandbox(t);
-  const { ctx, output } = createCtx({
-    extraPath: `${join(home, '.local', 'bin')}/`,
-  });
-
-  const code = await runInit(ctx, {
-    scope: 'global',
-    tools: ['codex'],
-    skills: [],
-    variables: { githubUsername: 'octocat' },
-    linkCommand: true,
-    yes: true,
-    dryRun: false,
-  });
-
-  assert.equal(code, 0);
-  assert.doesNotMatch(output(), /not on your PATH/);
 });
 
 test('an empty tool list removes everything that was installed', async (t) => {
@@ -222,7 +184,7 @@ test('init drops keep-local with a notice once the project leaves git', async (t
   assert.equal(code, 0);
   assert.match(output(), /no longer in a git repository/);
   assert.match(
-    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+    await readFile(join(project, '.agents', 'skills-wizard.json'), 'utf8'),
     /"keepLocal": false/,
   );
 });

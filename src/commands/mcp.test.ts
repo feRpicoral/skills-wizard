@@ -246,12 +246,12 @@ test('runMcp merges --tools into existing tools and preserves manifest.mcp when 
     dryRun: false,
   });
   const manifestAfterAdd = await readManifest(
-    join(project, '.agents', 'agents-config.json'),
+    join(project, '.agents', 'skills-wizard.json'),
   );
   await writeFile(join(project, '.mcp.json'), '{ invalid json');
   await writeFile(
     join(project, '.codex', 'config.toml'),
-    '# BEGIN:agents-config-mcp\nbroken\n',
+    '# BEGIN:skills-wizard-mcp\nbroken\n',
   );
   const conflictedRemoveCode = await runMcp(ctx, {
     subcommand: 'remove',
@@ -262,7 +262,7 @@ test('runMcp merges --tools into existing tools and preserves manifest.mcp when 
     dryRun: false,
   });
   const manifestAfterConflict = await readManifest(
-    join(project, '.agents', 'agents-config.json'),
+    join(project, '.agents', 'skills-wizard.json'),
   );
 
   assert.equal(addWithToolsCode, 0);
@@ -290,7 +290,7 @@ test('runDoctor reports missing MCP secrets, Antigravity stdio notes, project tr
     yes: true,
     dryRun: false,
   });
-  const projectManifestFile = join(project, '.agents', 'agents-config.json');
+  const projectManifestFile = join(project, '.agents', 'skills-wizard.json');
   const rawManifest = JSON.parse(
     await readFile(projectManifestFile, 'utf8'),
   ) as {

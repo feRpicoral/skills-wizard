@@ -20,8 +20,8 @@ import { isBlank, keepBom, lineEnding, withoutBom } from '../install/lines.ts';
 import { removeRegion, upsertRegion } from '../install/managed-region.ts';
 
 export const MCP_TOML_MARKERS = {
-  begin: '# BEGIN:agents-config-mcp',
-  end: '# END:agents-config-mcp',
+  begin: '# BEGIN:skills-wizard-mcp',
+  end: '# END:skills-wizard-mcp',
 } as const;
 
 const mcpDocumentSchema = z.looseObject({
@@ -288,7 +288,7 @@ export interface UpsertMcpTomlParams {
 }
 
 /**
- * Upserts the `# BEGIN:agents-config-mcp` managed region in a Codex `config.toml`
+ * Upserts the `# BEGIN:skills-wizard-mcp` managed region in a Codex `config.toml`
  * document after verifying that none of `serverNames` are defined outside the
  * managed region.
  *

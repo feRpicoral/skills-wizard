@@ -20,7 +20,7 @@ const run = promisify(execFile);
 const GIT_TIMEOUT_MS = 5 * 60_000;
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
-const STATE_FILE = 'agents-config.json';
+const STATE_FILE = 'skills-wizard.json';
 
 export const DEFAULT_REF = 'HEAD';
 export const END_OF_OPTIONS = '--end-of-options';
@@ -198,7 +198,7 @@ async function remoteCommit(
  * check for the same ref is younger than 24 hours and `force` is `false`;
  * otherwise queries `git ls-remote` (preferring dereferenced annotated tags
  * `refs/tags/<ref>^{}`) and persists the check timestamp and commit in
- * `.git/agents-config.json`.
+ * `.git/skills-wizard.json`.
  */
 export async function checkSource(
   cache: SourceCache,

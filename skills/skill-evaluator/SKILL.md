@@ -1,7 +1,7 @@
 ---
 name: skill-evaluator
-description: Evaluates, benchmarks, grades, and optimizes Agent Skills using evals/evals.json, evals/trigger_queries.json, and the agents-config skill eval, triggers, and report commands. Use when the user asks to benchmark a skill with vs without baseline, compare a skill against an older git ref or competing skills, write, extend, or tighten the evals and trigger queries of an existing skill, measure trigger precision and recall on train/validation splits, or audit benchmark.json and report.md for non-discriminating assertions or baseline contamination. Don't use for scaffolding a brand-new skill or restructuring SKILL.md (use skill-author), or for benchmarking application code.
-compatibility: Uses the agents-config CLI and an agent CLI (agy, claude, codex, or gemini) on PATH; without them it can only author and audit eval files
+description: Evaluates, benchmarks, grades, and optimizes Agent Skills using evals/evals.json, evals/trigger_queries.json, and the skills-wizard skill eval, triggers, and report commands. Use when the user asks to benchmark a skill with vs without baseline, compare a skill against an older git ref or competing skills, write, extend, or tighten the evals and trigger queries of an existing skill, measure trigger precision and recall on train/validation splits, or audit benchmark.json and report.md for non-discriminating assertions or baseline contamination. Don't use for scaffolding a brand-new skill or restructuring SKILL.md (use skill-author), or for benchmarking application code.
+compatibility: Uses the skills-wizard CLI and an agent CLI (agy, claude, codex, or gemini) on PATH; without them it can only author and audit eval files
 ---
 
 # Skill Evaluator
@@ -10,8 +10,8 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
 
 ## Running the CLI
 
-- Run `agents-config skill <subcommand>` from the repository that holds `skills/<name>/`.
-- Inside the agents-config repository itself, run `yarn agents-config skill <subcommand>` instead.
+- Run `skills-wizard skill <subcommand>` from the repository that holds `skills/<name>/`.
+- Inside the skills-wizard repository itself, run `yarn skills-wizard skill <subcommand>` instead.
 - If neither command is available, say so: you can still write and audit `evals/evals.json`, `evals/trigger_queries.json`, and existing `benchmark.json` or `triggers.json` files, but do not claim pass rates or trigger metrics you did not measure.
 - Eval runs launch real agent CLIs with your real home directory and credentials. They are not confined: `--sandbox` is passed only to runners that support it, and the CLI warns when a runner cannot honor it. Use `--runner fake` to check that a suite loads, stages its fixtures, and produces reports without calling any agent; its pass rates and trigger decisions are synthetic and say nothing about the skill.
 
@@ -36,7 +36,7 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
 2. **Run with-skill vs baseline benchmarks (`skill eval`)**
    - Run the suite:
      ```bash
-     agents-config skill eval <name> --runs 3 --parallel 2
+     skills-wizard skill eval <name> --runs 3 --parallel 2
      ```
    - Key options:
      - `--runner <agy|claude|codex|gemini|fake>`: choose the agent CLI runner (auto-detected on `PATH` in order `agy` -> `claude` -> `codex` -> `gemini`).
@@ -47,7 +47,7 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
      - `--keep-workdirs`: preserve `<runDir>/workdir` when debugging a failing assertion.
 
 3. **Analyze `benchmark.json` and `report.md` (`skill report`)**
-   - Read `~/.agents/agents-config/evals/<name>/iteration-<N>/report.md`, or regenerate it with `agents-config skill report <name>` (latest iteration), `agents-config skill report <name> iteration-<N>`, or `agents-config skill report <run-dir>`:
+   - Read `~/.agents/skills-wizard/evals/<name>/iteration-<N>/report.md`, or regenerate it with `skills-wizard skill report <name>` (latest iteration), `skills-wizard skill report <name> iteration-<N>`, or `skills-wizard skill report <run-dir>`:
      - **Failed runs**: a run that errored or timed out fails all of its assertions with `Agent run failed: ...`; fix the runner problem before reading pass rates.
      - **Baseline status**: verify `metadata.baseline_status` is `"clean"`. If it is `"possibly contaminated"` (the runner cannot exclude a system-wide copy of the skill or a competing skill; always the case for `codex` and `agy` when a skill is installed globally), treat small deltas with caution.
      - **Pass-rate, duration, and token deltas**: `run_summary.delta` is `with_skill` minus `without_skill` (`old_skill_delta` is against `old_skill`, and `compare_deltas[<name>]` is against each `compare:<name>` variant in `run_summary.compare_skills`); the report shows the pass-rate delta in percentage points. Tokens read `n/a` when the runner reported no usage.
@@ -57,12 +57,12 @@ Measure whether an Agent Skill improves task outcomes over the no-skill baseline
    - Ensure `evals/trigger_queries.json` has at least 10 positive (`should_trigger: true`) and 10 near-miss negative (`should_trigger: false`) queries, written as plain user requests without labels.
    - Iterate on the `SKILL.md` `description` against the **train** split (about 60% of each class, chosen per query by hash so adding queries never moves existing ones):
      ```bash
-     agents-config skill triggers <name> --split train --runs 3
+     skills-wizard skill triggers <name> --split train --runs 3
      ```
    - Inspect false negatives (under-triggering) and false positives (over-triggering) in `triggers.md`, refine the `Use when...` and `Don't use for...` clauses in `SKILL.md`, and re-run on `--split train`.
    - Once train recall and specificity meet target thresholds, verify generalization on the held-out **validation** split:
      ```bash
-     agents-config skill triggers <name> --split validation --runs 3
+     skills-wizard skill triggers <name> --split validation --runs 3
      ```
    - Never tune `description` phrasing directly to validation queries; if validation recall or precision drops well below train, generalize the trigger concepts rather than adding query-specific keywords.
 

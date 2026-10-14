@@ -29,15 +29,14 @@ test('resolvePaths honors tool home overrides', () => {
 
   assert.deepEqual(paths, {
     home: '/home/me',
-    stateDir: '/home/me/.agents/agents-config',
-    evalsDir: '/home/me/.agents/agents-config/evals',
+    stateDir: '/home/me/.agents/skills-wizard',
+    evalsDir: '/home/me/.agents/skills-wizard/evals',
     skillsDir: '/home/me/.agents/skills',
-    sourcesDir: '/cache/agents-config/sources',
+    sourcesDir: '/cache/skills-wizard/sources',
     claudeHome: '/claude',
     codexHome: '/codex',
     geminiHome: '/home/me/.gemini',
     copilotHome: '/copilot',
-    localBin: '/home/me/.local/bin',
     applicationsDir: '/Applications',
   });
 });
@@ -45,7 +44,7 @@ test('resolvePaths honors tool home overrides', () => {
 test('resolvePaths keeps the source cache in ~/.cache by default', () => {
   const paths = resolvePaths({ HOME: '/home/me', XDG_CACHE_HOME: '' });
 
-  assert.equal(paths.sourcesDir, '/home/me/.cache/agents-config/sources');
+  assert.equal(paths.sourcesDir, '/home/me/.cache/skills-wizard/sources');
 });
 
 test('resolvePaths normalizes trailing slashes on HOME and tool overrides', () => {
@@ -56,7 +55,7 @@ test('resolvePaths normalizes trailing slashes on HOME and tool overrides', () =
 
   assert.equal(paths.home, '/home/me');
   assert.equal(paths.codexHome, '/codex');
-  assert.equal(paths.stateDir, '/home/me/.agents/agents-config');
+  assert.equal(paths.stateDir, '/home/me/.agents/skills-wizard');
 });
 
 test('resolvePaths treats empty values as unset', () => {

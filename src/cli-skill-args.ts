@@ -314,7 +314,7 @@ interface BuildSkillCommandOptionsParams {
 
 /**
  * Validates and converts parsed CLI option values and positional arguments into
- * {@link SkillCommandOptions} for `agents-config skill` subcommands.
+ * {@link SkillCommandOptions} for `skills-wizard skill` subcommands.
  */
 export function buildSkillCommandOptions({
   values,
