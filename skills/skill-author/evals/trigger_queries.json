@@ -1,0 +1,82 @@
+[
+  {
+    "query": "We just spent 20 minutes figuring out the right flags to migrate our Prisma schema safely in staging. Can you turn that workflow into a reusable skill so the agent remembers it next time?",
+    "should_trigger": true
+  },
+  {
+    "query": "Scaffold a reference-heavy skill for our OpenAPI conventions and split the pagination and error payload rules into separate reference files.",
+    "should_trigger": true
+  },
+  {
+    "query": "skills/docker-multi-stage/SKILL.md is 620 lines and the validator complains about unknown frontmatter keys. Can you restructure it?",
+    "should_trigger": true
+  },
+  {
+    "query": "The description on our changelog-generator skill is too vague and it fires on every git question. Rewrite it so it only kicks in for release prep.",
+    "should_trigger": true
+  },
+  {
+    "query": "I want a skill that bundles a small Node script for optimizing SVG icons. Set it up with the script under scripts/ and explain when to use it.",
+    "should_trigger": true
+  },
+  {
+    "query": "Help me design an agent skill for configuring Vitest workspaces, including the frontmatter and a few starter eval cases.",
+    "should_trigger": true
+  },
+  {
+    "query": "My draft skill has references/overview.md linking to references/details.md and a README.md in the folder. Clean it up so it follows the Agent Skills spec.",
+    "should_trigger": true
+  },
+  {
+    "query": "What frontmatter fields does the Agent Skills spec allow, and how should I phrase the description so the skill triggers reliably?",
+    "should_trigger": true
+  },
+  {
+    "query": "Package our team's GraphQL deprecation checklist as a skill with an examples reference file.",
+    "should_trigger": true
+  },
+  {
+    "query": "can you make a skill out of the Tailwind v4 migration steps we just went through?",
+    "should_trigger": true
+  },
+  {
+    "query": "Is our eslint-configuration skill actually helping? Benchmark it against running with no skill and show me the pass-rate difference.",
+    "should_trigger": false
+  },
+  {
+    "query": "The prettier skill keeps firing on unrelated prompts. Measure how often it triggers on the held-out queries.",
+    "should_trigger": false
+  },
+  {
+    "query": "Why isn't Claude Code picking up the pdf skill I installed in ~/.claude/skills?",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a short rule to our global AGENTS.md telling agents never to force-push.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add the anthropics pdf skill to catalog.yaml pinned to its latest commit.",
+    "should_trigger": false
+  },
+  {
+    "query": "Install all of our skills for Claude Code and Codex on this machine.",
+    "should_trigger": false
+  },
+  {
+    "query": "Fix the bug in src/skills/validate.ts where an allowed-tools value separated by tabs is rejected.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a README for this repository explaining how to install and run the CLI.",
+    "should_trigger": false
+  },
+  {
+    "query": "Turn this bash snippet into a reusable shell function in my dotfiles.",
+    "should_trigger": false
+  },
+  {
+    "query": "Summarize what the frontend-design skill in ~/.agents/skills does and when it kicks in.",
+    "should_trigger": false
+  }
+]

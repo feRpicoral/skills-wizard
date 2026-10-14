@@ -4,7 +4,7 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['node_modules/', 'coverage/', '.yarn/'] },
+  { ignores: ['node_modules/', 'coverage/', '.yarn/', '**/evals/files/**'] },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {

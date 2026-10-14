@@ -1,4 +1,6 @@
 node_modules/
+!skills/**/evals/files/**/node_modules/
+!skills/**/evals/files/**/node_modules/**
 coverage/
 .yarn/
 .DS_Store

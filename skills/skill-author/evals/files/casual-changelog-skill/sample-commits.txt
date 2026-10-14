@@ -1,0 +1,5 @@
+feat(api): add cursor pagination to /v1/projects
+fix(auth): refresh expired OAuth tokens before retrying
+perf(db): add composite index on (tenant_id, created_at)
+breaking(sdk): remove deprecated Client.connectSync() method
+docs(readme): document webhook signature verification

@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseArgs, styleText } from 'node:util';
+import { styleText } from 'node:util';
 
 import * as clack from '@clack/prompts';
 
-import type { Scope } from './blocks/library.ts';
+import {
+  buildSkillCommandOptions,
+  parseCommand,
+  type ParsedCommand,
+  parseList,
+  parseSkillMode,
+  parseTools,
+  parseVariables,
+} from './cli-args.ts';
 import { runAdopt } from './commands/adopt.ts';
 import { runDoctor } from './commands/doctor.ts';
 import { runInit } from './commands/init.ts';
@@ -20,8 +28,7 @@ import {
   isSystemError,
   UsageError,
 } from './errors.ts';
-import { SKILL_MODES, type SkillMode } from './skills/install.ts';
-import { isToolId, TOOL_IDS, type ToolId } from './tools/registry.ts';
+import { TOOL_IDS } from './tools/registry.ts';
 
 export { isSystemError };
 
@@ -36,6 +43,10 @@ Commands:
   adopt [skill...]          Take over existing unmanaged skills after backing them up
   doctor                    Check an install and report problems
   skill validate [path...]  Validate skill directories or --catalog
+  skill new <name>          Scaffold a new first-party skill in skills/<name>
+  skill eval <name>         Run with-skill vs baseline benchmark and grade assertions
+  skill triggers <name>     Measure trigger precision/recall on trigger_queries.json
+  skill report <name> [dir] Regenerate report.md from an existing benchmark iteration or run-dir
   help                      Show this help
 
 Run without a command in a terminal to open the interactive menu.
@@ -50,6 +61,25 @@ Options:
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --catalog             skill validate: validate every skill in catalog.yaml
+  --template <kind>     skill new: basic (default), scripted, or reference-heavy
+  --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
+  --runner <name>       skill eval/triggers: agy, claude, codex, gemini, or fake
+  --binary <path>       skill eval/triggers: override runner CLI binary path
+  --runs <n>            skill eval/triggers: runs per configuration or query (default: 1)
+  --baseline [none|ref] skill eval: run the without_skill baseline (default). --no-baseline or
+                        --baseline none skips it; --baseline <ref> compares against the skill at a
+                        git ref instead (cannot be combined with --compare)
+  --compare <ref>       skill eval: also run an old_skill snapshot of the skill folder at <ref>, read
+                        from the git repository that contains the skill
+  --case <id>           skill eval: filter to a single eval case ID
+  --cases <ids>         skill eval: comma-separated eval case IDs
+  --parallel <n>        skill eval/triggers: concurrent runs (default: 2)
+  --timeout <seconds>   skill eval/triggers: per-run timeout in seconds
+  --sandbox             skill eval/triggers: pass --sandbox to runners that support it
+                        (warns when the runner cannot; runs are otherwise not confined)
+  --keep-workdirs       skill eval/triggers: keep temporary workdirs for debugging
+  --split <name>        skill triggers: train, validation, or all (default: all)
+  --threshold <0..1>    skill triggers: pass threshold for positive queries (default: 0.5)
   --var <name=value>    Block variable, repeatable
   --link-command        Link the agents-config command into ~/.local/bin
   --local               Project scope: keep the files out of git
@@ -58,205 +88,11 @@ Options:
   -h, --help            Show this help
   -v, --version         Show the version`;
 
-const OPTIONS = {
-  global: { type: 'boolean' },
-  project: { type: 'string' },
-  tools: { type: 'string' },
-  blocks: { type: 'string' },
-  skills: { type: 'string' },
-  'skill-mode': { type: 'string' },
-  catalog: { type: 'boolean' },
-  var: { type: 'string', multiple: true },
-  'link-command': { type: 'boolean' },
-  local: { type: 'boolean' },
-  yes: { type: 'boolean', short: 'y' },
-  'dry-run': { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-  version: { type: 'boolean', short: 'v' },
-} as const;
-
-type OptionName = keyof typeof OPTIONS;
-
-const COMMANDS = [
-  'init',
-  'sync',
-  'update',
-  'adopt',
-  'doctor',
-  'skill',
-] as const;
-
-type Command = (typeof COMMANDS)[number];
-
-const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
-  init: [
-    'global',
-    'project',
-    'tools',
-    'blocks',
-    'skills',
-    'skill-mode',
-    'var',
-    'link-command',
-    'local',
-    'yes',
-    'dry-run',
-  ],
-  sync: ['global', 'project', 'yes', 'dry-run'],
-  update: ['yes', 'dry-run'],
-  adopt: ['skills', 'tools', 'yes', 'dry-run'],
-  doctor: ['global', 'project'],
-  skill: ['catalog'],
-};
-
-function isCommand(value: string): value is Command {
-  return (COMMANDS as readonly string[]).includes(value);
-}
-
-function flags(names: readonly string[]): string {
-  return names.map((name) => `--${name}`).join(', ');
-}
-
-function parseList(value: string | undefined): string[] | undefined {
-  if (value === undefined) return undefined;
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseTools(value: string | undefined): ToolId[] | undefined {
-  const ids = parseList(value);
-  if (!ids) return undefined;
-  const unknown = ids.filter((id) => !isToolId(id));
-  if (unknown.length > 0) {
-    throw new UsageError(`Unknown tools: ${unknown.join(', ')}`);
-  }
-  return ids.filter(isToolId);
-}
-
-function parseSkillMode(value: string | undefined): SkillMode | undefined {
-  if (value === undefined) return undefined;
-  const mode = SKILL_MODES.find((candidate) => candidate === value);
-  if (!mode) {
-    throw new UsageError(
-      `--skill-mode must be one of ${SKILL_MODES.join(', ')}, got "${value}"`,
-    );
-  }
-  return mode;
-}
-
-function parseVariables(values: string[] | undefined): Record<string, string> {
-  const variables: Record<string, string> = {};
-  for (const entry of values ?? []) {
-    const separator = entry.indexOf('=');
-    if (separator <= 0) {
-      throw new UsageError(`Expected --var name=value, got "${entry}"`);
-    }
-    variables[entry.slice(0, separator)] = entry.slice(separator + 1);
-  }
-  return variables;
-}
-
-function rejectOptions(command: Command, provided: readonly string[]): void {
-  const allowed: readonly string[] = ALLOWED[command];
-  const extra = provided.filter((name) => !allowed.includes(name));
-  if (extra.length > 0) {
-    throw new UsageError(`${flags(extra)} does not apply to ${command}`);
-  }
-}
-
 async function version(): Promise<string> {
   const packageJson = JSON.parse(
     await readFile(join(REPO_ROOT, 'package.json'), 'utf8'),
   ) as { version: string };
   return packageJson.version;
-}
-
-type ParsedCommand =
-  | { kind: 'help' }
-  | { kind: 'version' }
-  | { kind: 'default' }
-  | {
-      kind: 'command';
-      command: Command;
-      positionals: string[];
-      values: ReturnType<
-        typeof parseArgs<{ options: typeof OPTIONS }>
-      >['values'];
-      scope?: Scope;
-      yes: boolean;
-      dryRun: boolean;
-      projectDir?: string;
-    };
-
-function parseCommand(argv: string[]): ParsedCommand {
-  let parsed;
-  try {
-    parsed = parseArgs({
-      args: argv,
-      options: OPTIONS,
-      allowPositionals: true,
-      allowNegative: true,
-      strict: true,
-    });
-  } catch (error) {
-    throw new UsageError(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-
-  const { values, positionals } = parsed;
-  if (values.help) return { kind: 'help' };
-  if (values.version) return { kind: 'version' };
-  if (values.global && values.project !== undefined) {
-    throw new UsageError('Use either --global or --project, not both.');
-  }
-
-  const command = positionals[0];
-  if (command === undefined || command === 'help') {
-    if (positionals.length > 1) {
-      throw new UsageError(
-        `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
-      );
-    }
-    if (command === undefined) {
-      const provided = Object.keys(values);
-      if (provided.length > 0) {
-        throw new UsageError(
-          `${flags(provided)} must follow a command such as init`,
-        );
-      }
-      return { kind: 'default' };
-    }
-    return { kind: 'help' };
-  }
-  if (!isCommand(command)) {
-    throw new UsageError(`Unknown command "${command}"`);
-  }
-  if (command !== 'adopt' && command !== 'skill' && positionals.length > 1) {
-    throw new UsageError(
-      `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
-    );
-  }
-  rejectOptions(command, Object.keys(values));
-
-  const scope: Scope | undefined =
-    values.project !== undefined
-      ? 'project'
-      : values.global
-        ? 'global'
-        : undefined;
-  return {
-    kind: 'command',
-    command,
-    positionals,
-    values,
-    ...(scope ? { scope } : {}),
-    yes: values.yes ?? false,
-    dryRun: values['dry-run'] ?? false,
-    ...(values.project !== undefined ? { projectDir: values.project } : {}),
-  };
 }
 
 interface DispatchCommandParams {
@@ -268,7 +104,16 @@ interface DispatchCommandParams {
 function dispatchCommand({
   ctx,
   terminal,
-  parsed: { command, positionals, values, scope, yes, dryRun, projectDir },
+  parsed: {
+    command,
+    positionals,
+    values,
+    baselineRef,
+    scope,
+    yes,
+    dryRun,
+    projectDir,
+  },
 }: DispatchCommandParams): Promise<number> {
   const projectOption = projectDir !== undefined ? { projectDir } : {};
   switch (command) {
@@ -319,11 +164,10 @@ function dispatchCommand({
     case 'doctor':
       return runDoctor(ctx, { scope: scope ?? 'global', ...projectOption });
     case 'skill':
-      return runSkill(ctx, {
-        subcommand: positionals[1],
-        paths: positionals.slice(2),
-        catalog: values.catalog ?? false,
-      });
+      return runSkill(
+        ctx,
+        buildSkillCommandOptions({ values, positionals, baselineRef }),
+      );
   }
 }
 

@@ -1,0 +1,17 @@
+{
+  "skill_name": "tsconfig-strict-auditor",
+  "evals": [
+    {
+      "id": "strict-node24-setup",
+      "prompt": "Update tsconfig.json for Node 24 native TypeScript execution with strict type-checking and erasableSyntaxOnly enabled, and remove legacy tsconfig.build.json.",
+      "expected_output": "Updated tsconfig.json with strict: true, erasableSyntaxOnly: true, noEmit: true, and deleted tsconfig.build.json.",
+      "files": [],
+      "assertions": [
+        "tsconfig.json exists",
+        "tsconfig.build.json was deleted",
+        "tsconfig.json is valid JSON",
+        "tsconfig.json enables erasableSyntaxOnly"
+      ]
+    }
+  ]
+}

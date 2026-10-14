@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "skill_name": "dockerfile-hardener",
+    "skill_path": "/repo/skills/dockerfile-hardener",
+    "runner": "codex",
+    "split": "train",
+    "runs_per_query": 3,
+    "threshold": 0.5,
+    "timestamp": "2026-04-12T12:30:00.000Z",
+    "possibly_contaminated": false,
+    "warnings": []
+  },
+  "metrics": {
+    "total_queries": 12,
+    "positive_queries": 6,
+    "negative_queries": 6,
+    "errored_queries": 0,
+    "true_positives": 6,
+    "false_positives": 0,
+    "true_negatives": 6,
+    "false_negatives": 0,
+    "recall": 1,
+    "precision": 1,
+    "specificity": 1,
+    "false_positive_rate": 0,
+    "accuracy": 1
+  },
+  "queries": [
+    {
+      "query": "Harden our Dockerfile for production",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Make this Dockerfile run as a non-root user",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Pin the base image in our Dockerfile to a digest",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Convert this Dockerfile to a multi-stage build to shrink the image",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Our container scan flags the Dockerfile for running as root, fix it",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Add a HEALTHCHECK and drop capabilities in the Dockerfile",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Write a docker-compose.yml for Postgres and Redis",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    },
+    {
+      "query": "Why does docker build fail with no space left on device?",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    },
+    {
+      "query": "Set up a Kubernetes deployment manifest for the API",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    },
+    {
+      "query": "Explain the difference between CMD and ENTRYPOINT",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    },
+    {
+      "query": "Configure GitHub Actions to push images to GHCR",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    },
+    {
+      "query": "Tune the Node.js heap size for our container",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    }
+  ]
+}

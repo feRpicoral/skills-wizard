@@ -7,6 +7,7 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 - Setup: `nvm use && corepack enable && yarn install`
 - Run the CLI from source: `yarn agents-config [command]`. Node 24 strips the TypeScript types at runtime, so there is no build step.
 - Validate skills: `yarn agents-config skill validate [path...]` or `yarn agents-config skill validate --catalog`
+- Scaffold and evaluate skills: `yarn agents-config skill new <name> [--with-evals]`, `yarn agents-config skill eval <name>`, `yarn agents-config skill triggers <name>`, `yarn agents-config skill report <name> [iteration-dir]`
 - Checks before pushing: `yarn lint && yarn typecheck && yarn test`
 
 ## Layout
@@ -16,6 +17,7 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 - `catalog.yaml`: curated third-party skills by upstream repository and path.
 - `src/blocks/`: loading, validating and composing blocks.
 - `src/skills/`: catalog loading, sparse git source cache, skill tree copying/hashing, spec validation, collision detection, diffs and risk scanning.
+- `src/evals/`: skill evaluation schemas (`evals.json`, `trigger_queries.json`), isolated workspace preparation, runner adapters (`agy`, `claude`, `codex`, `gemini`, `fake`), scripted and blind-grader assertion evaluation, benchmark aggregation and Markdown reports.
 - `src/install/`: planning and applying file and skill changes (managed regions, import lines, JSON merges, symlinks, skill trees).
 - `src/tools/registry.ts`: where each supported tool reads its instructions and skills.
 - `src/state/`: manifests and the recorded projects registry (`projects.json`).
@@ -29,5 +31,7 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 - Never modify or delete a path that is not recorded in a manifest.
 - Block bodies start with an H2 heading, except `core/identity`. Block text becomes installed instructions, so edit it deliberately. Prettier ignores `blocks/` to keep that text exact.
 - Every skill in `catalog.yaml` from the same repository must share one `ref`, and its upstream `SKILL.md` frontmatter `name` must match the catalog `name`.
+- Add first-party skills under `skills/<name>/` (`yarn agents-config skill new <name> --with-evals`), validate with `yarn agents-config skill validate skills/<name>`, and evaluate with `yarn agents-config skill eval <name>` and `yarn agents-config skill triggers <name>`.
+- First-party skill instructions call `agents-config skill ...`; `yarn agents-config` applies only inside this repository.
 - Code, docs, tests and commits reference only public tools and paths.
 - Tests use `tempPaths`, `tempDir` and local bare git repositories (`createUpstream`) and never touch the network or the real home directory.
