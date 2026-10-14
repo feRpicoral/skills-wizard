@@ -8,6 +8,7 @@ const LOOKUP_TIMEOUT_MS = 5_000;
 export interface VariableLookupEnv {
   home?: string;
   searchPath?: readonly string[];
+  env?: NodeJS.ProcessEnv;
 }
 
 interface VariableDefinition {
@@ -15,20 +16,23 @@ interface VariableDefinition {
   lookup?: (lookupEnv?: VariableLookupEnv) => Promise<string | undefined>;
 }
 
-async function commandOutput(
+export async function commandOutput(
   command: string,
   args: string[],
   lookupEnv?: VariableLookupEnv,
 ): Promise<string | undefined> {
   try {
     const env =
-      lookupEnv?.home !== undefined || lookupEnv?.searchPath !== undefined
+      lookupEnv?.home !== undefined ||
+      lookupEnv?.searchPath !== undefined ||
+      lookupEnv?.env !== undefined
         ? {
+            ...process.env,
             ...(lookupEnv.home !== undefined ? { HOME: lookupEnv.home } : {}),
             ...(lookupEnv.searchPath !== undefined
               ? { PATH: lookupEnv.searchPath.join(delimiter) }
               : {}),
-            GIT_CONFIG_NOSYSTEM: '1',
+            ...lookupEnv.env,
           }
         : undefined;
     const { stdout } = await run(command, args, {
@@ -45,7 +49,11 @@ const VARIABLES: Readonly<Record<string, VariableDefinition>> = {
   githubUsername: {
     message: 'GitHub username',
     lookup: async (lookupEnv) =>
-      (await commandOutput('gh', ['api', 'user', '--jq', '.login'], lookupEnv)) ??
+      (await commandOutput(
+        'gh',
+        ['api', 'user', '--jq', '.login'],
+        lookupEnv,
+      )) ??
       (await commandOutput(
         'git',
         ['config', '--get', 'github.user'],

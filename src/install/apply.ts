@@ -4,7 +4,7 @@ import {
   removeTree,
   replaceWithCopy,
   replaceWithLink,
-} from '../skills/tree.ts';
+} from '../skills/tree-replace.ts';
 import { serializeManifest, writeManifest } from '../state/manifest.ts';
 import {
   readTextIfExists,
@@ -82,14 +82,9 @@ async function setUp(
 interface RecordManifestParams {
   plan: Plan;
   applied: ReadonlySet<PlannedAction>;
-  partial: boolean;
 }
 
-async function recordManifest({
-  plan,
-  applied,
-  partial,
-}: RecordManifestParams) {
+async function recordManifest({ plan, applied }: RecordManifestParams) {
   const entries = plan.actions.flatMap((action) => {
     const entry = applied.has(action) ? action.entry : action.previous;
     return entry ? [entry] : [];
@@ -102,9 +97,9 @@ async function recordManifest({
   const installedSkills = new Set(
     entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
   );
-  const skills = partial
-    ? plan.manifest.skills.filter((name) => installedSkills.has(name))
-    : plan.manifest.skills;
+  const skills = plan.manifest.skills.filter((name) =>
+    installedSkills.has(name),
+  );
   const manifest = { ...plan.manifest, skills, entries };
   const existing = await readTextIfExists(plan.manifestPath);
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
@@ -169,13 +164,12 @@ export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   const outcome: ApplyOutcome = { applied: [], skipped: [], setupFailures: [] };
   const { applied } = outcome;
 
-  const { failure, signal, partial } = await executeAll(plan, outcome);
+  const { failure, signal } = await executeAll(plan, outcome);
 
   try {
     await recordManifest({
       plan,
       applied: new Set(applied),
-      partial,
     });
   } catch (error) {
     const unrecorded = applied

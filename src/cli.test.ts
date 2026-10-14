@@ -359,19 +359,33 @@ test('--baseline <ref> is accepted before or after the skill name', async (t) =>
 test('--baseline before the skill name without a ref keeps the name', async (t) => {
   const [repo, { cli }] = await Promise.all([skillRepo(t), sandbox(t)]);
 
-  const [bare, missing] = await Promise.all([
+  const [bare, missing, extraArg] = await Promise.all([
     cli(['skill', 'eval', '--baseline', 'demo-skill', '--runner', 'fake'], {
       cwd: repo,
     }),
     cli(['skill', 'eval', '--baseline', 'main', 'no-such-skill'], {
       cwd: repo,
     }),
+    cli(
+      [
+        'skill',
+        'eval',
+        '--baseline',
+        'demo-skill',
+        'extra-arg',
+        '--runner',
+        'fake',
+      ],
+      { cwd: repo },
+    ),
   ]);
 
   assert.equal(bare.code, 0, bare.stderr);
   assert.match(bare.stdout, /without_skill run 1\/1/);
   assert.equal(missing.code, 2);
   assert.match(missing.stderr, /Skill "no-such-skill" was not found/);
+  assert.equal(extraArg.code, 2);
+  assert.match(extraArg.stderr, /Usage: agents-config skill eval <name>/);
 });
 
 test('--baseline <ref> cannot be combined with --compare or another --baseline', async (t) => {
