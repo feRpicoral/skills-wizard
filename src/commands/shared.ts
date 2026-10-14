@@ -109,6 +109,23 @@ export async function loadMcpServers(ctx: Context): Promise<McpCatalog> {
   return loadMcpCatalog(mcpCatalogPath(ctx.repoRoot));
 }
 
+/**
+ * Combines the recorded tools with the ones passed through `--tools`.
+ *
+ * Without `--tools` the recorded tools stay as they are. An empty `--tools`
+ * list removes every tool; otherwise the requested tools are added to the
+ * recorded ones.
+ */
+export function mergeRequestedTools(
+  recorded: readonly ToolId[],
+  requested: readonly ToolId[] | undefined,
+): ToolId[] {
+  if (requested === undefined) return [...recorded];
+  if (requested.length === 0) return [];
+
+  return [...new Set([...recorded, ...requested])];
+}
+
 export interface ReconcileManifestParams {
   manifest: Manifest;
   library: BlockLibrary;

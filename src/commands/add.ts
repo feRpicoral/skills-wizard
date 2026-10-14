@@ -35,6 +35,7 @@ import {
   buildSyncPlanForLocation,
   loadLibrary,
   loadMcpServers,
+  mergeRequestedTools,
   notify,
   readLocationManifest,
   resolveLocation,
@@ -126,12 +127,8 @@ async function installAddedSkill({
   }
   const library = await loadLibrary(ctx);
   const mcpCatalog = await loadMcpServers(ctx);
-  const tools =
-    requestedTools !== undefined
-      ? requestedTools.length === 0
-        ? []
-        : [...new Set([...previous.tools, ...requestedTools])]
-      : previous.tools;
+  const tools = mergeRequestedTools(previous.tools, requestedTools);
+
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }

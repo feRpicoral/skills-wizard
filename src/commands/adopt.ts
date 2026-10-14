@@ -27,6 +27,7 @@ import {
   buildSyncPlanForLocation,
   loadLibrary,
   loadMcpServers,
+  mergeRequestedTools,
   notify,
   readLocationManifest,
   resolveLocation,
@@ -206,12 +207,8 @@ export async function runAdopt(
 
   const library = await loadLibrary(ctx);
   const mcpCatalog = await loadMcpServers(ctx);
-  const tools =
-    requestedTools !== undefined
-      ? requestedTools.length === 0
-        ? []
-        : [...new Set([...previous.tools, ...requestedTools])]
-      : previous.tools;
+  const tools = mergeRequestedTools(previous.tools, requestedTools);
+
   if (tools.length === 0) {
     throw new UsageError(
       'No tools recorded; pass --tools <ids> or run agents-config init --global.',
