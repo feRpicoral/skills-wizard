@@ -12,7 +12,11 @@ import {
   replaceSymlink,
   writeTextAtomic,
 } from './fs.ts';
-import type { Plan, PlannedAction } from './plan.ts';
+import {
+  type Plan,
+  type PlannedAction,
+  resolveManifestEntries,
+} from './plan.ts';
 
 interface SetupFailure {
   path: string;
@@ -85,31 +89,17 @@ interface RecordManifestParams {
 }
 
 async function recordManifest({ plan, applied }: RecordManifestParams) {
-  const entries = plan.actions.flatMap((action) => {
-    const entry = applied.has(action) ? action.entry : action.previous;
-    return entry ? [entry] : [];
+  const effective = resolveManifestEntries({
+    manifest: plan.manifest,
+    actions: plan.actions,
+    isApplied: (action) => applied.has(action),
   });
-  if (entries.length === 0 && plan.manifest.tools.length === 0) {
+  if (effective.entries.length === 0 && effective.manifest.tools.length === 0) {
     await removePath(plan.manifestPath);
     return;
   }
 
-  const installedSkills = new Set(
-    entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
-  );
-  const unappliedSkills = new Set(
-    plan.actions.flatMap((action) =>
-      action.skill !== undefined &&
-      !applied.has(action) &&
-      !installedSkills.has(action.skill)
-        ? [action.skill]
-        : [],
-    ),
-  );
-  const skills = plan.manifest.skills.filter(
-    (name) => !unappliedSkills.has(name),
-  );
-  const manifest = { ...plan.manifest, skills, entries };
+  const manifest = { ...effective.manifest, entries: effective.entries };
   const existing = await readTextIfExists(plan.manifestPath);
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
     await writeManifest({

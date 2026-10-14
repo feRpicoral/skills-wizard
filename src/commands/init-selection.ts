@@ -11,6 +11,11 @@ import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import {
+  defaultMcpServerNames,
+  detectedMcpServerNames,
+  type McpCatalog,
+} from '../mcp/model.ts';
+import {
   applyReRunPresetAndStyle,
   applyReRunPresetSkills,
   type PresetChoice,
@@ -22,6 +27,7 @@ import {
   promptBlocks,
   promptKeepLocal,
   promptLinkCommand,
+  promptMcpServers,
   promptSkillMode,
   promptSkills,
   promptTools,
@@ -37,6 +43,8 @@ import type { Manifest } from '../state/manifest.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
+  checkExplicitMcp,
+  dropUnavailableMcpServers,
   dropUnknownSkills,
   type Location,
   notify,
@@ -342,4 +350,63 @@ export async function resolveSkillsSelection({
           : previousMode))
       : DEFAULT_SKILL_MODE;
   return { skills, skillMode };
+}
+
+export interface ResolveMcpSelectionParams {
+  ctx: Context;
+  mcpCatalog: McpCatalog;
+  scope: Scope;
+  prompting: boolean;
+  requestedMcp?: string[];
+  location: Location;
+  previous: Manifest | null;
+}
+
+export async function resolveMcpSelection({
+  ctx,
+  mcpCatalog,
+  scope,
+  prompting,
+  requestedMcp,
+  location,
+  previous,
+}: ResolveMcpSelectionParams): Promise<string[]> {
+  if (requestedMcp) {
+    checkExplicitMcp({ catalog: mcpCatalog, names: requestedMcp, scope });
+  }
+  const recordedMcp = previous
+    ? dropUnavailableMcpServers({
+        ctx,
+        prompting,
+        catalog: mcpCatalog,
+        names: previous.mcp,
+        scope,
+      })
+    : null;
+  const detectedMcp =
+    scope === 'project'
+      ? detectedMcpServerNames(
+          mcpCatalog,
+          location.detection?.detectedMcpServers ?? [],
+        )
+      : [];
+  const initialMcp =
+    requestedMcp ??
+    (recordedMcp !== null
+      ? recordedMcp
+      : scope === 'project'
+        ? [
+            ...new Set([
+              ...defaultMcpServerNames(mcpCatalog, 'project'),
+              ...detectedMcp,
+            ]),
+          ]
+        : defaultMcpServerNames(mcpCatalog, scope));
+  return prompting
+    ? promptMcpServers({
+        catalog: mcpCatalog,
+        scope,
+        initial: initialMcp,
+      })
+    : initialMcp;
 }

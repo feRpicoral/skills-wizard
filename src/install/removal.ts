@@ -1,6 +1,7 @@
 import { dirname } from 'node:path';
 
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
+import { removeMcpJsonServers, removeMcpTomlServers } from '../mcp/install.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import { readSymlink } from './fs.ts';
 import { removeLine } from './import-line.ts';
@@ -39,6 +40,8 @@ type FileEntry = Exclude<ManifestEntry, SymlinkEntry | SkillEntry>;
 type RegionEntry = Extract<FileEntry, { kind: 'region' | 'exclude-region' }>;
 type LineEntry = Extract<FileEntry, { kind: 'line' }>;
 type JsonArrayEntry = Extract<FileEntry, { kind: 'json-array' }>;
+type McpJsonEntry = Extract<FileEntry, { kind: 'mcp-json' }>;
+type McpTomlEntry = Extract<FileEntry, { kind: 'mcp-toml' }>;
 
 interface ResolvedRemovalFile {
   writePath: string;
@@ -230,12 +233,69 @@ function planJsonArrayRemoval(
       entry.wasEmpty && isEmptyJsonObject(removed)
         ? (entry.blankText ?? '')
         : removed;
-    if (next === file.existing) {
-      return removal({ entry, change: NONE, reason: NOTHING_LEFT });
-    }
     return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
+      return conflict({
+        target: { path: entry.path, label: REMOVAL_LABEL },
+        previous: entry,
+        reason: error.message,
+      });
+    }
+    throw error;
+  }
+}
+
+interface PlanMcpJsonRemovalParams {
+  entry: McpJsonEntry;
+  file: ResolvedRemovalFile;
+  retainedServers?: ReadonlySet<string>;
+}
+
+function planMcpJsonRemoval({
+  entry,
+  file,
+  retainedServers,
+}: PlanMcpJsonRemovalParams): PlannedAction {
+  try {
+    const removed = removeMcpJsonServers({
+      existing: file.existing,
+      servers: entry.servers,
+      createdMcpServers: entry.createdMcpServers ?? entry.createdFile,
+      ...(entry.original === undefined ? {} : { original: entry.original }),
+      ...(retainedServers !== undefined ? { retainedServers } : {}),
+    });
+    const next =
+      entry.wasEmpty && isEmptyJsonObject(removed)
+        ? (entry.blankText ?? '')
+        : removed;
+    return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
+  } catch (error) {
+    if (error instanceof JsonMergeError) {
+      return conflict({
+        target: { path: entry.path, label: REMOVAL_LABEL },
+        previous: entry,
+        reason: error.message,
+      });
+    }
+    throw error;
+  }
+}
+
+function planMcpTomlRemoval(
+  entry: McpTomlEntry,
+  file: ResolvedRemovalFile,
+): PlannedAction {
+  try {
+    const remaining = removeMcpTomlServers(file.existing);
+    return rewriteOrDelete({
+      entry,
+      file,
+      next: remaining,
+      emptyWhen: (next) => next === '',
+    });
+  } catch (error) {
+    if (error instanceof ManagedRegionError) {
       return conflict({
         target: { path: entry.path, label: REMOVAL_LABEL },
         previous: entry,
@@ -251,6 +311,7 @@ export interface PlanRemovalParams {
   staged: StagedContents;
   sharedWith?: string;
   boundary?: string;
+  retainedMcpServers?: ReadonlySet<string>;
 }
 
 export async function planRemoval({
@@ -258,6 +319,7 @@ export async function planRemoval({
   staged,
   sharedWith,
   boundary,
+  retainedMcpServers,
 }: PlanRemovalParams): Promise<PlannedAction> {
   if (sharedWith !== undefined) {
     return removal({
@@ -301,5 +363,15 @@ export async function planRemoval({
       return planLineRemoval(entry, resolved.file);
     case 'json-array':
       return planJsonArrayRemoval(entry, resolved.file);
+    case 'mcp-json':
+      return planMcpJsonRemoval({
+        entry,
+        file: resolved.file,
+        ...(retainedMcpServers !== undefined
+          ? { retainedServers: retainedMcpServers }
+          : {}),
+      });
+    case 'mcp-toml':
+      return planMcpTomlRemoval(entry, resolved.file);
   }
 }

@@ -1,18 +1,31 @@
+import { parsePath } from 'dot-prop';
+
 import { JsonMergeError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import { sameFile } from './fs.ts';
 import { planLine, planSatisfiedLine } from './import-line.ts';
-import { ensureArrayValues, type EnsureResult } from './json-merge.ts';
+import {
+  type EmptyJsonState,
+  ensureArrayValues,
+  type EnsureResult,
+} from './json-merge.ts';
 import { planExcludeRegion, planRegion } from './managed-region.ts';
+import {
+  planMcpJson,
+  planMcpToml,
+  type SharedMcpJsonState,
+} from './mcp-file-actions.ts';
 import {
   conflict,
   type FileActionParams,
-  type PlanFileParams,
+  type PlanFileParams as BasePlanFileParams,
   type PlannedAction,
   resolveTargetFile,
   writeAction,
 } from './safety.ts';
 import type { JsonArrayTarget } from './targets.ts';
+
+export type { EmptyJsonState, SharedMcpJsonState };
 
 type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
 
@@ -41,21 +54,27 @@ function createdShape({ earlier, result }: CreatedShapeParams): CreatedShape {
   return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
 }
 
+interface PlanJsonArrayParams extends FileActionParams<JsonArrayTarget> {
+  emptyJson?: EmptyJsonState;
+}
+
 function planJsonArray({
   target,
   file,
   previous,
-}: FileActionParams<JsonArrayTarget>): PlannedAction {
+  emptyJson,
+}: PlanJsonArrayParams): PlannedAction {
   try {
-    const result = ensureArrayValues({
-      existing: file.existing,
-      keyPath: target.key,
-      values: target.values,
-    });
     const earlier =
       file.existing !== null && previous?.kind === 'json-array'
         ? previous
         : null;
+    const result = ensureArrayValues({
+      existing: file.existing,
+      keyPath: target.key,
+      values: target.values,
+      ...(earlier ? { ownedValues: earlier.added } : {}),
+    });
     const added = [
       ...new Set([
         ...(earlier?.added ?? []).filter((value) =>
@@ -64,6 +83,22 @@ function planJsonArray({
         ...result.added,
       ]),
     ];
+    const wasEmpty = earlier
+      ? earlier.wasEmpty
+      : (emptyJson?.wasEmpty ?? result.wasEmpty);
+    const blankText = earlier
+      ? earlier.blankText
+      : (emptyJson?.blankText ?? result.blankText);
+    const shape = createdShape({ earlier, result });
+    const effectiveShape =
+      !earlier &&
+      shape.original === undefined &&
+      emptyJson?.rootOriginal !== undefined
+        ? {
+            createdKeys: parsePath(target.key).length,
+            original: emptyJson.rootOriginal,
+          }
+        : shape;
     return writeAction({
       target,
       file,
@@ -74,13 +109,9 @@ function planJsonArray({
         key: target.key,
         added,
         wasString: earlier?.wasString ?? result.wasString,
-        ...createdShape({ earlier, result }),
-        ...((earlier ? earlier.wasEmpty : result.wasEmpty)
-          ? { wasEmpty: true }
-          : {}),
-        ...((earlier ? earlier.blankText : result.blankText) !== undefined
-          ? { blankText: earlier ? earlier.blankText : result.blankText }
-          : {}),
+        ...effectiveShape,
+        ...(wasEmpty ? { wasEmpty: true } : {}),
+        ...(blankText !== undefined ? { blankText } : {}),
         createdFile: file.createdFile,
       },
       previous,
@@ -93,9 +124,16 @@ function planJsonArray({
   }
 }
 
+export interface PlanFileParams extends BasePlanFileParams {
+  emptyJson?: EmptyJsonState;
+  sharedMcp?: SharedMcpJsonState;
+}
+
 export async function planFile({
   target,
   previous,
+  emptyJson,
+  sharedMcp,
   ...rest
 }: PlanFileParams): Promise<PlannedAction> {
   if (
@@ -114,6 +152,8 @@ export async function planFile({
   if (!resolved.ok) return resolved.action;
   const { file } = resolved;
 
+  const emptyState = emptyJson ? { emptyJson } : {};
+  const mcpState = sharedMcp ? { sharedMcp } : {};
   switch (target.kind) {
     case 'region':
       return planRegion({ target, file, previous });
@@ -122,6 +162,16 @@ export async function planFile({
     case 'line':
       return planLine({ target, file, previous });
     case 'json-array':
-      return planJsonArray({ target, file, previous });
+      return planJsonArray({ target, file, previous, ...emptyState });
+    case 'mcp-json':
+      return planMcpJson({
+        target,
+        file,
+        previous,
+        ...emptyState,
+        ...mcpState,
+      });
+    case 'mcp-toml':
+      return planMcpToml({ target, file, previous });
   }
 }

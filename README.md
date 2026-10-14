@@ -1,6 +1,6 @@
 # agents-config
 
-The source of truth for my coding-agent instructions and skills. A CLI composes `AGENTS.md` from reusable blocks, installs first-party and curated third-party skills, and links them into the tools you pick, either system-wide or per project.
+The source of truth for my coding-agent instructions, skills, and MCP servers. A CLI composes `AGENTS.md` from reusable blocks, installs first-party and curated third-party skills, and configures curated MCP servers for the tools you pick, either system-wide or per project.
 
 Supported tools: Claude Code, Codex, Gemini CLI, Antigravity (IDE and `agy`) and Copilot.
 
@@ -33,8 +33,12 @@ Without a terminal, commands print the plan and only write when you pass `--yes`
 | `agents-config skill eval <name>`                   | Benchmark a skill (`with_skill` vs `without_skill` or `--baseline <ref>`, and optional `--compare <ref>` or `<skill-a>,<skill-b>`)     |
 | `agents-config skill triggers <name>`               | Measure trigger precision, recall and false positive rate on `evals/trigger_queries.json`                                              |
 | `agents-config skill report <name> [iteration-dir]` | Regenerate `report.md` for the latest iteration, a named one (`iteration-<N>`) or a run directory                                      |
+| `agents-config mcp [list]`                          | List curated MCP servers from `mcp/servers.yaml` and their install status                                                              |
+| `agents-config mcp add <name...>`                   | Install curated MCP servers into the selected scope                                                                                    |
+| `agents-config mcp remove <name...>`                | Remove installed MCP servers from the selected scope                                                                                   |
+| `agents-config mcp search <query>`                  | Search the MCP registry (`--official`, `--limit`, `--add`) and optionally append to `mcp/servers.yaml`                                 |
 
-Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--preset <id|none>`, `--style lean|self-contained|strict`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
+Common flags: `--tools`, `--blocks`, `--skills`, `--mcp`, `--skill-mode copy|link`, `--preset <id|none>`, `--style lean|self-contained|strict`, `--var name=value`, `--yes`, `--dry-run` and `--local` (keep project files out of git). `agents-config --help` lists all of them.
 
 ## Stack presets and project onboarding
 
@@ -50,7 +54,7 @@ Common flags: `--tools`, `--blocks`, `--skills`, `--skill-mode copy|link`, `--pr
 | `python-service` | `python-uv`                                                                                 | (none by default)                                                                                                                                                                                                                                                    |
 | `node-tool`      | `typescript`, `node-yarn`, `lint-format`                                                    | `eslint-configuration`, `prettier-configuration`                                                                                                                                                                                                                     |
 
-Additive detections automatically include `stack/prisma` (`prisma-cli`, `prisma-client-api`, `prisma-orm-setup`, `prisma-upgrade-v7`), `stack/supabase-prisma` (`supabase-prisma`, `supabase`, `supabase-postgres-best-practices`), `stack/tanstack-query` (`tanstack-query-expert`), `stack/tailwind-shadcn` (`tailwind-patterns`), `stack/llm-apps` (`ai-sdk`, `claude-api`) and `playwright-cli` when those packages or config files are present. Use `--style lean` (default when a system-wide install exists) to include only `stack/*` blocks in project `AGENTS.md` alongside the global `AGENTS.md`, or `--style self-contained` (default when no system-wide install exists) to include project-default core, engineering and git blocks alongside `stack/*` blocks in a standalone file.
+Additive detections automatically include `stack/prisma` (`prisma-cli`, `prisma-client-api`, `prisma-orm-setup`, `prisma-upgrade-v7`), `stack/supabase-prisma` (`supabase-prisma`, `supabase`, `supabase-postgres-best-practices`), `stack/tanstack-query` (`tanstack-query-expert`), `stack/tailwind-shadcn` (`tailwind-patterns`), `stack/llm-apps` (`ai-sdk`, `claude-api`) and `playwright-cli` when those packages or config files are present, and auto-select project-scoped MCP servers (`nx`, `supabase`, `sentry`) when detected in the project. Use `--style lean` (default when a system-wide install exists) to include only `stack/*` blocks in project `AGENTS.md` alongside the global `AGENTS.md`, or `--style self-contained` (default when no system-wide install exists) to include project-default core, engineering and git blocks alongside `stack/*` blocks in a standalone file.
 
 ## How it works
 
@@ -85,3 +89,12 @@ flowchart LR
 - **First-party skill:** scaffold `skills/<name>` with `yarn agents-config skill new <name> --with-evals` (or use the `skill-author` skill), author `SKILL.md` with spec-compliant frontmatter (`name` matching `<name>` and `description` stating when to use the skill), and run `yarn agents-config skill validate skills/<name>`.
 - **Benchmarking and triggers:** define test cases in `skills/<name>/evals/evals.json` and trigger queries in `skills/<name>/evals/trigger_queries.json`, then run `yarn agents-config skill eval <name>` (including `--compare <ref>` for a historical snapshot or `--compare <skill-a>,<skill-b>` to benchmark competing skills side by side) and `yarn agents-config skill triggers <name>` (or use the `skill-evaluator` skill). Reports and `benchmark.json` artifacts are written to `~/.agents/agents-config/evals/<name>/`. Eval runs start the real agent CLIs with your home directory, settings and credentials, and they are not confined: `--sandbox` reaches only runners that support it (the CLI warns otherwise), so review eval prompts and fixtures before running them, or check that a suite loads and produces reports with `--runner fake` (its results are synthetic). [docs/tools.md](docs/tools.md#skill-evaluation) lists the runner settings.
 - **Third-party skill:** run `yarn agents-config add [query|owner/repo[@skill]|url]` (`--source skills-sh|awesome|all`, `--category <category>`, `--ref <ref>`, `--include-offensive`, `--install`) to search `skills.sh` and `sickn33/agentic-awesome-skills` (`skills_index.json`), locate the skill path in the upstream repository, validate `SKILL.md` and scan risk flags before appending to `catalog.yaml`, or add an entry directly to `catalog.yaml` (`name`, `repo`, `path`, `category`, `scopes`, optional `ref` (a branch, tag or full commit SHA), `defaults`, `setup`, `note`) and run `yarn agents-config skill validate --catalog`.
+
+## Curated MCP servers
+
+`mcp/servers.yaml` defines curated MCP servers with explicit version pins and remote endpoints (remote `https://mcp.context7.com/mcp`, `fetcher-mcp@0.2.1`, `mcp-server-reddit@0.5.2`, `nx-mcp@0.3.2`, `@supabase/mcp-server-supabase@0.5.5`, and remote `https://mcp.sentry.dev/mcp`):
+
+- **Global defaults:** `context7`, `fetcher`, and `reddit`.
+- **Project auto-detected:** `nx` (when `nx.json` or `nx` is present), `supabase` (read-only by default, when `supabase/config.toml` or `@supabase/supabase-js` is present), and `sentry` (when `@sentry/*` or `sentry-sdk` is present).
+- **Secrets and tool filtering:** Secret tokens are referenced via `{ secret: ENV_VAR_NAME, optional?: boolean }` in `mcp/servers.yaml` and rendered into each tool's native environment interpolation syntax, so secret values are never written to disk or manifests. Tool allow/deny lists (`tools.allow` / `tools.deny`) map to each client's native filtering fields (`enabledTools`/`disabledTools`, `includeTools`/`excludeTools`, `tools`, and Claude Code `permissions.deny`).
+- **Registry discovery:** Run `agents-config mcp search <query> [--official] [--limit <n>] [--add]` to search the GitHub MCP Registry (`https://api.mcp.github.com/v0.1/servers`) or the official MCP Registry (`https://registry.modelcontextprotocol.io/v0.1/servers`) and append a server definition to `mcp/servers.yaml`.

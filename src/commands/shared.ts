@@ -19,6 +19,11 @@ import {
 import type { Context } from '../context.ts';
 import { MissingVariablesError } from '../errors.ts';
 import { buildPlan, type Plan } from '../install/plan.ts';
+import {
+  loadMcpCatalog,
+  type McpCatalog,
+  mcpCatalogPath,
+} from '../mcp/model.ts';
 import { isPresetChoice, type PresetChoice } from '../project/presets.ts';
 import { promptVariables } from '../prompts/selection.ts';
 import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
@@ -28,11 +33,22 @@ import type { ToolId } from '../tools/registry.ts';
 import { type Location, warnTrackedFiles } from './location.ts';
 import { notify, notifyLeftGit, setVariablesCommand } from './output.ts';
 import {
+  checkExplicitMcp,
+  type CheckExplicitMcpParams,
+  dropUnavailableBlocks,
+  type DropUnavailableBlocksParams,
+  dropUnavailableMcpServers,
+  type DropUnavailableMcpServersParams,
+  dropUnknownPreset,
+  type DropUnknownPresetParams,
+  dropUnknownSkills,
+  type DropUnknownSkillsParams,
+  replacementSkillHint,
+} from './prune.ts';
+import {
   applyWithCatalogRollback,
   type ApplyWithCatalogRollbackOutcome,
   type ApplyWithCatalogRollbackParams,
-  dropUnknownSkills,
-  type DropUnknownSkillsParams,
   fetchSkills,
   type FetchSkillsParams,
   sourceCache,
@@ -68,10 +84,19 @@ export {
   applyWithCatalogRollback,
   type ApplyWithCatalogRollbackOutcome,
   type ApplyWithCatalogRollbackParams,
+  checkExplicitMcp,
+  type CheckExplicitMcpParams,
+  dropUnavailableBlocks,
+  type DropUnavailableBlocksParams,
+  dropUnavailableMcpServers,
+  type DropUnavailableMcpServersParams,
+  dropUnknownPreset,
+  type DropUnknownPresetParams,
   dropUnknownSkills,
   type DropUnknownSkillsParams,
   fetchSkills,
   type FetchSkillsParams,
+  replacementSkillHint,
   sourceCache,
   warnLockedSkills,
 };
@@ -80,87 +105,8 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
 }
 
-const BLOCK_REPLACEMENT_SKILLS: Readonly<Record<string, string>> = {
-  'git/github-repo-setup': 'github-repo-setup',
-  'stack/supabase-prisma': 'supabase-prisma',
-};
-
-/**
- * Formats a parenthetical hint pointing to the replacement skill(s) when a
- * deprecated or out-of-scope block ID has a first-party skill equivalent.
- */
-export function replacementSkillHint(ids: readonly string[]): string {
-  const skills = [
-    ...new Set(
-      ids
-        .map((id) => BLOCK_REPLACEMENT_SKILLS[id])
-        .filter((name): name is string => name !== undefined),
-    ),
-  ];
-  if (skills.length === 0) return '';
-  return ` (use the ${skills.join(', ')} skill${skills.length === 1 ? '' : 's'} instead)`;
-}
-
-export interface DropUnknownPresetParams {
-  ctx: Context;
-  prompting: boolean;
-  preset: string | undefined;
-}
-
-/**
- * Validates a recorded manifest `preset` value against `isPresetChoice`,
- * emitting a warning and returning `undefined` when it is no longer recognized.
- */
-export function dropUnknownPreset({
-  ctx,
-  prompting,
-  preset,
-}: DropUnknownPresetParams): PresetChoice | undefined {
-  if (preset === undefined) return undefined;
-  if (isPresetChoice(preset)) return preset;
-  notify({
-    ctx,
-    prompting,
-    message: `Preset "${preset}" is no longer recognized and was dropped.`,
-    level: 'warn',
-  });
-  return undefined;
-}
-
-export interface DropUnavailableBlocksParams {
-  ctx: Context;
-  prompting: boolean;
-  library: BlockLibrary;
-  ids: readonly string[];
-  scope: Scope;
-}
-
-export function dropUnavailableBlocks({
-  ctx,
-  prompting,
-  library,
-  ids,
-  scope,
-}: DropUnavailableBlocksParams): string[] {
-  const unknown = unknownBlockIds(library, ids);
-  const outOfScope = outOfScopeBlockIds(library, ids, scope);
-  if (unknown.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}${replacementSkillHint(unknown)}`,
-      level: 'warn',
-    });
-  }
-  if (outOfScope.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}${replacementSkillHint(outOfScope)}`,
-      level: 'warn',
-    });
-  }
-  return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
+export async function loadMcpServers(ctx: Context): Promise<McpCatalog> {
+  return loadMcpCatalog(mcpCatalogPath(ctx.repoRoot));
 }
 
 export interface ReconcileManifestParams {
@@ -292,8 +238,6 @@ export interface ResolveVariablesParams {
   reconciled: ReconciledManifest;
 }
 
-// A block edited to use a new variable has no recorded value yet. Look it up
-// (or ask for it) the way init does, and stop with the init command otherwise.
 export async function resolveVariables({
   ctx,
   prompting,
@@ -326,12 +270,15 @@ export interface ReconcileManifestSelectionParams {
   previous: Manifest;
   library: BlockLibrary;
   skillLibrary: SkillLibrary;
+  mcpCatalog?: McpCatalog;
   extraSkills?: readonly string[];
+  mcpOverride?: readonly string[];
 }
 
 export interface ReconciledSelection {
   blocks: string[];
   skills: string[];
+  mcp: string[];
   variables: Record<string, string>;
   keepLocal: boolean;
   preset?: PresetChoice;
@@ -344,7 +291,9 @@ export async function reconcileManifestSelection({
   previous,
   library,
   skillLibrary,
+  mcpCatalog,
   extraSkills = [],
+  mcpOverride,
 }: ReconcileManifestSelectionParams): Promise<ReconciledSelection> {
   const reconciled = await reconcileManifest({
     manifest: previous,
@@ -376,12 +325,25 @@ export async function reconcileManifestSelection({
     scope: location.scope,
   });
   const skills = [...new Set([...priorSkills, ...extraSkills])];
+  const mcp =
+    mcpOverride !== undefined
+      ? [...mcpOverride]
+      : mcpCatalog
+        ? dropUnavailableMcpServers({
+            ctx,
+            prompting,
+            catalog: mcpCatalog,
+            names: previous.mcp ?? [],
+            scope: location.scope,
+          })
+        : [...(previous.mcp ?? [])];
   if (reconciled.leftGit && location.project) {
     notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
   }
   return {
     blocks: reconciled.blocks,
     skills,
+    mcp,
     variables,
     keepLocal: reconciled.keepLocal,
     ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
@@ -395,16 +357,19 @@ export interface BuildSyncPlanForLocationParams {
   previous: Manifest;
   library: BlockLibrary;
   skillLibrary: SkillLibrary;
+  mcpCatalog?: McpCatalog;
   tools?: readonly ToolId[];
   extraSkills?: readonly string[];
   extraSkillSources?: ReadonlyMap<string, SkillSource>;
+  mcpOverride?: readonly string[];
   warnLocked?: boolean;
   adopt?: { names: ReadonlySet<string>; backupDir: string };
 }
 
 /**
- * Reconciles a recorded manifest against the current block and skill libraries,
- * resolves skill sources, and builds the install {@link Plan} for `location`.
+ * Reconciles a recorded manifest against the current block, skill, and MCP
+ * libraries, resolves skill sources, and builds the install {@link Plan} for
+ * `location`.
  */
 export async function buildSyncPlanForLocation({
   ctx,
@@ -413,9 +378,11 @@ export async function buildSyncPlanForLocation({
   previous,
   library,
   skillLibrary,
+  mcpCatalog,
   tools = previous.tools,
   extraSkills = [],
   extraSkillSources,
+  mcpOverride,
   warnLocked = false,
   adopt,
 }: BuildSyncPlanForLocationParams): Promise<Plan> {
@@ -426,7 +393,9 @@ export async function buildSyncPlanForLocation({
     previous,
     library,
     skillLibrary,
+    ...(mcpCatalog ? { mcpCatalog } : {}),
     extraSkills,
+    ...(mcpOverride !== undefined ? { mcpOverride } : {}),
   });
   if (warnLocked && location.scope === 'global') {
     await warnLockedSkills(ctx, prompting, reconciled.skills);
@@ -450,6 +419,7 @@ export async function buildSyncPlanForLocation({
       tools: [...tools],
       blocks: reconciled.blocks,
       skills: reconciled.skills,
+      mcp: reconciled.mcp,
       variables: reconciled.variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: reconciled.keepLocal,
@@ -466,6 +436,7 @@ export async function buildSyncPlanForLocation({
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    ...(mcpCatalog ? { mcpCatalog } : {}),
     ...(adopt ? { adopt } : {}),
   });
   if (reconciled.keepLocal) {

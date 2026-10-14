@@ -9,6 +9,7 @@ import {
   parseList,
   parsePositiveInt,
 } from './cli-skill-args.ts';
+import type { McpSubcommand } from './commands/mcp.ts';
 import { UsageError } from './errors.ts';
 import {
   isPresetChoice,
@@ -42,6 +43,7 @@ export const OPTIONS = {
   tools: { type: 'string' },
   blocks: { type: 'string' },
   skills: { type: 'string' },
+  mcp: { type: 'string' },
   'skill-mode': { type: 'string' },
   preset: { type: 'string' },
   style: { type: 'string' },
@@ -50,6 +52,9 @@ export const OPTIONS = {
   ref: { type: 'string' },
   'include-offensive': { type: 'boolean' },
   install: { type: 'boolean' },
+  official: { type: 'boolean' },
+  limit: { type: 'string' },
+  add: { type: 'boolean' },
   catalog: { type: 'boolean' },
   template: { type: 'string' },
   'with-evals': { type: 'boolean' },
@@ -94,6 +99,7 @@ export const COMMANDS = [
   'adopt',
   'doctor',
   'skill',
+  'mcp',
 ] as const;
 
 export type Command = (typeof COMMANDS)[number];
@@ -105,6 +111,7 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'tools',
     'blocks',
     'skills',
+    'mcp',
     'skill-mode',
     'preset',
     'style',
@@ -147,6 +154,16 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'keep-workdirs',
     'split',
     'threshold',
+  ],
+  mcp: [
+    'global',
+    'project',
+    'tools',
+    'official',
+    'limit',
+    'add',
+    'yes',
+    'dry-run',
   ],
 };
 
@@ -312,6 +329,46 @@ function rejectSkillOptions(
   }
 }
 
+const MCP_SUBCOMMAND_OPTIONS: Readonly<
+  Record<McpSubcommand, readonly OptionName[]>
+> = {
+  list: ['global', 'project'],
+  add: ['global', 'project', 'tools', 'yes', 'dry-run'],
+  remove: ['global', 'project', 'yes', 'dry-run'],
+  search: ['official', 'limit', 'add', 'yes', 'dry-run'],
+};
+
+export function parseMcpSubcommand(value: string | undefined): McpSubcommand {
+  if (value === undefined || value === 'list') return 'list';
+  if (value === 'add' || value === 'remove' || value === 'search') {
+    return value;
+  }
+  throw new UsageError(
+    'Usage: agents-config mcp [list | add <name...> | remove <name...> | search <query>]',
+  );
+}
+
+function rejectMcpOptions(
+  subcommand: McpSubcommand,
+  provided: readonly string[],
+): void {
+  const allowed: readonly string[] = MCP_SUBCOMMAND_OPTIONS[subcommand];
+  const extra = provided.filter((name) => !allowed.includes(name));
+  if (extra.length > 0) {
+    throw new UsageError(`${flags(extra)} does not apply to mcp ${subcommand}`);
+  }
+  if (subcommand === 'search' && !provided.includes('add')) {
+    const addOnly = provided.filter(
+      (name) => name === 'yes' || name === 'dry-run',
+    );
+    if (addOnly.length > 0) {
+      throw new UsageError(
+        `${flags(addOnly)} only applies to mcp search with --add`,
+      );
+    }
+  }
+}
+
 export type ParsedCommand =
   | { kind: 'help' }
   | { kind: 'version' }
@@ -386,6 +443,7 @@ export function parseCommand(argv: string[]): ParsedCommand {
     command !== 'add' &&
     command !== 'adopt' &&
     command !== 'skill' &&
+    command !== 'mcp' &&
     positionals.length > 1
   ) {
     throw new UsageError(
@@ -398,6 +456,10 @@ export function parseCommand(argv: string[]): ParsedCommand {
   }
   rejectOptions(command, provided);
   if (command === 'skill') rejectSkillOptions(positionals[1], provided);
+  if (command === 'mcp') {
+    const subcommand = parseMcpSubcommand(positionals[1]);
+    rejectMcpOptions(subcommand, provided);
+  }
 
   const scope: Scope | undefined =
     values.project !== undefined

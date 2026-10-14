@@ -7,6 +7,7 @@ import {
   buildSyncPlanForLocation,
   confirmAndApply,
   loadLibrary,
+  loadMcpServers,
   readLocationManifest,
   resolveLocation,
 } from './shared.ts';
@@ -37,6 +38,7 @@ export async function runSync(
 
   const library = await loadLibrary(ctx);
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const mcpCatalog = await loadMcpServers(ctx);
   const plan = await buildSyncPlanForLocation({
     ctx,
     prompting,
@@ -44,6 +46,7 @@ export async function runSync(
     previous,
     library,
     skillLibrary,
+    mcpCatalog,
   });
 
   const result = await confirmAndApply(ctx, plan, confirmOptions);

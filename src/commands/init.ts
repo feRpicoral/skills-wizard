@@ -27,6 +27,7 @@ import type { ToolId } from '../tools/registry.ts';
 import {
   resolveBlocksSelection,
   resolveInstallOptions,
+  resolveMcpSelection,
   resolveSkillsSelection,
   resolveToolsSelection,
   resolveVariablesSelection,
@@ -35,6 +36,7 @@ import {
   confirmAndApply,
   fetchSkills,
   loadLibrary,
+  loadMcpServers,
   type Location,
   notify,
   readLocationManifest,
@@ -51,6 +53,7 @@ export interface InitOptions {
   tools?: ToolId[];
   blocks?: string[];
   skills?: string[];
+  mcp?: string[];
   skillMode?: SkillMode;
   preset?: PresetChoice;
   style?: ProjectStyle;
@@ -254,6 +257,7 @@ export async function runInit(
     tools: requestedTools,
     blocks: requestedBlocks,
     skills: requestedSkills,
+    mcp: requestedMcp,
     skillMode: requestedSkillMode,
     preset: requestedPreset,
     style: requestedStyle,
@@ -286,6 +290,7 @@ export async function runInit(
   });
   const library = await loadLibrary(ctx);
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const mcpCatalog = await loadMcpServers(ctx);
   const previous = await readLocationManifest({ ctx, prompting, location });
   const reconciled = previous
     ? await reconcileManifest({
@@ -359,6 +364,15 @@ export async function runInit(
     ...(replacedPreset ? { replacedPreset } : {}),
     previous,
   });
+  const mcp = await resolveMcpSelection({
+    ctx,
+    mcpCatalog,
+    scope,
+    prompting,
+    ...(requestedMcp ? { requestedMcp } : {}),
+    location,
+    previous,
+  });
   const { linkCommand, keepLocal } = await resolveInstallOptions({
     ctx,
     scope,
@@ -384,6 +398,7 @@ export async function runInit(
       tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand,
       keepLocal,
@@ -398,6 +413,7 @@ export async function runInit(
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
   if (keepLocal) {
     await warnTrackedFiles({

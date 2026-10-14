@@ -8,6 +8,7 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan, type PlannedAction } from '../install/plan.ts';
+import type { McpCatalog } from '../mcp/model.ts';
 import type { PresetChoice } from '../project/presets.ts';
 import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
@@ -145,11 +146,16 @@ export async function globalFindings(
   ];
 }
 
-// Skill folders and links never contain block variables, so a placeholder
-// cannot make them look out of date.
+// Skill folders, links, and MCP server configs never contain block variables,
+// so a placeholder cannot make them look out of date.
 function rendersBlocks(action: PlannedAction): boolean {
   const kind = (action.entry ?? action.previous)?.kind;
-  return kind !== 'skill' && kind !== 'symlink';
+  return (
+    kind !== 'skill' &&
+    kind !== 'symlink' &&
+    kind !== 'mcp-json' &&
+    kind !== 'mcp-toml'
+  );
 }
 
 export interface PlanFindingsParams {
@@ -161,6 +167,8 @@ export interface PlanFindingsParams {
   variables: Record<string, string>;
   skills: string[];
   skillSources: ReadonlyMap<string, SkillSource>;
+  mcp?: string[];
+  mcpCatalog?: McpCatalog;
   keepLocal: boolean;
   preset?: PresetChoice | undefined;
   reportOutdated: boolean;
@@ -175,6 +183,8 @@ export async function planFindings({
   variables,
   skills,
   skillSources,
+  mcp = [],
+  mcpCatalog,
   keepLocal,
   preset,
   reportOutdated,
@@ -187,6 +197,7 @@ export async function planFindings({
       tools: manifest.tools,
       blocks,
       skills,
+      mcp,
       variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
@@ -203,6 +214,7 @@ export async function planFindings({
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    ...(mcpCatalog ? { mcpCatalog } : {}),
   });
 
   for (const action of plan.actions) {
@@ -225,6 +237,9 @@ export async function planFindings({
       });
     }
   }
+  for (const warning of plan.warnings ?? []) {
+    findings.push({ level: 'warn', message: warning });
+  }
   return findings;
 }
 
@@ -233,6 +248,7 @@ export interface ManifestFindingsParams {
   location: Location;
   reconciled: ReconciledManifest;
   skillResolutionFindings?: readonly Finding[];
+  mcpResolutionFindings?: readonly Finding[];
 }
 
 export function manifestFindings({
@@ -240,6 +256,7 @@ export function manifestFindings({
   location,
   reconciled,
   skillResolutionFindings = [],
+  mcpResolutionFindings = [],
 }: ManifestFindingsParams): Finding[] {
   const findings: Finding[] = [];
   const { scope } = location;
@@ -278,7 +295,7 @@ export function manifestFindings({
       message: `Required blocks missing from the install: ${addedBlocks.join(', ')}; agents-config sync will add them`,
     });
   }
-  findings.push(...skillResolutionFindings);
+  findings.push(...skillResolutionFindings, ...mcpResolutionFindings);
   if (leftGit && location.project) {
     findings.push({
       level: 'warn',

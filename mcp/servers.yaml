@@ -1,0 +1,68 @@
+servers:
+  - name: context7
+    description: Up-to-date library and framework documentation
+    scopes: [global]
+    defaults: [global]
+    transport: http
+    url: https://mcp.context7.com/mcp
+    headers:
+      CONTEXT7_API_KEY:
+        secret: CONTEXT7_API_KEY
+        optional: true
+    tools:
+      allow: [resolve-library-id, get-library-docs]
+    estimatedTools: 2
+
+  - name: fetcher
+    description: Headless Playwright page fetcher returning clean Markdown
+    scopes: [global]
+    defaults: [global]
+    transport: stdio
+    command: npx
+    args: ['-y', 'fetcher-mcp@0.2.1']
+    estimatedTools: 2
+
+  - name: reddit
+    description: Read-only Reddit search and thread inspection
+    scopes: [global]
+    defaults: [global]
+    transport: stdio
+    command: uvx
+    args: ['mcp-server-reddit@0.5.2']
+    estimatedTools: 6
+
+  - name: nx
+    description: Nx workspace graph and target inspection
+    scopes: [project]
+    defaults: []
+    detect: nx
+    transport: stdio
+    command: npx
+    args: ['nx-mcp@0.3.2', '--minimal']
+    estimatedTools: 8
+
+  - name: supabase
+    description: Read-only Supabase project, schema, and migration inspection
+    scopes: [project]
+    defaults: []
+    detect: supabase
+    transport: stdio
+    command: npx
+    args: ['-y', '@supabase/mcp-server-supabase@0.5.5', '--read-only']
+    env:
+      SUPABASE_ACCESS_TOKEN:
+        secret: SUPABASE_ACCESS_TOKEN
+    estimatedTools: 18
+
+  - name: sentry
+    description: Sentry issue, trace, and release inspection
+    scopes: [project]
+    defaults: []
+    detect: sentry
+    transport: http
+    url: https://mcp.sentry.dev/mcp
+    headers:
+      Authorization:
+        secret: SENTRY_AUTH_TOKEN
+        optional: true
+    estimatedTools: 14

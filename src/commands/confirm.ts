@@ -69,6 +69,11 @@ export async function confirmPlans({
   } else {
     lines.forEach((entry) => ctx.print(entry));
   }
+  for (const plan of plans) {
+    for (const warning of plan.warnings ?? []) {
+      notify({ ctx, prompting, message: warning, level: 'warn' });
+    }
+  }
 
   if (dryRun) {
     notify({ ctx, prompting, message: 'Dry run: nothing was written.' });

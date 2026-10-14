@@ -1,6 +1,6 @@
 # agents-config
 
-A CLI and the content it installs: `AGENTS.md` instructions and skills for Claude Code, Codex, Gemini CLI, Antigravity (IDE and `agy`) and Copilot.
+A CLI and the content it installs: `AGENTS.md` instructions, skills, and curated MCP server configurations for Claude Code, Codex, Gemini CLI, Antigravity (IDE and `agy`) and Copilot.
 
 ## Commands
 
@@ -8,6 +8,7 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 - Run the CLI from source: `yarn agents-config [command]`. Node 24 strips the TypeScript types at runtime, so there is no build step.
 - Validate and add skills: `yarn agents-config skill validate [path...]`, `yarn agents-config skill validate --catalog`, `yarn agents-config add [query|url]`
 - Scaffold and evaluate skills: `yarn agents-config skill new <name> [--with-evals]`, `yarn agents-config skill eval <name> [--compare <ref>|<skill-a>,<skill-b>]`, `yarn agents-config skill triggers <name>`, `yarn agents-config skill report <name> [iteration-dir]`
+- Manage and search MCP servers: `yarn agents-config mcp [list]`, `yarn agents-config mcp add <name...>`, `yarn agents-config mcp remove <name...>`, `yarn agents-config mcp search <query> [--official] [--limit <n>] [--add]`
 - Checks before pushing: `yarn lint && yarn typecheck && yarn test`
 
 ## Layout
@@ -16,14 +17,16 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 - `presets/`: stack preset definitions (`presets/<id>.yaml`) mapping project archetypes to `stack/*` blocks and skills.
 - `skills/`: first-party skills (`skills/<name>/SKILL.md`), validated strictly against the Agent Skills spec.
 - `catalog.yaml`: curated third-party skills by upstream repository and path.
+- `mcp/servers.yaml`: curated MCP server catalog (`stdio`, `http`, `sse`) with scope defaults, project auto-detection keys, secret references, and tool allow/deny filters.
 - `src/blocks/`: loading, validating and composing blocks.
 - `src/project/`: stack preset loading (`presets.ts`), project stack/workspace auto-detection (`detect.ts`) and initial `AGENTS.md` seed preamble generation (`seed.ts`).
 - `src/skills/`: catalog loading, third-party skill discovery (`discover.ts`), sparse git source cache, skill tree copying/hashing, spec validation, collision detection, diffs and risk scanning.
+- `src/mcp/`: MCP server catalog loading (`model.ts`), per-tool config rendering (`render.ts`), lossless JSON and TOML config merging (`install.ts`), and MCP registry search (`search.ts`).
 - `src/evals/`: skill evaluation schemas (`evals.json`, `trigger_queries.json`), isolated workspace preparation, runner adapters (`agy`, `claude`, `codex`, `gemini`, `fake`), scripted and blind-grader assertion evaluation, benchmark aggregation and Markdown reports.
-- `src/install/`: planning and applying file and skill changes (managed regions, import lines, JSON merges, symlinks, skill trees).
+- `src/install/`: planning and applying file and skill changes (managed regions, import lines, JSON merges, MCP JSON/TOML merges, symlinks, skill trees).
 - `src/tools/registry.ts`: where each supported tool reads its instructions and skills.
 - `src/state/`: manifests and the recorded projects registry (`projects.json`).
-- `src/commands/` and `src/prompts/`: CLI commands (`init`, `sync`, `update`, `add`, `adopt`, `doctor`, `skill`) and interactive prompts.
+- `src/commands/` and `src/prompts/`: CLI commands (`init`, `sync`, `update`, `add`, `adopt`, `doctor`, `skill`, `mcp`) and interactive prompts.
 - `docs/`: architecture and per-tool reference.
 
 ## Conventions

@@ -18,9 +18,15 @@ import {
 } from './json-text.ts';
 import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
 
-export { isEmptyJsonObject, parseJsonObject };
+export { isEmptyJsonObject, isObject, parseJsonObject };
 
-const DEFAULT_INDENT = 2;
+export const DEFAULT_INDENT = 2;
+
+export interface EmptyJsonState {
+  wasEmpty?: true;
+  blankText?: string;
+  rootOriginal?: string;
+}
 
 function parseKeyPath(doc: JsonObject, keyPath: string): JSONPath {
   const keys = parsePath(keyPath);
@@ -84,6 +90,7 @@ interface EnsureArrayValuesParams {
   existing: string | null;
   keyPath: string;
   values: readonly string[];
+  ownedValues?: readonly string[];
 }
 
 export interface EnsureResult {
@@ -97,27 +104,39 @@ export interface EnsureResult {
   original?: string;
 }
 
-interface AddValuesParams {
+interface UpdateArrayValuesParams {
   existing: string | null;
   keys: JSONPath;
   current: readonly string[];
+  stale: readonly string[];
   added: readonly string[];
   appendable: boolean;
 }
 
-function addValues({
+function updateArrayValues({
   existing,
   keys,
   current,
+  stale,
   added,
   appendable,
-}: AddValuesParams): string {
+}: UpdateArrayValuesParams): string {
+  const remaining = current.filter((item) => !stale.includes(item));
   if (existing !== null && !isBlank(existing) && appendable) {
-    return keepBom(existing, (text) =>
-      appendArrayElements({ text, keys, values: added }),
-    );
+    let content = existing;
+    if (stale.length > 0) {
+      content = keepBom(content, (text) =>
+        removeArrayElements({ text, keys, values: stale }),
+      );
+    }
+    if (added.length > 0) {
+      content = keepBom(content, (text) =>
+        appendArrayElements({ text, keys, values: added }),
+      );
+    }
+    return content;
   }
-  return setValue({ existing, keys, value: [...current, ...added] });
+  return setValue({ existing, keys, value: [...remaining, ...added] });
 }
 
 interface OriginalParams {
@@ -155,19 +174,25 @@ export function ensureArrayValues({
   existing,
   keyPath,
   values,
+  ownedValues = [],
 }: EnsureArrayValuesParams): EnsureResult {
   const doc = parseJsonObject(existing);
   const keys = parseKeyPath(doc, keyPath);
   const original = getProperty(doc, keys);
   const current = stringValues(original, keyPath);
-  const added = values.filter((value) => !current.includes(value));
+  const stale = ownedValues.filter(
+    (value) => !values.includes(value) && current.includes(value),
+  );
+  const remaining = current.filter((value) => !stale.includes(value));
+  const added = values.filter((value) => !remaining.includes(value));
   const createdKeys = added.length > 0 ? missingKeys(doc, keys) : 0;
-  const changed = added.length > 0 || existing === null;
+  const changed = stale.length > 0 || added.length > 0 || existing === null;
   const content = changed
-    ? addValues({
+    ? updateArrayValues({
         existing,
         keys,
         current,
+        stale,
         added,
         appendable: Array.isArray(original),
       })

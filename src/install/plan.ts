@@ -1,14 +1,31 @@
-import { requiredVariables, selectBlocks } from '../blocks/compose.ts';
 import type { Scope } from '../blocks/library.ts';
 import {
+  checkMcpEntries,
   checkSkillEntries,
   type Manifest,
-  MANIFEST_VERSION,
   type ManifestEntry,
-  serializeManifest,
 } from '../state/manifest.ts';
-import { planFile } from './file-actions.ts';
-import { readTextIfExists, realLocation } from './fs.ts';
+import {
+  canonicalPath,
+  collectConflictedMcpByReal,
+  filterClaudeDeniedValues,
+  initCoownedJsonState,
+  ownersByRealLocation,
+  ownershipKey,
+  recordPlannedCoownedEntry,
+  retainedMcpServersForRemoval,
+} from './coowned-state.ts';
+import {
+  type EmptyJsonState,
+  planFile,
+  type SharedMcpJsonState,
+} from './file-actions.ts';
+import {
+  composeManifestMetadata,
+  type ManifestStatus,
+  resolveManifestEntries,
+  resolveManifestStatus,
+} from './manifest-plan.ts';
 import { planRemoval } from './removal.ts';
 import {
   type ActionStatus,
@@ -22,6 +39,7 @@ import { planSkill, planSymlink } from './skill-actions.ts';
 import { stageAction, type StagedContents } from './staged.ts';
 import {
   keyOf,
+  mcpConfigPaths,
   type PlanInput,
   type ProjectContext,
   type Selection,
@@ -30,9 +48,14 @@ import {
   targetsForPlan,
 } from './targets.ts';
 
-export type { ActionStatus, PlannedAction, ProjectContext, Selection };
-
-export type ManifestStatus = 'create' | 'update' | 'unchanged' | 'remove';
+export type {
+  ActionStatus,
+  ManifestStatus,
+  PlannedAction,
+  ProjectContext,
+  Selection,
+};
+export { resolveManifestEntries };
 
 export interface Plan {
   actions: PlannedAction[];
@@ -40,6 +63,7 @@ export interface Plan {
   manifestPath: string;
   manifestStatus: ManifestStatus;
   projectDir?: string;
+  warnings?: string[];
 }
 
 interface DispatchTargetParams {
@@ -48,6 +72,9 @@ interface DispatchTargetParams {
   scope: Scope;
   staged: StagedContents;
   boundary?: string;
+  pathCreated?: boolean;
+  emptyJson?: EmptyJsonState;
+  sharedMcp?: SharedMcpJsonState;
 }
 
 function dispatchTarget({
@@ -56,6 +83,9 @@ function dispatchTarget({
   scope,
   staged,
   boundary,
+  pathCreated,
+  emptyJson,
+  sharedMcp,
 }: DispatchTargetParams): Promise<PlannedAction> {
   const location = boundary ? { boundary } : {};
   switch (target.kind) {
@@ -64,39 +94,16 @@ function dispatchTarget({
     case 'skill':
       return planSkill({ target, previous, scope, ...location });
     default:
-      return planFile({ target, previous, staged, ...location });
+      return planFile({
+        target,
+        previous,
+        staged,
+        ...location,
+        ...(pathCreated !== undefined ? { pathCreated } : {}),
+        ...(emptyJson ? { emptyJson } : {}),
+        ...(sharedMcp ? { sharedMcp } : {}),
+      });
   }
-}
-
-function entryDetail(entry: ManifestEntry): string {
-  switch (entry.kind) {
-    case 'exclude-region':
-      return entry.id;
-    case 'line':
-      return entry.line;
-    case 'json-array':
-      return entry.key;
-    default:
-      return '';
-  }
-}
-
-async function ownershipKey(entry: ManifestEntry): Promise<string | null> {
-  if (entry.kind === 'symlink') return null;
-  const real = await realLocation(entry.path);
-  return real === null ? null : `${entry.kind}:${real}:${entryDetail(entry)}`;
-}
-
-async function ownersByRealLocation(
-  actions: readonly PlannedAction[],
-): Promise<Map<string, string>> {
-  const owners = new Map<string, string>();
-  for (const action of actions) {
-    if (!action.entry) continue;
-    const key = await ownershipKey(action.entry);
-    if (key !== null && !owners.has(key)) owners.set(key, action.label);
-  }
-  return owners;
 }
 
 interface PlanTargetActionsParams {
@@ -120,22 +127,57 @@ async function planTargetActions({
   const actions: PlannedAction[] = [];
   const plannedKeys = new Set<string>();
   const blockedSkills = new Set<string>();
-  for (const target of targets) {
+  const coowned = await initCoownedJsonState({ previousEntries, targets });
+
+  let claudeMcpServers: ReadonlySet<string> | null = null;
+  let claudeMcpConflicted = false;
+  for (const rawTarget of targets) {
+    let target = rawTarget;
     const key = keyOf(target);
-    plannedKeys.add(key);
     const previous = previousEntries.get(key) ?? null;
-    if (target.kind === 'symlink' && target.skill !== undefined) {
-      if (blockedSkills.has(target.skill)) {
-        actions.push(
-          conflict({
-            target,
-            previous,
-            reason: `waits for the ${target.skill} skill folder`,
-          }),
-        );
+
+    if (
+      target.kind === 'json-array' &&
+      target.mcpPermissionClient === 'claude-code' &&
+      claudeMcpServers !== null
+    ) {
+      const candidateValues =
+        claudeMcpConflicted && previous?.kind === 'json-array'
+          ? [...new Set([...previous.added, ...target.values])]
+          : target.values;
+      const values = filterClaudeDeniedValues({
+        values: candidateValues,
+        allowedServers: claudeMcpServers,
+      });
+      if (claudeMcpConflicted) {
+        plannedKeys.add(key);
+      }
+      if (values.length === 0) {
         continue;
       }
+      target = { ...target, values };
     }
+
+    plannedKeys.add(key);
+    if (
+      target.kind === 'symlink' &&
+      target.skill !== undefined &&
+      blockedSkills.has(target.skill)
+    ) {
+      actions.push(
+        conflict({
+          target,
+          previous,
+          reason: `waits for the ${target.skill} skill folder`,
+        }),
+      );
+      continue;
+    }
+
+    const real = await canonicalPath(target.path);
+    const emptyJson = coowned.emptyJsonByPath.get(real);
+    const sharedMcp =
+      target.kind === 'mcp-json' ? coowned.mcpByRealPath.get(real) : undefined;
     const action = await guarded({
       target,
       previous,
@@ -146,11 +188,32 @@ async function planTargetActions({
           scope,
           staged,
           ...(boundary ? { boundary } : {}),
+          pathCreated:
+            coowned.createdPaths.has(target.path) ||
+            coowned.createdPaths.has(real),
+          ...(emptyJson ? { emptyJson } : {}),
+          ...(sharedMcp ? { sharedMcp } : {}),
         }),
     });
     if (target.kind === 'skill' && action.status === 'conflict') {
       blockedSkills.add(target.name);
     }
+    if (
+      target.kind === 'mcp-json' &&
+      (target.mcpClient === 'claude-code' ||
+        target.mcpClient === 'claude-copilot-shared')
+    ) {
+      if (action.status !== 'conflict' && action.entry?.kind === 'mcp-json') {
+        claudeMcpServers = new Set(action.entry.servers);
+        claudeMcpConflicted = false;
+      } else {
+        claudeMcpServers = new Set(
+          action.previous?.kind === 'mcp-json' ? action.previous.servers : [],
+        );
+        claudeMcpConflicted = true;
+      }
+    }
+    await recordPlannedCoownedEntry(coowned, action);
     await stageAction({ staged, action });
     actions.push(
       target.kind === 'skill' ? { ...action, skill: target.name } : action,
@@ -162,6 +225,7 @@ async function planTargetActions({
 interface PlanRemovalActionsParams {
   previousEntries: ReadonlyMap<string, ManifestEntry>;
   plannedKeys: ReadonlySet<string>;
+  targetActions: readonly PlannedAction[];
   owners: ReadonlyMap<string, string>;
   staged: StagedContents;
   boundary?: string;
@@ -170,24 +234,43 @@ interface PlanRemovalActionsParams {
 async function planRemovalActions({
   previousEntries,
   plannedKeys,
+  targetActions,
   owners,
   staged,
   boundary,
 }: PlanRemovalActionsParams): Promise<PlannedAction[]> {
   const actions: PlannedAction[] = [];
-  for (const [key, entry] of previousEntries) {
-    if (plannedKeys.has(key)) continue;
+  const pending = [...previousEntries.entries()]
+    .filter(([key]) => !plannedKeys.has(key))
+    .map(([, entry]) => entry);
+  const ordered = [
+    ...pending.filter(
+      (entry) => !('createdFile' in entry && entry.createdFile),
+    ),
+    ...pending.filter((entry) => 'createdFile' in entry && entry.createdFile),
+  ];
+
+  const conflictedMcpByReal = await collectConflictedMcpByReal(targetActions);
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const entry = ordered[index]!;
     const action = await guarded({
       target: { path: entry.path, label: REMOVAL_LABEL },
       previous: entry,
       plan: async () => {
         const owner = await ownershipKey(entry);
         const sharedWith = owner === null ? undefined : owners.get(owner);
+        const retainedMcpServers = await retainedMcpServersForRemoval({
+          entry,
+          laterEntries: ordered.slice(index + 1),
+          conflictedMcpByReal,
+        });
         return planRemoval({
           entry,
           staged,
           ...(sharedWith ? { sharedWith } : {}),
           ...(boundary ? { boundary } : {}),
+          ...(retainedMcpServers !== undefined ? { retainedMcpServers } : {}),
         });
       },
     });
@@ -195,71 +278,6 @@ async function planRemovalActions({
     actions.push(action);
   }
   return actions;
-}
-
-type ComposeManifestMetadataParams = Pick<
-  PlanInput,
-  'scope' | 'selection' | 'library'
->;
-
-function composeManifestMetadata({
-  scope,
-  selection,
-  library,
-}: ComposeManifestMetadataParams): Omit<Manifest, 'entries'> {
-  const blocks = selectBlocks(library, selection.blocks, scope);
-  const variables = Object.fromEntries(
-    requiredVariables(blocks).flatMap((name) => {
-      const value = selection.variables[name];
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
-  return {
-    version: MANIFEST_VERSION,
-    scope,
-    tools: [...selection.tools],
-    blocks: blocks.map((block) => block.id),
-    skills: [...selection.skills],
-    variables,
-    options:
-      scope === 'global'
-        ? {
-            linkCommand: selection.linkCommand,
-            skillMode: selection.skillMode,
-          }
-        : {
-            keepLocal: selection.keepLocal,
-            ...(selection.preset !== undefined
-              ? { preset: selection.preset }
-              : {}),
-            ...(selection.style !== undefined
-              ? { style: selection.style }
-              : {}),
-          },
-  };
-}
-
-interface ResolveManifestStatusParams {
-  manifest: Omit<Manifest, 'entries'>;
-  entries: ManifestEntry[];
-  manifestPath: string;
-  projectDir?: string;
-}
-
-async function resolveManifestStatus({
-  manifest,
-  entries,
-  manifestPath,
-  projectDir,
-}: ResolveManifestStatusParams): Promise<ManifestStatus> {
-  const existing = await readTextIfExists(manifestPath);
-  const content = serializeManifest({ ...manifest, entries }, projectDir);
-  const empty = entries.length === 0 && manifest.tools.length === 0;
-  if (empty) {
-    return existing === null ? 'unchanged' : 'remove';
-  }
-  if (existing === null) return 'create';
-  return existing === content ? 'unchanged' : 'update';
 }
 
 /**
@@ -274,16 +292,9 @@ async function resolveManifestStatus({
  * @throws {ManifestError} If `manifestPath` is a symlink or resolves outside
  * the project boundary.
  */
-export async function buildPlan({
-  scope,
-  selection,
-  library,
-  paths,
-  previous,
-  manifestPath,
-  project,
-  ...rest
-}: PlanInput): Promise<Plan> {
+export async function buildPlan(input: PlanInput): Promise<Plan> {
+  const { scope, selection, library, paths, previous, manifestPath, project } =
+    input;
   const boundary = scope === 'project' ? project?.dir : undefined;
   await checkManifestPath({
     manifestPath,
@@ -302,22 +313,22 @@ export async function buildPlan({
       scope,
     });
   }
+  const mcpPaths = mcpConfigPaths(input);
+  if (previous && mcpPaths) {
+    checkMcpEntries({
+      file: manifestPath,
+      entries: previous.entries,
+      mcpPaths,
+    });
+  }
 
+  const { targets, warnings } = targetsForPlan(input);
   const previousEntries = new Map(
     (previous?.entries ?? []).map((entry) => [keyOf(entry), entry]),
   );
   const staged: StagedContents = new Map();
   const { actions: targetActions, plannedKeys } = await planTargetActions({
-    targets: targetsForPlan({
-      scope,
-      selection,
-      library,
-      paths,
-      previous,
-      manifestPath,
-      ...(project ? { project } : {}),
-      ...rest,
-    }),
+    targets,
     previousEntries,
     scope,
     staged,
@@ -326,6 +337,7 @@ export async function buildPlan({
   const removalActions = await planRemovalActions({
     previousEntries,
     plannedKeys,
+    targetActions,
     owners: await ownersByRealLocation(targetActions),
     staged,
     ...(boundary ? { boundary } : {}),
@@ -333,21 +345,24 @@ export async function buildPlan({
   const actions = [...targetActions, ...removalActions];
 
   const manifest = composeManifestMetadata({ scope, selection, library });
-  const entries = actions.flatMap((action) =>
-    action.entry ? [action.entry] : [],
-  );
-  const manifestStatus = await resolveManifestStatus({
+  const effective = resolveManifestEntries({
     manifest,
-    entries,
+    actions,
+    isApplied: (action) => action.status !== 'conflict',
+  });
+  const manifestStatus = await resolveManifestStatus({
+    manifest: effective.manifest,
+    entries: effective.entries,
     manifestPath,
     ...(project ? { projectDir: project.dir } : {}),
   });
 
   return {
     actions,
-    manifest,
+    manifest: effective.manifest,
     manifestPath,
     manifestStatus,
     ...(project ? { projectDir: project.dir } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
