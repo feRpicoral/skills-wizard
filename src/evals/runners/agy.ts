@@ -1,8 +1,7 @@
 import type { AgyConfig, Environment } from '../../env.ts';
 import { RunnerError } from '../../errors.ts';
 import {
-  buildTaskResult,
-  checkRunnerBinary,
+  createCliRunner,
   type EvalRunner,
   extractJsonFromText,
   isRecordObject,
@@ -11,14 +10,8 @@ import {
   normalizeUsage,
   type ParsedGraderOutput,
   type ParsedTaskStream,
-  parseGraderProcess,
   parseJsonDocument,
   parseJsonLines,
-  type RunnerGraderRequest,
-  type RunnerGraderResult,
-  type RunnerTaskRequest,
-  type RunnerTaskResult,
-  spawnRunnerProcess,
 } from './types.ts';
 
 export interface BuildAgyTaskArgsParams {
@@ -250,33 +243,6 @@ export interface CreateAgyRunnerParams {
   graderRetryDelayMs?: number;
 }
 
-interface RunWithRetriesParams<T> {
-  fn: () => Promise<T>;
-  retries: number;
-  delayMs: number;
-}
-
-async function runWithRetries<T>({
-  fn,
-  retries,
-  delayMs,
-}: RunWithRetriesParams<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      if (attempt < retries && delayMs > 0) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, delayMs * (attempt + 1)),
-        );
-      }
-    }
-  }
-  throw lastError;
-}
-
 const GRADER_RETRIES = 2;
 
 export function createAgyRunner({
@@ -288,87 +254,20 @@ export function createAgyRunner({
   const resolvedBin = binary ?? agyConfig?.bin ?? 'agy';
   const extraArgs = agyConfig?.extraArgs ?? [];
 
-  return {
+  return createCliRunner({
     name: 'agy',
+    binary: resolvedBin,
+    env,
     sandboxSupported: true,
-    async preflight(): Promise<void> {
-      await checkRunnerBinary({ binary: resolvedBin, env });
-    },
-
-    // Task runs are never retried: a failed attempt may have modified the
-    // workdir, so a rerun would not start from the fixture state.
-    async runTask({
-      prompt,
-      workdir,
-      runDir,
-      skillName,
-      timeoutSeconds,
-      sandbox,
-    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildAgyTaskArgs({
-          prompt,
-          timeoutSeconds,
-          sandbox,
-          extraArgs,
-        }),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env,
-      });
-      const parsed = parseAgyStreamJson({
-        stdout: proc.stdout,
-        skillName,
-        fallbackDurationMs: proc.durationMs,
-      });
-      return buildTaskResult({
-        label: 'agy',
-        proc,
-        parsed,
-        timeoutSeconds,
-      });
-    },
-
-    async runGrader({
-      prompt,
-      schemaPath,
-      workdir,
-      runDir,
-      timeoutSeconds,
-    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const args = buildAgyGraderArgs({
-        prompt,
-        schemaPath,
-        timeoutSeconds,
-        extraArgs,
-      });
-      return runWithRetries({
-        retries: GRADER_RETRIES,
-        delayMs: graderRetryDelayMs,
-        fn: async () => {
-          const proc = await spawnRunnerProcess({
-            binary: resolvedBin,
-            args,
-            cwd: workdir,
-            runDir,
-            timeoutSeconds,
-            env,
-            logPrefix: 'grader',
-          });
-          return parseGraderProcess({
-            label: 'agy grader',
-            proc,
-            timeoutSeconds,
-            parse: () =>
-              parseAgyGraderJson({
-                stdout: proc.stdout,
-                fallbackDurationMs: proc.durationMs,
-              }),
-          });
-        },
-      });
-    },
-  };
+    buildTaskArgs: ({ prompt, timeoutSeconds, sandbox }) =>
+      buildAgyTaskArgs({ prompt, timeoutSeconds, sandbox, extraArgs }),
+    parseTaskStream: ({ stdout, skillName, fallbackDurationMs }) =>
+      parseAgyStreamJson({ stdout, skillName, fallbackDurationMs }),
+    buildGraderArgs: ({ prompt, schemaPath, timeoutSeconds }) =>
+      buildAgyGraderArgs({ prompt, schemaPath, timeoutSeconds, extraArgs }),
+    parseGraderOutput: ({ stdout, fallbackDurationMs }) =>
+      parseAgyGraderJson({ stdout, fallbackDurationMs }),
+    graderRetries: GRADER_RETRIES,
+    graderRetryDelayMs,
+  });
 }

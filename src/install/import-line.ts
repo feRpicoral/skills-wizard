@@ -1,3 +1,6 @@
+import { basename, dirname, resolve } from 'node:path';
+
+import { readSymlink } from './fs.ts';
 import {
   isBlank,
   joinLines,
@@ -6,9 +9,18 @@ import {
   lineEnding,
   splitLines,
 } from './lines.ts';
+import {
+  type FileActionParams,
+  NONE,
+  type PlanFileParams,
+  type PlannedAction,
+  resolveTargetFile,
+  writeAction,
+} from './safety.ts';
+import type { LineTarget } from './targets.ts';
 
 function lineIndex(lines: readonly Line[], line: string): number {
-  return lines.findIndex((candidate) => candidate.text.trim() === line);
+  return lines.findIndex((candidate) => candidate.text.trimEnd() === line);
 }
 
 interface HasLineParams {
@@ -50,4 +62,90 @@ function removeLineFrom({ existing, line }: RemoveLineParams): string {
   lines.splice(index, removeCount);
   const remaining = joinLines(lines);
   return remaining.trim() === '' ? '' : remaining;
+}
+
+export function planLine({
+  target,
+  file,
+  previous,
+}: FileActionParams<LineTarget>): PlannedAction {
+  const hadLine =
+    file.existing !== null &&
+    hasLine({ content: file.existing, line: target.line });
+  const added = hadLine ? previous?.kind === 'line' && previous.added : true;
+  return writeAction({
+    target,
+    file,
+    next: ensureLine({ existing: file.existing, line: target.line }),
+    entry: {
+      kind: 'line',
+      path: target.path,
+      line: target.line,
+      added,
+      createdFile: file.createdFile,
+    },
+    previous,
+  });
+}
+
+export interface PlanSatisfiedLineParams extends PlanFileParams {
+  target: LineTarget;
+  satisfiedBy: string;
+}
+
+interface SameFileNoteParams {
+  path: string;
+  other: string;
+}
+
+async function pointsAt({ path, other }: SameFileNoteParams): Promise<boolean> {
+  const link = await readSymlink(path);
+  return link !== null && resolve(dirname(path), link) === other;
+}
+
+async function sameFileNote({
+  path,
+  other,
+}: SameFileNoteParams): Promise<string> {
+  const name = basename(other);
+  if (await pointsAt({ path, other })) return `links to ${name}`;
+  if (await pointsAt({ path: other, other: path })) return `${name} links here`;
+  return `same file as ${name}`;
+}
+
+export async function planSatisfiedLine({
+  target,
+  previous,
+  satisfiedBy,
+  ...rest
+}: PlanSatisfiedLineParams): Promise<PlannedAction> {
+  const unchanged: PlannedAction = {
+    path: target.path,
+    label: `${target.label} (${await sameFileNote({ path: target.path, other: satisfiedBy })})`,
+    status: 'unchanged',
+    change: NONE,
+    entry: null,
+    previous,
+  };
+  if (previous?.kind !== 'line' || !previous.added) return unchanged;
+
+  const resolved = await resolveTargetFile({ target, previous, ...rest });
+  if (!resolved.ok) return resolved.action;
+  const { file } = resolved;
+  if (
+    file.existing === null ||
+    !hasLine({ content: file.existing, line: target.line })
+  ) {
+    return unchanged;
+  }
+  return {
+    ...unchanged,
+    ...(file.writePath !== target.path ? { writePath: file.writePath } : {}),
+    status: 'update',
+    change: {
+      type: 'write',
+      content: removeLine({ existing: file.existing, line: target.line }),
+    },
+    reason: 'removes an import of the file itself',
+  };
 }

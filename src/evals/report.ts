@@ -1,6 +1,7 @@
 import type {
   AssertionAggregate,
   BenchmarkSummary,
+  CaseBenchmarkSummary,
   EvalRunRecord,
   StatSummary,
   TriggerBenchmarkSummary,
@@ -149,31 +150,10 @@ function formatAssertionRow({
   return `| ${cells.join(' | ')} |`;
 }
 
-export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
-  const { metadata, run_summary: summary, cases } = benchmark;
+function renderOverallSummaryTable(
+  summary: BenchmarkSummary['run_summary'],
+): string[] {
   const lines: string[] = [
-    `# Skill Evaluation Report: ${codeSpan(metadata.skill_name)}`,
-    '',
-    `- **Runner:** ${codeSpan(metadata.runner)}`,
-    `- **Timestamp:** ${codeSpan(metadata.timestamp)}`,
-    `- **Runs per configuration:** ${metadata.runs_per_configuration}`,
-    `- **Baseline status:** ${metadata.baseline_status}`,
-    `- **\`with_skill\` status:** ${metadata.with_skill_contaminated ? 'possibly contaminated' : 'clean'}`,
-  ];
-  if (metadata.compare_ref) {
-    lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
-  }
-  lines.push('');
-
-  if (metadata.warnings.length > 0) {
-    lines.push('## Warnings', '');
-    for (const warning of metadata.warnings) {
-      lines.push(`- ${collapseWhitespace(warning)}`);
-    }
-    lines.push('');
-  }
-
-  lines.push(
     '## Overall Summary',
     '',
     'Means and sample standard deviations (sd) are taken across case runs: every run of every case for that variant. Failed runs count as failures; token statistics include only runs that reported usage.',
@@ -181,7 +161,7 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     '| Variant | Pass Rate (mean ± sd) | Duration (mean ± sd) | Total Tokens (mean ± sd) | Failed Runs |',
     '| --- | --- | --- | --- | --- |',
     formatVariantRow('`with_skill`', summary.with_skill),
-  );
+  ];
   if (summary.without_skill) {
     lines.push(formatVariantRow('`without_skill`', summary.without_skill));
   }
@@ -211,10 +191,21 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     );
   }
   lines.push('');
+  return lines;
+}
 
-  // Without baseline runs, assertions are classified against old_skill.
-  const hasBaseline = summary.without_skill !== undefined;
-  const withOldSkill = summary.old_skill !== undefined;
+interface AssertionAnalysisSectionParams {
+  benchmark: BenchmarkSummary;
+  hasBaseline: boolean;
+  withOldSkill: boolean;
+}
+
+function renderAssertionAnalysisSection({
+  benchmark,
+  hasBaseline,
+  withOldSkill,
+}: AssertionAnalysisSectionParams): string[] {
+  const lines: string[] = [];
   const referenceLabel = hasBaseline
     ? 'baseline'
     : withOldSkill
@@ -251,61 +242,119 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     }
     lines.push('');
   }
+  return lines;
+}
+
+interface CaseSectionParams {
+  evalCase: CaseBenchmarkSummary;
+  hasBaseline: boolean;
+  withOldSkill: boolean;
+}
+
+function renderCaseSection({
+  evalCase,
+  hasBaseline,
+  withOldSkill,
+}: CaseSectionParams): string[] {
+  const lines: string[] = [
+    `### Case: ${codeSpan(evalCase.case_id)}`,
+    '',
+    '**Prompt:**',
+    '',
+    ...codeBlock(evalCase.prompt),
+    '',
+    '**Expected Output:**',
+    '',
+    ...codeBlock(evalCase.expected_output),
+    '',
+  ];
+
+  if (evalCase.assertions.length > 0) {
+    const header = [
+      'Assertion',
+      'Kind',
+      '`with_skill`',
+      ...(hasBaseline ? ['`without_skill`'] : []),
+      ...(withOldSkill ? ['`old_skill`'] : []),
+      ...(hasBaseline
+        ? ['Classification (vs baseline)']
+        : withOldSkill
+          ? []
+          : ['Classification']),
+      ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
+    ];
+    lines.push(
+      `| ${header.join(' | ')} |`,
+      `| ${header.map(() => '---').join(' | ')} |`,
+    );
+    for (const assertion of evalCase.assertions) {
+      lines.push(formatAssertionRow({ assertion, hasBaseline, withOldSkill }));
+    }
+    lines.push('');
+  }
+
+  for (const run of evalCase.runs) {
+    lines.push(formatRunHeading(run), '');
+    if (run.timing.error) {
+      lines.push(`- **Run error:** ${collapseWhitespace(run.timing.error)}`);
+    }
+    for (const exp of run.grading.expectations) {
+      const badge = exp.passed ? 'PASS' : 'FAIL';
+      lines.push(
+        `- **[${badge}]** ${collapseWhitespace(exp.text)}: ${collapseWhitespace(exp.evidence)}`,
+      );
+    }
+    lines.push('');
+  }
+  return lines;
+}
+
+export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
+  const { metadata, run_summary: summary, cases } = benchmark;
+  const lines: string[] = [
+    `# Skill Evaluation Report: ${codeSpan(metadata.skill_name)}`,
+    '',
+    `- **Runner:** ${codeSpan(metadata.runner)}`,
+    `- **Timestamp:** ${codeSpan(metadata.timestamp)}`,
+    `- **Runs per configuration:** ${metadata.runs_per_configuration}`,
+    `- **Baseline status:** ${metadata.baseline_status}`,
+    `- **\`with_skill\` status:** ${metadata.with_skill_contaminated ? 'possibly contaminated' : 'clean'}`,
+  ];
+  if (metadata.compare_ref) {
+    lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
+  }
+  lines.push('');
+
+  if (metadata.warnings.length > 0) {
+    lines.push('## Warnings', '');
+    for (const warning of metadata.warnings) {
+      lines.push(`- ${collapseWhitespace(warning)}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(...renderOverallSummaryTable(summary));
+
+  // Without baseline runs, assertions are classified against old_skill.
+  const hasBaseline = summary.without_skill !== undefined;
+  const withOldSkill = summary.old_skill !== undefined;
+  lines.push(
+    ...renderAssertionAnalysisSection({
+      benchmark,
+      hasBaseline,
+      withOldSkill,
+    }),
+  );
 
   lines.push('## Eval Cases', '');
   for (const evalCase of cases) {
     lines.push(
-      `### Case: ${codeSpan(evalCase.case_id)}`,
-      '',
-      '**Prompt:**',
-      '',
-      ...codeBlock(evalCase.prompt),
-      '',
-      '**Expected Output:**',
-      '',
-      ...codeBlock(evalCase.expected_output),
-      '',
+      ...renderCaseSection({
+        evalCase,
+        hasBaseline,
+        withOldSkill,
+      }),
     );
-
-    if (evalCase.assertions.length > 0) {
-      const header = [
-        'Assertion',
-        'Kind',
-        '`with_skill`',
-        ...(hasBaseline ? ['`without_skill`'] : []),
-        ...(withOldSkill ? ['`old_skill`'] : []),
-        ...(hasBaseline
-          ? ['Classification (vs baseline)']
-          : withOldSkill
-            ? []
-            : ['Classification']),
-        ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
-      ];
-      lines.push(
-        `| ${header.join(' | ')} |`,
-        `| ${header.map(() => '---').join(' | ')} |`,
-      );
-      for (const assertion of evalCase.assertions) {
-        lines.push(
-          formatAssertionRow({ assertion, hasBaseline, withOldSkill }),
-        );
-      }
-      lines.push('');
-    }
-
-    for (const run of evalCase.runs) {
-      lines.push(formatRunHeading(run), '');
-      if (run.timing.error) {
-        lines.push(`- **Run error:** ${collapseWhitespace(run.timing.error)}`);
-      }
-      for (const exp of run.grading.expectations) {
-        const badge = exp.passed ? 'PASS' : 'FAIL';
-        lines.push(
-          `- **[${badge}]** ${collapseWhitespace(exp.text)}: ${collapseWhitespace(exp.evidence)}`,
-        );
-      }
-      lines.push('');
-    }
   }
 
   return lines.join('\n');
