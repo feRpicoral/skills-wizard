@@ -1,0 +1,12 @@
+{
+  "name": "docs-portal",
+  "version": "1.4.2",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
+  }
+}

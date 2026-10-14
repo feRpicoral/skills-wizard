@@ -1,0 +1,82 @@
+[
+  {
+    "query": "Can you add Prettier to this project with single quotes, and make ESLint and Prettier stop fighting every time I save a file in VS Code?",
+    "should_trigger": true
+  },
+  {
+    "query": "Prettier keeps rewriting our committed GraphQL codegen output in src/generated/ and realigning the hand-formatted benchmark table in docs/benchmarks.md. Make it leave both alone while still formatting the rest of our Markdown.",
+    "should_trigger": true
+  },
+  {
+    "query": "prettier --check passes on my laptop but fails in GitHub Actions CI on docs/setup.md even though nobody touched that file. Diagnose why local and CI output differ without ignoring the file.",
+    "should_trigger": true
+  },
+  {
+    "query": "Set up formatting for this Tailwind v4 Next.js repo with .prettierrc, prettier-plugin-tailwindcss pointing at src/app/globals.css, and .prettierignore.",
+    "should_trigger": true
+  },
+  {
+    "query": "We want 2-space indentation across TypeScript files, but 4-space tabWidth specifically for Markdown files in docs/. How should we configure overrides in .prettierrc?",
+    "should_trigger": true
+  },
+  {
+    "query": "After updating prettier-plugin-tailwindcss, running prettier --write --cache still outputs classes in the old order. Why is the cache stale and how do we fix it?",
+    "should_trigger": true
+  },
+  {
+    "query": "Someone put parser: 'typescript' at the top level of .prettierrc and now JSON and Markdown files fail to format. Fix the Prettier config.",
+    "should_trigger": true
+  },
+  {
+    "query": "Add format and format:check scripts to package.json and wire Prettier into lint-staged and Husky pre-commit hooks for our Yarn 4 repository.",
+    "should_trigger": true
+  },
+  {
+    "query": "How do I use range ignore comments in a Markdown file so Prettier skips formatting two code blocks and a table between them?",
+    "should_trigger": true
+  },
+  {
+    "query": "Check which stylistic rules in our eslint.config.mjs conflict with Prettier and configure eslint-plugin-prettier/recommended cleanly.",
+    "should_trigger": true
+  },
+  {
+    "query": "Migrate our legacy .eslintrc.json with mocha test overrides and globals to ESLint 10 flat config in eslint.config.mjs without adding Prettier.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add an ESLint rule in eslint.config.mjs that reports console.log as a warning in src/ but allows it in scripts/.",
+    "should_trigger": false
+  },
+  {
+    "query": "Create a new first-party skill under skills/openapi-linter with SKILL.md, references/, and starter evals.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure Vitest workspace projects and v8 coverage thresholds in vitest.config.ts for our TypeScript monorepo.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up a main branch ruleset on our GitHub repository using gh api that blocks force pushes and requires pull requests with zero approvals.",
+    "should_trigger": false
+  },
+  {
+    "query": "Switch our Supabase Prisma setup from a single DATABASE_URL to DATABASE_TRANSACTION_POOLING_URL on port 6543 and DATABASE_SESSION_POOLING_URL on port 5432.",
+    "should_trigger": false
+  },
+  {
+    "query": "Scaffold a NestJS payments module with controller, service, Prisma repository, and createZodDto request/response schemas.",
+    "should_trigger": false
+  },
+  {
+    "query": "Convert our Tailwind CSS v3 tailwind.config.ts setup to Tailwind v4 CSS-first configuration using @import 'tailwindcss' and @theme inline.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure ruff format and ruff check in pyproject.toml for our Python 3.12 uv workspace.",
+    "should_trigger": false
+  },
+  {
+    "query": "Run yarn agents-config skill triggers eslint-configuration --split validation to measure trigger precision and recall.",
+    "should_trigger": false
+  }
+]

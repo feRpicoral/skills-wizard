@@ -11,6 +11,14 @@ import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import {
+  applyReRunPresetAndStyle,
+  applyReRunPresetSkills,
+  type PresetChoice,
+  type PresetDefinition,
+  type ProjectStyle,
+  type ResolvedPresetSelection,
+} from '../project/presets.ts';
+import {
   promptBlocks,
   promptKeepLocal,
   promptLinkCommand,
@@ -89,6 +97,12 @@ export interface ResolveBlocksSelectionParams {
   scope: Scope;
   prompting: boolean;
   requestedBlocks?: string[];
+  preset?: PresetChoice;
+  style?: ProjectStyle;
+  presetChanged: boolean;
+  styleChanged: boolean;
+  presetSelection: ResolvedPresetSelection | null;
+  replacedPreset?: PresetDefinition;
   reconciled: ReconciledManifest | null;
 }
 
@@ -98,6 +112,12 @@ export async function resolveBlocksSelection({
   scope,
   prompting,
   requestedBlocks,
+  preset,
+  style,
+  presetChanged,
+  styleChanged,
+  presetSelection,
+  replacedPreset,
   reconciled,
 }: ResolveBlocksSelectionParams): Promise<string[]> {
   if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
@@ -106,14 +126,34 @@ export async function resolveBlocksSelection({
       ctx,
       prompting,
       scope,
-      reconciled: prompting ? { ...reconciled, addedBlocks: [] } : reconciled,
+      reconciled:
+        prompting || presetSelection !== null
+          ? { ...reconciled, addedBlocks: [] }
+          : reconciled,
     });
-    if (!prompting) return reconciled.blocks;
+    if (!prompting && presetSelection === null) return reconciled.blocks;
   }
+  const reRunBlocks =
+    reconciled !== null && presetSelection !== null
+      ? applyReRunPresetAndStyle({
+          library,
+          recordedBlocks: reconciled.knownBlocks,
+          previousPresetBlocks: replacedPreset?.blocks ?? [],
+          presetBlocks: presetChanged ? presetSelection.blocks : [],
+          requestedStyle: styleChanged ? style : undefined,
+        })
+      : null;
   const initial =
     requestedBlocks ??
-    reconciled?.knownBlocks ??
-    defaultBlockIds(library, scope);
+    (reRunBlocks !== null
+      ? prompting && preset === 'none' && reRunBlocks.length === 0
+        ? defaultBlockIds(library, scope)
+        : reRunBlocks
+      : reconciled !== null
+        ? reconciled.knownBlocks
+        : presetSelection !== null && presetSelection.blocks.length > 0
+          ? presetSelection.blocks
+          : defaultBlockIds(library, scope));
   const chosen = prompting
     ? await promptBlocks({ library, scope, initial })
     : initial;
@@ -241,6 +281,9 @@ export interface ResolveSkillsSelectionParams {
   prompting: boolean;
   requestedSkills?: string[];
   requestedSkillMode?: SkillMode;
+  presetChanged: boolean;
+  presetSelection: ResolvedPresetSelection | null;
+  replacedPreset?: PresetDefinition;
   previous: Manifest | null;
 }
 
@@ -251,6 +294,9 @@ export async function resolveSkillsSelection({
   prompting,
   requestedSkills,
   requestedSkillMode,
+  presetChanged,
+  presetSelection,
+  replacedPreset,
   previous,
 }: ResolveSkillsSelectionParams): Promise<{
   skills: string[];
@@ -259,16 +305,28 @@ export async function resolveSkillsSelection({
   if (requestedSkills) {
     checkExplicitSkills(skillLibrary, requestedSkills, scope);
   }
+  const recordedSkills = previous
+    ? dropUnknownSkills({
+        ctx,
+        prompting,
+        library: skillLibrary,
+        names: previous.skills,
+        scope,
+      })
+    : null;
   const initialSkills =
     requestedSkills ??
-    (previous
-      ? dropUnknownSkills({
-          ctx,
-          prompting,
-          library: skillLibrary,
-          names: previous.skills,
-        })
-      : defaultSkillNames(skillLibrary, scope));
+    (recordedSkills !== null
+      ? presetChanged && presetSelection !== null
+        ? applyReRunPresetSkills({
+            recordedSkills,
+            previousPresetSkills: replacedPreset?.skills ?? [],
+            presetSkills: presetSelection.skills,
+          })
+        : recordedSkills
+      : presetSelection !== null
+        ? presetSelection.skills
+        : defaultSkillNames(skillLibrary, scope));
   const skills = prompting
     ? await promptSkills(skillLibrary, scope, initialSkills)
     : initialSkills;

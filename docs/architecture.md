@@ -32,9 +32,19 @@ sequenceDiagram
 - placeholders that are not declared as variables, and declared variables that are never used
 - `requires` entries that name an unknown block, a block later in the order, or a block missing one of the scopes
 
-Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library, or no longer available for the manifest's scope, are dropped with a warning by `sync`, `update` and `adopt`, and `doctor` reports them. When a recorded block gains a variable, `sync`, `update` and `adopt` look up its value the way `init` does (asking for it in a terminal) and record it. If no value is found, `sync` and `adopt` stop with a usage error naming the `init --var` command before anything is written, and `update` skips that install with a warning naming the command and refreshes the others. `doctor` runs the same lookup: it warns with the value `sync` will record, or reports the missing variable as an error and still checks every file for conflicts and every skill folder and link for changes.
+Selecting a block also selects the blocks it requires. Blocks recorded in a manifest that are no longer in the library, or no longer available for the manifest's scope, are dropped with a warning by `sync`, `update` and `adopt` (including a replacement-skill hint when a block was replaced by a first-party skill such as `github-repo-setup` or `supabase-prisma`), and `doctor` reports them. When a recorded block gains a variable, `sync`, `update` and `adopt` look up its value the way `init` does (asking for it in a terminal) and record it. If no value is found, `sync` and `adopt` stop with a usage error naming the `init --var` command before anything is written, and `update` skips that install with a warning naming the command and refreshes the others. `doctor` runs the same lookup: it warns with the value `sync` will record, or reports the missing variable as an error and still checks every file for conflicts and every skill folder and link for changes.
 
-The system-wide file is the global header plus the selected blocks joined by blank lines. A project file gets the selected blocks inside a managed region, below a `# <project name>` heading that is written once.
+The system-wide file is the global header plus the selected blocks joined by blank lines. A project file gets the selected blocks inside a managed region, below a project seed preamble (`# <project name>`, optional description, `## Commands` and `## Workspaces`) that is written once when creating the file and preserved outside `<!-- BEGIN:agents-config -->` across `sync` and `update`.
+
+## Project stack presets, detection and seed generation (`src/project/`)
+
+`presets/<id>.yaml` defines the seven built-in project stack presets (`nextjs-app`, `nestjs-api`, `nx-monorepo`, `expo-app`, `vite-spa`, `python-service`, `node-tool`), validated with `zod` against the repository's `BlockLibrary` and `SkillLibrary` (`src/project/presets.ts`).
+
+When initializing a project (`agents-config init --project <dir>`), `detectProject` (`src/project/detect.ts`) inspects regular files inside the project boundary (`package.json`, `nx.json`, `pnpm-workspace.yaml`, `pyproject.toml`, `.nvmrc`, `prisma/schema.prisma`, `prisma.config.ts`, `supabase/config.toml`, `components.json`, lockfiles and declared workspace packages) to:
+
+1. Select a matching preset (or union workspace sub-app/lib stacks) and additive blocks/skills (`stack/prisma` + `prisma-*`, `supabase-prisma`/`supabase`/`supabase-postgres-best-practices`, `stack/tanstack-query` + `tanstack-query-expert`, `stack/tailwind-shadcn` + `tailwind-patterns`, `stack/llm-apps` + `ai-sdk`/`claude-api`, `playwright-cli`).
+2. Resolve the block selection in either `lean` style (default when a system-wide install exists: only `stack/*` blocks, assuming global `AGENTS.md` is installed) or `self-contained`/`strict` style (default when no system-wide install exists: project-default core, engineering and git blocks plus `stack/*` blocks), recording the chosen `preset` (`<id>` or `'none'`) in the project manifest so re-runs preserve it.
+3. Synthesize the initial project seed preamble (`src/project/seed.ts`) with `# <name>`, description, `## Commands` and `## Workspaces` (falling back to `# <name>` when no scripts or workspaces exist).
 
 ## Skills and the source cache
 

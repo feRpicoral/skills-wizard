@@ -53,6 +53,8 @@ export class EvalError extends AgentsConfigError {}
 
 export class RunnerError extends AgentsConfigError {}
 
+export class PresetError extends AgentsConfigError {}
+
 export function isSystemError(error: unknown): error is NodeJS.ErrnoException {
   return (
     error instanceof Error &&

@@ -8,12 +8,14 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import { buildPlan, type PlannedAction } from '../install/plan.ts';
+import type { PresetChoice } from '../project/presets.ts';
 import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, type ToolDefinition } from '../tools/registry.ts';
 import {
   type Location,
   type ReconciledManifest,
+  replacementSkillHint,
   setVariablesCommand,
 } from './shared.ts';
 
@@ -160,6 +162,7 @@ export interface PlanFindingsParams {
   skills: string[];
   skillSources: ReadonlyMap<string, SkillSource>;
   keepLocal: boolean;
+  preset?: PresetChoice | undefined;
   reportOutdated: boolean;
 }
 
@@ -173,6 +176,7 @@ export async function planFindings({
   skills,
   skillSources,
   keepLocal,
+  preset,
   reportOutdated,
 }: PlanFindingsParams): Promise<Finding[]> {
   const findings: Finding[] = [];
@@ -187,6 +191,10 @@ export async function planFindings({
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
       skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
+      ...(preset !== undefined ? { preset } : {}),
+      ...(manifest.options.style !== undefined
+        ? { style: manifest.options.style }
+        : {}),
     },
     library,
     paths: ctx.paths,
@@ -236,6 +244,7 @@ export function manifestFindings({
   const findings: Finding[] = [];
   const { scope } = location;
   const {
+    unknownPreset,
     unknownBlocks,
     outOfScopeBlocks,
     addedBlocks,
@@ -245,16 +254,22 @@ export function manifestFindings({
     unresolvedVariables,
   } = reconciled;
 
+  if (unknownPreset !== undefined) {
+    findings.push({
+      level: 'warn',
+      message: `Preset "${unknownPreset}" is no longer recognized; agents-config sync will drop it`,
+    });
+  }
   if (unknownBlocks.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Blocks no longer in the library: ${unknownBlocks.join(', ')}; agents-config sync will drop them`,
+      message: `Blocks no longer in the library: ${unknownBlocks.join(', ')}; agents-config sync will drop them${replacementSkillHint(unknownBlocks)}`,
     });
   }
   if (outOfScopeBlocks.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Blocks no longer available for ${scope} scope: ${outOfScopeBlocks.join(', ')}; agents-config sync will drop them`,
+      message: `Blocks no longer available for ${scope} scope: ${outOfScopeBlocks.join(', ')}; agents-config sync will drop them${replacementSkillHint(outOfScopeBlocks)}`,
     });
   }
   if (addedBlocks.length > 0) {

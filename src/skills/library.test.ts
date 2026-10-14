@@ -27,7 +27,10 @@ const CATALOG = [
 test('the repository library preselects its default global skills', async () => {
   const library = await loadSkillLibrary(REPO_ROOT);
 
-  assert.deepEqual(defaultSkillNames(library, 'global'), [
+  const defaults = defaultSkillNames(library, 'global');
+
+  assert.deepEqual(defaults, [
+    'github-repo-setup',
     'pretty-mermaid',
     'skill-scanner',
   ]);

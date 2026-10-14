@@ -1,0 +1,82 @@
+[
+  {
+    "query": "We just created a new GitHub repository for our billing API and haven't pushed the first commit yet. Configure its merge settings and main branch protection ruleset.",
+    "should_trigger": true
+  },
+  {
+    "query": "Use the gh CLI to disable squash and rebase merges on feRpicoral/relay, enable merge commits only, and turn on automatic deletion of head branches after merge.",
+    "should_trigger": true
+  },
+  {
+    "query": "Write a .github/ruleset-main.json payload for gh api that protects ~DEFAULT_BRANCH with pull_request (0 required approvals), non_fast_forward, deletion, and no bypass actors.",
+    "should_trigger": true
+  },
+  {
+    "query": "Audit our repository's GitHub settings and branch rulesets to make sure stacked PR branches auto-delete on merge and force-pushes to main are blocked.",
+    "should_trigger": true
+  },
+  {
+    "query": "Our main branch ruleset currently allows repository admins to bypass PR requirements and requires 1 approval on a solo repo. Fix the ruleset JSON and gh api command.",
+    "should_trigger": true
+  },
+  {
+    "query": "Create a repeatable scripts/setup-github-repo.sh script that inspects the repo with gh repo view, applies our house merge settings, and creates the main branch ruleset.",
+    "should_trigger": true
+  },
+  {
+    "query": "Before I push main to GitHub on this new repo, what gh repo edit and gh api ruleset commands should we run to match our repository conventions?",
+    "should_trigger": true
+  },
+  {
+    "query": "Turn off squash merging and rebase merging on our GitHub repo so every PR merges with a merge commit and head branches are cleaned up automatically.",
+    "should_trigger": true
+  },
+  {
+    "query": "Replace our old curl script that hits /branches/main/protection with a gh CLI script that configures a repository branch ruleset on ~DEFAULT_BRANCH.",
+    "should_trigger": true
+  },
+  {
+    "query": "Check whether feRpicoral/quotahit has deleteBranchOnMerge enabled and an active main branch ruleset blocking direct pushes.",
+    "should_trigger": true
+  },
+  {
+    "query": "Open a pull request from feat/invoice-export to main using gh pr create with a concise summary description.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a GitHub Actions workflow in .github/workflows/ci.yml that runs yarn lint, yarn typecheck, and yarn test on pull requests.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up Husky and commitlint in this repository to enforce header-only Conventional Commits locally.",
+    "should_trigger": false
+  },
+  {
+    "query": "Rebase my local feature branch onto origin/main and resolve the merge conflict in src/index.ts.",
+    "should_trigger": false
+  },
+  {
+    "query": "Create a baseline Prisma migration in prisma/migrations/0_init/migration.sql for our Supabase database.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure ESLint 10 flat config in eslint.config.mjs with typescript-eslint and simple-import-sort.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add Dependabot configuration in .github/dependabot.yml for weekly npm dependency updates.",
+    "should_trigger": false
+  },
+  {
+    "query": "Scaffold a new NestJS domain module for organizations with controller, service, and Prisma repository.",
+    "should_trigger": false
+  },
+  {
+    "query": "Use gh release create v1.2.0 to publish a new GitHub release with auto-generated release notes.",
+    "should_trigger": false
+  },
+  {
+    "query": "Run yarn agents-config skill validate skills/github-repo-setup to check the skill frontmatter against the spec.",
+    "should_trigger": false
+  }
+]

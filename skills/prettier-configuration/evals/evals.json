@@ -1,0 +1,191 @@
+{
+  "skill_name": "prettier-configuration",
+  "evals": [
+    {
+      "id": "add-prettier-single-quotes",
+      "prompt": "can you add prettier to this project? I want single quotes. also eslint and prettier keep fighting every time I save in vscode, please make them stop",
+      "expected_output": "The agent runs the version check (missing: Prettier is not declared), inspects eslint.config.mjs, package.json and .vscode/settings.json, and sets up the house style: .prettierrc containing only singleQuote true, a .prettierignore, prettier, eslint-plugin-prettier and eslint-config-prettier as devDependencies, eslint-plugin-prettier/recommended added to eslint.config.mjs after the shared configs, and the stylistic rules quotes, semi, indent and comma-dangle removed from the ESLint config because they caused the save-time fight. It adds format and format:check scripts, the house lint-staged block and Husky hooks (postinstall with Yarn), mentions the eslint-plugin-prettier trade-off in one sentence, and verifies with prettier --check, eslint and the eslint-config-prettier CLI helper, or reports that dependencies must be installed first.",
+      "files": [
+        "evals/files/add-prettier-single-quotes/package.json",
+        "evals/files/add-prettier-single-quotes/eslint.config.mjs",
+        "evals/files/add-prettier-single-quotes/.gitignore",
+        "evals/files/add-prettier-single-quotes/.vscode/settings.json",
+        "evals/files/add-prettier-single-quotes/src/App.tsx",
+        "evals/files/add-prettier-single-quotes/src/main.tsx"
+      ],
+      "assertions": [
+        "Runs scripts/check-version.mjs first and treats the missing status as a new Prettier setup",
+        { "type": "file_exists", "path": ".prettierrc" },
+        { "type": "json_valid", "path": ".prettierrc" },
+        {
+          "type": "regex",
+          "path": ".prettierrc",
+          "pattern": "\"singleQuote\"\\s*:\\s*true"
+        },
+        {
+          "type": "regex",
+          "path": ".prettierrc",
+          "pattern": "^(?![\\s\\S]*(printWidth|tabWidth|trailingComma|arrowParens))"
+        },
+        { "type": "file_exists", "path": ".prettierignore" },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "eslint-plugin-prettier/recommended"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "^(?![\\s\\S]*['\"]?\\bquotes['\"]?\\s*:)"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "^(?![\\s\\S]*['\"]?\\bindent['\"]?\\s*:)"
+        },
+        { "type": "json_valid", "path": "package.json" },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"prettier\"\\s*:\\s*\"[^\"]*3\\."
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"eslint-config-prettier\"\\s*:"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"eslint-plugin-prettier\"\\s*:"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"format\"\\s*:\\s*\"prettier --write"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"lint-staged\"\\s*:\\s*\\{"
+        },
+        { "type": "file_exists", "path": ".husky/pre-commit" },
+        "Explains that the save-time fight came from ESLint's quotes, semi, indent and comma-dangle rules disagreeing with Prettier, and removes them rather than relying on config order",
+        "Mentions the eslint-plugin-prettier trade-off from the Prettier docs in one sentence without switching to a different integration",
+        "Reports the commands it ran (npx prettier --check ., npx eslint ., npx eslint-config-prettier <file>) or explains that dependencies must be installed first"
+      ]
+    },
+    {
+      "id": "ignore-generated-and-md-tables",
+      "prompt": "Prettier keeps rewriting src/generated/ (GraphQL codegen output that we commit) and it realigns the hand-formatted comparison table in docs/benchmarks.md every time someone runs `yarn format`. Make Prettier leave the generated code alone and keep that one table exactly as written, but keep formatting the rest of our Markdown.",
+      "expected_output": "The agent runs the version check (match: prettier 3.9.10). It adds src/generated (or **/generated) to .prettierignore while keeping the existing coverage entry, explaining that .gitignore patterns are already skipped but committed generated code needs its own entry. It puts <!-- prettier-ignore --> directly above the table in docs/benchmarks.md (or wraps it in prettier-ignore-start and prettier-ignore-end with blank lines before each marker), leaves the table text untouched, and does not ignore all Markdown, the whole benchmarks file, or change proseWrap. It verifies with npx prettier --check . (docs/guide.md is still reported until someone runs yarn format, which shows the rest of the Markdown is still formatted) or explains why it could not run.",
+      "files": [
+        "evals/files/ignore-generated-and-md-tables/package.json",
+        "evals/files/ignore-generated-and-md-tables/.prettierrc",
+        "evals/files/ignore-generated-and-md-tables/.prettierignore",
+        "evals/files/ignore-generated-and-md-tables/.gitignore",
+        "evals/files/ignore-generated-and-md-tables/src/index.ts",
+        "evals/files/ignore-generated-and-md-tables/src/generated/graphql.ts",
+        "evals/files/ignore-generated-and-md-tables/docs/benchmarks.md",
+        "evals/files/ignore-generated-and-md-tables/docs/guide.md",
+        "evals/files/ignore-generated-and-md-tables/node_modules/prettier/package.json"
+      ],
+      "assertions": [
+        "Runs scripts/check-version.mjs and reports match (prettier 3.9.10)",
+        {
+          "type": "regex",
+          "path": ".prettierignore",
+          "pattern": "generated"
+        },
+        {
+          "type": "regex",
+          "path": ".prettierignore",
+          "pattern": "coverage"
+        },
+        {
+          "type": "regex",
+          "path": ".prettierignore",
+          "pattern": "^(?![\\s\\S]*\\.md)"
+        },
+        {
+          "type": "regex",
+          "path": "docs/benchmarks.md",
+          "pattern": "<!--\\s*prettier-ignore(-start)?\\s*-->"
+        },
+        {
+          "type": "regex",
+          "path": "docs/benchmarks.md",
+          "pattern": "\\| fastify  \\| 48,210 \\|    0\\.91 \\|"
+        },
+        {
+          "type": "regex",
+          "path": "docs/guide.md",
+          "pattern": "^(?![\\s\\S]*prettier-ignore)"
+        },
+        { "type": "json_valid", "path": ".prettierrc" },
+        {
+          "type": "regex",
+          "path": ".prettierrc",
+          "pattern": "^(?![\\s\\S]*(proseWrap|embeddedLanguageFormatting))"
+        },
+        {
+          "type": "regex",
+          "path": "src/generated/graphql.ts",
+          "pattern": "__typename\\?: \"Query\""
+        },
+        "Explains that the prettier-ignore comment must sit directly above the table, and that range ignores need a blank line before each marker",
+        "Explains that .gitignore entries are already skipped, so committed generated code needs its own .prettierignore entry",
+        "Verifies with npx prettier --check . that the generated files and the table are no longer reported, or explains why it could not run"
+      ]
+    },
+    {
+      "id": "ci-local-version-drift",
+      "prompt": "prettier --check passes on my laptop but CI fails saying docs/setup.md isn't formatted. nobody touched that file in weeks. what's going on, and can you fix docs/setup.md so CI passes without just ignoring it?",
+      "expected_output": "The agent runs the version check, which reports older with staleInstall true: node_modules has prettier 3.0.3 while package.json declares ^3.9.10 and the docs are 3.9.10. It explains that CI installs 3.9.10 from package-lock.json with npm ci while the laptop still has 3.0.3, and that Prettier output changes between releases: with the Markdown override tabWidth 4, Prettier before 3.4.0 prints list items as '-   item' and 3.4.0 and later print '- item' (3.9.0 also replaced the Markdown parser). It updates docs/setup.md to match Prettier 3.9.10 formatting ('- Install Node.js 24.' with single space after the list marker), tells the user to reinstall from the lockfile (npm ci) and rerun prettier --check, and mentions the docs' advice to install an exact version (or relying on the committed lockfile) and making the editor use the local Prettier. It does not add the file to .prettierignore, does not loosen or remove the CI step, and does not downgrade Prettier.",
+      "files": [
+        "evals/files/ci-local-version-drift/package.json",
+        "evals/files/ci-local-version-drift/package-lock.json",
+        "evals/files/ci-local-version-drift/.prettierrc",
+        "evals/files/ci-local-version-drift/.prettierignore",
+        "evals/files/ci-local-version-drift/.github/workflows/ci.yml",
+        "evals/files/ci-local-version-drift/docs/setup.md",
+        "evals/files/ci-local-version-drift/node_modules/prettier/package.json"
+      ],
+      "assertions": [
+        "Runs scripts/check-version.mjs and reports older with a stale install: node_modules has prettier 3.0.3, package.json declares ^3.9.10, and the docs are 3.9.10",
+        "Identifies the stale local install as the cause and tells the user to reinstall from the lockfile (npm ci) and rerun prettier --check",
+        "Explains that Prettier output changes between releases, for example the 3.4.0 change from '-   item' to '- item' in Markdown lists under tabWidth 4, which matches the list in docs/setup.md",
+        "Mentions the docs' advice to install an exact Prettier version, or relying on the committed lockfile, to prevent drift",
+        { "type": "json_valid", "path": "package.json" },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"prettier\"\\s*:\\s*\"[\\^~]?3\\.9\\.\\d+\""
+        },
+        {
+          "type": "regex",
+          "path": ".prettierignore",
+          "pattern": "^(?![\\s\\S]*(\\.md|\\.ya?ml|docs|\\.github))"
+        },
+        {
+          "type": "regex",
+          "path": ".prettierrc",
+          "pattern": "\"tabWidth\"\\s*:\\s*4"
+        },
+        {
+          "type": "regex",
+          "path": ".github/workflows/ci.yml",
+          "pattern": "prettier[^\\n]*--check"
+        },
+        { "type": "file_exists", "path": "docs/setup.md" },
+        {
+          "type": "regex",
+          "path": "docs/setup.md",
+          "pattern": "^(?![\\s\\S]*-   Install)"
+        },
+        { "type": "file_exists", "path": "package-lock.json" },
+        "Does not add the failing files to .prettierignore, does not loosen or remove the CI check, and does not downgrade Prettier"
+      ]
+    }
+  ]
+}

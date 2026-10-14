@@ -1,0 +1,10 @@
+id: node-tool
+name: Node.js Tool or Service
+description: Node.js CLI, library, or service with TypeScript, Yarn, ESLint, and Prettier
+blocks:
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+skills:
+  - eslint-configuration
+  - prettier-configuration

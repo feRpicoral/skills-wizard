@@ -13,9 +13,11 @@ A CLI and the content it installs: `AGENTS.md` instructions and skills for Claud
 ## Layout
 
 - `blocks/`: instruction fragments. `blocks/index.yaml` sets the composed order and the group labels.
+- `presets/`: stack preset definitions (`presets/<id>.yaml`) mapping project archetypes to `stack/*` blocks and skills.
 - `skills/`: first-party skills (`skills/<name>/SKILL.md`), validated strictly against the Agent Skills spec.
 - `catalog.yaml`: curated third-party skills by upstream repository and path.
 - `src/blocks/`: loading, validating and composing blocks.
+- `src/project/`: stack preset loading (`presets.ts`), project stack/workspace auto-detection (`detect.ts`) and initial `AGENTS.md` seed preamble generation (`seed.ts`).
 - `src/skills/`: catalog loading, sparse git source cache, skill tree copying/hashing, spec validation, collision detection, diffs and risk scanning.
 - `src/evals/`: skill evaluation schemas (`evals.json`, `trigger_queries.json`), isolated workspace preparation, runner adapters (`agy`, `claude`, `codex`, `gemini`, `fake`), scripted and blind-grader assertion evaluation, benchmark aggregation and Markdown reports.
 - `src/install/`: planning and applying file and skill changes (managed regions, import lines, JSON merges, symlinks, skill trees).

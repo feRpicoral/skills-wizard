@@ -18,6 +18,7 @@ import {
 } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { MissingVariablesError } from '../errors.ts';
+import { isPresetChoice, type PresetChoice } from '../project/presets.ts';
 import { promptVariables } from '../prompts/selection.ts';
 import type { SkillLibrary } from '../skills/library.ts';
 import type { Manifest } from '../state/manifest.ts';
@@ -70,6 +71,89 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
 }
 
+const BLOCK_REPLACEMENT_SKILLS: Readonly<Record<string, string>> = {
+  'git/github-repo-setup': 'github-repo-setup',
+  'stack/supabase-prisma': 'supabase-prisma',
+};
+
+/**
+ * Formats a parenthetical hint pointing to the replacement skill(s) when a
+ * deprecated or out-of-scope block ID has a first-party skill equivalent.
+ */
+export function replacementSkillHint(ids: readonly string[]): string {
+  const skills = [
+    ...new Set(
+      ids
+        .map((id) => BLOCK_REPLACEMENT_SKILLS[id])
+        .filter((name): name is string => name !== undefined),
+    ),
+  ];
+  if (skills.length === 0) return '';
+  return ` (use the ${skills.join(', ')} skill${skills.length === 1 ? '' : 's'} instead)`;
+}
+
+export interface DropUnknownPresetParams {
+  ctx: Context;
+  prompting: boolean;
+  preset: string | undefined;
+}
+
+/**
+ * Validates a recorded manifest `preset` value against `isPresetChoice`,
+ * emitting a warning and returning `undefined` when it is no longer recognized.
+ */
+export function dropUnknownPreset({
+  ctx,
+  prompting,
+  preset,
+}: DropUnknownPresetParams): PresetChoice | undefined {
+  if (preset === undefined) return undefined;
+  if (isPresetChoice(preset)) return preset;
+  notify({
+    ctx,
+    prompting,
+    message: `Preset "${preset}" is no longer recognized and was dropped.`,
+    level: 'warn',
+  });
+  return undefined;
+}
+
+export interface DropUnavailableBlocksParams {
+  ctx: Context;
+  prompting: boolean;
+  library: BlockLibrary;
+  ids: readonly string[];
+  scope: Scope;
+}
+
+export function dropUnavailableBlocks({
+  ctx,
+  prompting,
+  library,
+  ids,
+  scope,
+}: DropUnavailableBlocksParams): string[] {
+  const unknown = unknownBlockIds(library, ids);
+  const outOfScope = outOfScopeBlockIds(library, ids, scope);
+  if (unknown.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}${replacementSkillHint(unknown)}`,
+      level: 'warn',
+    });
+  }
+  if (outOfScope.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}${replacementSkillHint(outOfScope)}`,
+      level: 'warn',
+    });
+  }
+  return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
+}
+
 export interface ReconcileManifestParams {
   manifest: Manifest;
   library: BlockLibrary;
@@ -83,6 +167,8 @@ export interface ReconciledManifest {
   unknownBlocks: string[];
   outOfScopeBlocks: string[];
   addedBlocks: string[];
+  preset?: PresetChoice;
+  unknownPreset?: string;
   keepLocal: boolean;
   leftGit: boolean;
   neededVariables: string[];
@@ -98,6 +184,13 @@ export async function reconcileManifest({
   lookupEnv,
 }: ReconcileManifestParams): Promise<ReconciledManifest> {
   const { scope } = location;
+  const rawPreset = manifest.options.preset;
+  const preset =
+    rawPreset !== undefined && isPresetChoice(rawPreset)
+      ? rawPreset
+      : undefined;
+  const unknownPreset =
+    rawPreset !== undefined && preset === undefined ? rawPreset : undefined;
   const unknownBlocks = unknownBlockIds(library, manifest.blocks);
   const outOfScopeBlocks = outOfScopeBlockIds(library, manifest.blocks, scope);
   const knownBlocks = manifest.blocks.filter(
@@ -130,6 +223,8 @@ export async function reconcileManifest({
     unknownBlocks,
     outOfScopeBlocks,
     addedBlocks,
+    ...(preset !== undefined ? { preset } : {}),
+    ...(unknownPreset !== undefined ? { unknownPreset } : {}),
     keepLocal,
     leftGit,
     neededVariables,
@@ -159,7 +254,7 @@ export function notifyReconciledBlocks({
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer in the library were dropped: ${unknownBlocks.join(', ')}`,
+      message: `Blocks no longer in the library were dropped: ${unknownBlocks.join(', ')}${replacementSkillHint(unknownBlocks)}`,
       level: 'warn',
     });
   }
@@ -167,7 +262,7 @@ export function notifyReconciledBlocks({
     notify({
       ctx,
       prompting,
-      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScopeBlocks.join(', ')}`,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScopeBlocks.join(', ')}${replacementSkillHint(outOfScopeBlocks)}`,
       level: 'warn',
     });
   }
@@ -230,6 +325,7 @@ export interface ReconciledSelection {
   skills: string[];
   variables: Record<string, string>;
   keepLocal: boolean;
+  preset?: PresetChoice;
 }
 
 export async function reconcileManifestSelection({
@@ -247,6 +343,14 @@ export async function reconcileManifestSelection({
     location,
     lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
   });
+  if (reconciled.unknownPreset !== undefined) {
+    notify({
+      ctx,
+      prompting,
+      message: `Preset "${reconciled.unknownPreset}" is no longer recognized and was dropped.`,
+      level: 'warn',
+    });
+  }
   notifyReconciledBlocks({ ctx, prompting, scope: location.scope, reconciled });
   const variables = await resolveVariables({
     ctx,
@@ -260,6 +364,7 @@ export async function reconcileManifestSelection({
     prompting,
     library: skillLibrary,
     names: previous.skills,
+    scope: location.scope,
   });
   const skills = [...new Set([...priorSkills, ...extraSkills])];
   if (reconciled.leftGit && location.project) {
@@ -270,5 +375,6 @@ export async function reconcileManifestSelection({
     skills,
     variables,
     keepLocal: reconciled.keepLocal,
+    ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
   };
 }

@@ -1,0 +1,35 @@
+{
+  "root": true,
+  "env": {
+    "browser": true,
+    "es2022": true
+  },
+  "extends": ["eslint:recommended"],
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "rules": {
+    "eqeqeq": ["error", "always"],
+    "no-console": "warn",
+    "prefer-const": "error",
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }]
+  },
+  "overrides": [
+    {
+      "files": ["test/**/*.js"],
+      "env": { "mocha": true },
+      "rules": {
+        "no-unused-expressions": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": ["scripts/**/*.js", "*.config.js"],
+      "env": { "node": true, "browser": false },
+      "parserOptions": { "sourceType": "script" },
+      "rules": { "no-console": "off" }
+    }
+  ],
+  "ignorePatterns": ["dist/", "coverage/", "vendor/**"]
+}

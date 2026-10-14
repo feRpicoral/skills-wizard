@@ -38,6 +38,7 @@ export interface DropUnknownSkillsParams {
   prompting: boolean;
   library: SkillLibrary;
   names: readonly string[];
+  scope?: Scope;
 }
 
 export function dropUnknownSkills({
@@ -45,8 +46,16 @@ export function dropUnknownSkills({
   prompting,
   library,
   names,
+  scope,
 }: DropUnknownSkillsParams): string[] {
   const unknown = unknownSkillNames(library, names);
+  const outOfScope =
+    scope !== undefined
+      ? names.filter((name) => {
+          const skill = findSkill(library, name);
+          return skill !== undefined && !skill.scopes.includes(scope);
+        })
+      : [];
   if (unknown.length > 0) {
     notify({
       ctx,
@@ -55,7 +64,17 @@ export function dropUnknownSkills({
       level: 'warn',
     });
   }
-  return names.filter((name) => !unknown.includes(name));
+  if (outOfScope.length > 0 && scope !== undefined) {
+    notify({
+      ctx,
+      prompting,
+      message: `Skills no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  return names.filter(
+    (name) => !unknown.includes(name) && !outOfScope.includes(name),
+  );
 }
 
 export function sourceCache(ctx: Context): SourceCache {

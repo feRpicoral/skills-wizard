@@ -1,0 +1,258 @@
+{
+  "skill_name": "eslint-configuration",
+  "evals": [
+    {
+      "id": "ts-setup-from-scratch",
+      "prompt": "hey can you set up linting for this repo? it's a little typescript node service (everything is in src/) and we never added eslint or anything",
+      "expected_output": "The agent runs the version check (status missing), inspects package.json (Yarn 4 via packageManager, type module), and sets up the house style from scratch: eslint.config.mjs built with defineConfig and globalIgnores from eslint/config, @eslint/js recommended, typescript-eslint recommended, globals.node, eslint-plugin-prettier/recommended after the shared configs, simple-import-sort imports and exports as errors, eslint-plugin-unused-imports with ^_ ignore patterns, and consistent-type-imports with inline type imports. It adds .prettierrc with only singleQuote true, a .prettierignore, devDependencies, lint/lint:fix/format/format:check scripts, the house lint-staged block and Husky hooks installed from postinstall (Yarn). It fixes or reports the existing violations in src/index.ts instead of weakening rules, mentions the eslint-plugin-prettier trade-off in one sentence, and reports which verification commands ran or why they could not run without installing dependencies.",
+      "files": [
+        "evals/files/ts-setup-from-scratch/package.json",
+        "evals/files/ts-setup-from-scratch/tsconfig.json",
+        "evals/files/ts-setup-from-scratch/.gitignore",
+        "evals/files/ts-setup-from-scratch/src/index.ts",
+        "evals/files/ts-setup-from-scratch/src/invoice.ts"
+      ],
+      "assertions": [
+        "Runs scripts/check-version.mjs before editing and treats the missing status as a new setup",
+        { "type": "file_exists", "path": "eslint.config.mjs" },
+        { "type": "file_absent", "path": ".eslintrc.json" },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "from\\s+['\"]eslint/config['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "defineConfig\\("
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "eslint-plugin-prettier/recommended"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "['\"]simple-import-sort/imports['\"]\\s*:\\s*['\"]error['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "['\"]simple-import-sort/exports['\"]\\s*:\\s*['\"]error['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "IgnorePattern['\"]?\\s*:\\s*['\"]\\^_['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "eslint-plugin-unused-imports"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "consistent-type-imports"
+        },
+        { "type": "file_exists", "path": ".prettierrc" },
+        {
+          "type": "regex",
+          "path": ".prettierrc",
+          "pattern": "\"singleQuote\"\\s*:\\s*true"
+        },
+        { "type": "json_valid", "path": "package.json" },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"lint\"\\s*:\\s*\"eslint"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"eslint-plugin-simple-import-sort\"\\s*:"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"lint-staged\"\\s*:\\s*\\{"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"postinstall\"\\s*:\\s*\"[^\"]*husky"
+        },
+        { "type": "file_exists", "path": ".husky/pre-commit" },
+        {
+          "type": "regex",
+          "path": ".husky/pre-commit",
+          "pattern": "lint-staged"
+        },
+        "Does not weaken rules or add ignores to make src/index.ts pass; fixes or reports the unused join import and the value import of the Invoice type",
+        "Mentions the eslint-plugin-prettier trade-off from the Prettier docs in at most one sentence and keeps the plugin",
+        "Reports the verification commands it ran (npx eslint ., npx eslint --print-config <file>, npx prettier --check .) or explains that dependencies must be installed first"
+      ]
+    },
+    {
+      "id": "migrate-eslintrc-to-flat",
+      "prompt": "Please migrate this repo's ESLint setup to flat config and upgrade ESLint to v10 while you're at it. Keep the existing rules, the browser/node/mocha globals, the test override and every ignore pattern from .eslintrc.json and .eslintignore. Delete the old files and fix the npm scripts that still use eslintrc-only flags.",
+      "expected_output": "The agent runs the version check, which reports older (eslint 8.57.0 installed versus the 10.12.0 docs), reads version-differences.md and notes the Node.js requirement for ESLint 10. It writes eslint.config.mjs with the same behavior: @eslint/js recommended, the four rules including argsIgnorePattern ^_, browser globals for src and tests but not for scripts and **/*.config.js (the old override set browser false and sourceType script, and *.config.js gains **/ because eslintrc overrides used matchBase: true), mocha globals and the no-unused-expressions and no-console overrides for test files, node globals for scripts and **/*.config.js, and global ignores for dist/, coverage/, vendor/**, public/legacy.js and **/temp.js (temp.js gains **/ because flat config patterns are relative to the config file). It removes the eslint-env comments, deletes .eslintrc.json and .eslintignore, bumps eslint to ^10 and adds @eslint/js and globals, drops --ignore-path from the scripts, adds no house-style plugins, and reports which commands it ran or that installing dependencies is required first.",
+      "files": [
+        "evals/files/migrate-eslintrc-to-flat/package.json",
+        "evals/files/migrate-eslintrc-to-flat/.eslintrc.json",
+        "evals/files/migrate-eslintrc-to-flat/.eslintignore",
+        "evals/files/migrate-eslintrc-to-flat/src/app.js",
+        "evals/files/migrate-eslintrc-to-flat/src/widget.js",
+        "evals/files/migrate-eslintrc-to-flat/test/widget.test.js",
+        "evals/files/migrate-eslintrc-to-flat/scripts/build.js",
+        "evals/files/migrate-eslintrc-to-flat/packages/ui/rollup.config.js",
+        "evals/files/migrate-eslintrc-to-flat/node_modules/eslint/package.json"
+      ],
+      "assertions": [
+        "Runs scripts/check-version.mjs, reports older (8.57.0 installed versus the 10.12.0 docs) and consults references/version-differences.md before relying on defineConfig or globalIgnores",
+        { "type": "file_exists", "path": "eslint.config.mjs" },
+        { "type": "file_absent", "path": ".eslintrc.json" },
+        { "type": "file_absent", "path": ".eslintignore" },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "js\\.configs\\.recommended|['\"]js/recommended['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "globals\\.browser"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "globals\\.node"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "globals\\.mocha"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "no-unused-expressions"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "argsIgnorePattern['\"]?\\s*:\\s*['\"]\\^_['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "['\"]\\*\\*/temp\\.js['\"]"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "\\*\\*/\\*\\.config\\.js"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "public/legacy\\.js"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "vendor/"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "^(?![\\s\\S]*(eslint-plugin-prettier|simple-import-sort|unused-imports))"
+        },
+        {
+          "type": "regex",
+          "path": "src/app.js",
+          "pattern": "^(?![\\s\\S]*eslint-env)"
+        },
+        {
+          "type": "regex",
+          "path": "test/widget.test.js",
+          "pattern": "^(?![\\s\\S]*eslint-env)"
+        },
+        { "type": "json_valid", "path": "package.json" },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"eslint\"\\s*:\\s*\"[\\^~]?10\\."
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"@eslint/js\"\\s*:"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"globals\"\\s*:"
+        },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "^(?![\\s\\S]*--ignore-path)"
+        },
+        "Keeps browser globals out of scripts/ and *.config.js files, which the old override excluded with browser: false",
+        "States that ESLint 10 requires Node.js ^20.19.0, ^22.13.0 or >=24",
+        "Reports the commands it ran (npx eslint ., npx eslint --print-config <file>) or that verification needs a fresh install because node_modules only has eslint 8.57.0"
+      ]
+    },
+    {
+      "id": "eslint-newer-than-skill",
+      "prompt": "eslint keeps yelling about src/generated/client.ts (it's openapi-typescript output, regenerated on every build) and I'd like console.log to be a warning everywhere except scripts/. can you sort that out?",
+      "expected_output": "The agent runs the version check, which reports newer (eslint 10.14.1 installed versus the 10.12.0 docs). It tells the user the skill is out of date, recommends updating it from the ESLint docs at v10.14.1 and reading the release notes after 10.12.0, and still completes the task with features documented in 10.12.0: src/generated added to the existing globalIgnores call, no-console as warn for the source files, and console allowed in scripts/ through a later files-scoped object (or an ignores entry on the warn object). It leaves the generated file untouched (no eslint-disable comments), keeps the ESLint version in package.json, and verifies with npx eslint . and npx eslint --print-config on a file in scripts/ and in src/, or explains why it could not run them.",
+      "files": [
+        "evals/files/eslint-newer-than-skill/package.json",
+        "evals/files/eslint-newer-than-skill/eslint.config.mjs",
+        "evals/files/eslint-newer-than-skill/.prettierrc",
+        "evals/files/eslint-newer-than-skill/tsconfig.json",
+        "evals/files/eslint-newer-than-skill/src/server.ts",
+        "evals/files/eslint-newer-than-skill/src/generated/client.ts",
+        "evals/files/eslint-newer-than-skill/scripts/seed.ts",
+        "evals/files/eslint-newer-than-skill/node_modules/eslint/package.json"
+      ],
+      "assertions": [
+        "Runs scripts/check-version.mjs and tells the user that the installed ESLint 10.14.1 is newer than the 10.12.0 docs the skill was built from",
+        "Recommends updating the skill from the ESLint docs at v10.14.1 and checking the release notes after 10.12.0 before relying on version-specific details",
+        "Completes the requested change instead of stopping at the version warning",
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "globalIgnores\\(\\s*\\[[^\\]]*src/generated"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "['\"]?no-console['\"]?\\s*:\\s*\\[?\\s*['\"]?(warn|1)\\b"
+        },
+        {
+          "type": "regex",
+          "path": "eslint.config.mjs",
+          "pattern": "scripts/"
+        },
+        {
+          "type": "regex",
+          "path": "src/generated/client.ts",
+          "pattern": "^(?![\\s\\S]*eslint-disable)"
+        },
+        { "type": "json_valid", "path": "package.json" },
+        {
+          "type": "regex",
+          "path": "package.json",
+          "pattern": "\"eslint\"\\s*:\\s*\"\\^10\\.14\\.1\""
+        },
+        "Uses a global ignore for src/generated rather than a non-global ignores entry, a lower severity or inline disables",
+        "console.log ends up reported as a warning in src/ and not reported in scripts/",
+        "Verifies with npx eslint . and npx eslint --print-config on files in scripts/ and src/, or explains why it could not run them"
+      ]
+    }
+  ]
+}

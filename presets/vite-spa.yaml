@@ -1,0 +1,15 @@
+id: vite-spa
+name: Vite React SPA
+description: React single-page application built with Vite, Tailwind CSS, shadcn/ui, and TanStack Query
+blocks:
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+  - stack/react-vite
+  - stack/tailwind-shadcn
+  - stack/tanstack-query
+skills:
+  - eslint-configuration
+  - prettier-configuration
+  - vercel-react-best-practices
+  - web-design-guidelines

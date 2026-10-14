@@ -10,6 +10,14 @@ import {
   parsePositiveInt,
 } from './cli-skill-args.ts';
 import { UsageError } from './errors.ts';
+import {
+  isPresetChoice,
+  isProjectStyle,
+  PRESET_IDS,
+  type PresetChoice,
+  PROJECT_STYLES,
+  type ProjectStyle,
+} from './project/presets.ts';
 import { SKILL_MODES, type SkillMode } from './skills/install.ts';
 import { isToolId, type ToolId } from './tools/registry.ts';
 
@@ -29,6 +37,8 @@ export const OPTIONS = {
   blocks: { type: 'string' },
   skills: { type: 'string' },
   'skill-mode': { type: 'string' },
+  preset: { type: 'string' },
+  style: { type: 'string' },
   catalog: { type: 'boolean' },
   template: { type: 'string' },
   'with-evals': { type: 'boolean' },
@@ -84,6 +94,8 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'blocks',
     'skills',
     'skill-mode',
+    'preset',
+    'style',
     'var',
     'link-command',
     'local',
@@ -177,6 +189,31 @@ export function parseSkillMode(
   return mode;
 }
 
+export function parsePreset(
+  value: string | undefined,
+): PresetChoice | undefined {
+  if (value === undefined) return undefined;
+  if (!isPresetChoice(value)) {
+    throw new UsageError(
+      `--preset must be one of ${PRESET_IDS.join(', ')}, none, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+export function parseProjectStyle(
+  value: string | undefined,
+): ProjectStyle | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'strict') return 'self-contained';
+  if (!isProjectStyle(value)) {
+    throw new UsageError(
+      `--style must be one of ${PROJECT_STYLES.join(', ')}, strict, got "${value}"`,
+    );
+  }
+  return value;
+}
+
 export function parseVariables(
   values: string[] | undefined,
 ): Record<string, string> {
@@ -234,6 +271,11 @@ export type ParsedCommand =
       projectDir?: string;
     };
 
+/**
+ * Parses and validates CLI arguments into a discriminated {@link ParsedCommand},
+ * normalizing `--baseline` arguments and rejecting options that do not apply to
+ * the target command or `skill` subcommand.
+ */
 export function parseCommand(argv: string[]): ParsedCommand {
   let parsed;
   let baselineRef: string | undefined;

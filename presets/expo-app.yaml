@@ -1,0 +1,22 @@
+id: expo-app
+name: Expo App
+description: Expo and React Native mobile application with TypeScript and TanStack Query
+blocks:
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+  - stack/expo-react-native
+  - stack/tanstack-query
+skills:
+  - eslint-configuration
+  - prettier-configuration
+  - eas-workflows
+  - eas-update
+  - expo-dev-client
+  - expo-upgrade
+  - expo-module
+  - react-native-best-practices
+  - react-navigation
+  - react-native-testing
+  - upgrading-react-native
+  - vercel-react-native-skills

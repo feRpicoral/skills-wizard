@@ -1,0 +1,12 @@
+{
+  "name": "ledger-api",
+  "owner": "feRpicoral",
+  "defaultBranchRef": {
+    "name": "main"
+  },
+  "mergeCommitAllowed": true,
+  "squashMergeAllowed": true,
+  "rebaseMergeAllowed": true,
+  "deleteBranchOnMerge": false,
+  "rulesets": []
+}
