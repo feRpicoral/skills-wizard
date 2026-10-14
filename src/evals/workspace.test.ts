@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -765,5 +765,20 @@ test('a Claude plugin skill with the same name marks the claude baseline possibl
   assert.equal(
     await findClaudePluginSkill({ skillName: 'other-skill', paths }),
     undefined,
+  );
+
+  // Symlinked plugin directory with a loop back to plugins root.
+  const externalPlugin = join(root, 'external-plugin');
+  await writeFiles(join(externalPlugin, 'skills', 'linked-skill'), {
+    'SKILL.md': skillSource('linked-skill'),
+  });
+  await symlink(externalPlugin, join(paths.claudeHome, 'plugins', 'linked'));
+  await symlink(
+    join(paths.claudeHome, 'plugins'),
+    join(externalPlugin, 'loop'),
+  );
+  assert.equal(
+    await findClaudePluginSkill({ skillName: 'linked-skill', paths }),
+    join(paths.claudeHome, 'plugins', 'linked', 'skills', 'linked-skill'),
   );
 });

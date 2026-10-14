@@ -10,7 +10,7 @@ import {
   stat,
   symlink,
 } from 'node:fs/promises';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import writeFileAtomic from 'write-file-atomic';
 
@@ -100,9 +100,20 @@ interface InsideCheckParams {
 }
 
 export function isInside({ dir, path }: InsideCheckParams): boolean {
-  return path.startsWith(`${dir}${sep}`);
+  const rel = relative(dir, path);
+  return (
+    rel !== '' &&
+    !rel.startsWith(`..${sep}`) &&
+    rel !== '..' &&
+    !isAbsolute(rel)
+  );
 }
 
+/**
+ * Resolves the canonical filesystem path for `path`, even when leaf segments do
+ * not exist yet, by resolving `realpath` on the nearest existing ancestor.
+ * Returns `null` if `path` or any ancestor along the path is a dangling symlink.
+ */
 export async function realLocation(path: string): Promise<string | null> {
   const missing: string[] = [];
   let current = path;
@@ -125,6 +136,13 @@ interface WriteTextParams {
   content: string;
 }
 
+/**
+ * Atomically writes `content` to `path` via a temporary file rename while
+ * preserving existing permission bits (`0o777`).
+ *
+ * @throws {UnsafeWriteError} If `path` is a symbolic link, preventing atomic
+ * rename from replacing the link itself instead of writing through to its target.
+ */
 export async function writeTextAtomic({
   path,
   content,
@@ -159,4 +177,66 @@ export async function removePath(path: string): Promise<void> {
 
 export async function isDirectory(path: string): Promise<boolean> {
   return (await statIfExists(path))?.isDirectory() ?? false;
+}
+
+export interface WalkDirectoriesParams {
+  root: string;
+  maxDepth: number;
+  skipNames?: ReadonlySet<string>;
+  followSymlinks?: boolean;
+}
+
+export interface WalkDirectoryEntry {
+  path: string;
+  name: string;
+  depth: number;
+}
+
+/**
+ * Walks subdirectories under `root` up to `maxDepth`, optionally following
+ * symlinked directories while tracking visited canonical paths to prevent
+ * symlink loops.
+ */
+export async function* walkDirectories({
+  root,
+  maxDepth,
+  skipNames,
+  followSymlinks = false,
+}: WalkDirectoriesParams): AsyncGenerator<WalkDirectoryEntry> {
+  const visited = new Set<string>();
+  if (followSymlinks) {
+    const rootReal = await realLocation(root).catch(() => null);
+    if (rootReal) visited.add(rootReal);
+  }
+  const pending: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+  while (pending.length > 0) {
+    const next = pending.shift();
+    if (!next) break;
+    let entries;
+    try {
+      entries = await readDirIfExists(next.dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries ?? []) {
+      if (skipNames?.has(entry.name)) continue;
+      const entryPath = join(next.dir, entry.name);
+      const isDir =
+        entry.isDirectory() ||
+        (followSymlinks &&
+          entry.isSymbolicLink() &&
+          (await isDirectory(entryPath)));
+      if (!isDir) continue;
+      if (followSymlinks) {
+        const real = await realLocation(entryPath).catch(() => null);
+        if (!real || visited.has(real)) continue;
+        visited.add(real);
+      }
+      const depth = next.depth + 1;
+      yield { path: entryPath, name: entry.name, depth };
+      if (depth <= maxDepth) {
+        pending.push({ dir: entryPath, depth });
+      }
+    }
+  }
 }

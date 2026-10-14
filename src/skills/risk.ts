@@ -1,7 +1,7 @@
 import { readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { parseFrontmatter } from '../frontmatter.ts';
+import { isRecord, parseFrontmatter } from '../frontmatter.ts';
 import { readTextIfExists } from '../install/fs.ts';
 import {
   changedFiles,
@@ -98,10 +98,8 @@ function allowedTools(markdown: string | null): string | undefined {
   if (!markdown) return undefined;
   try {
     const { data } = parseFrontmatter({ source: markdown, file: SKILL_FILE });
-    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-      return undefined;
-    }
-    return toolList((data as Record<string, unknown>)['allowed-tools']);
+    if (!isRecord(data)) return undefined;
+    return toolList(data['allowed-tools']);
   } catch {
     return undefined;
   }

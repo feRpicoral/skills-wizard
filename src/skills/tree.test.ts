@@ -326,3 +326,23 @@ test('replaceWithLink replaces a directory with a link', async (t) => {
   assert.ok((await lstat(join(root, 'skills', 'demo'))).isSymbolicLink());
   assert.deepEqual(await readdir(join(root, 'skills')), ['demo']);
 });
+
+test('replaceWithCopy clears a leftover .old directory from an interrupted swap', async (t) => {
+  const root = await tempDir(t);
+  await writeFiles(root, {
+    'source/SKILL.md': 'new\n',
+    'skills/demo/SKILL.md': 'old\n',
+    [`skills/.demo.agents-config-${process.pid}.old/SKILL.md`]: 'leftover\n',
+  });
+
+  await replaceWithCopy({
+    source: join(root, 'source'),
+    destination: join(root, 'skills', 'demo'),
+  });
+
+  assert.deepEqual(await readdir(join(root, 'skills')), ['demo']);
+  assert.equal(
+    await readFile(join(root, 'skills', 'demo', 'SKILL.md'), 'utf8'),
+    'new\n',
+  );
+});

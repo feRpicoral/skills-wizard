@@ -1,9 +1,11 @@
-import { join } from 'node:path';
-
-import { z } from 'zod';
-
-import { EvalError } from '../errors.ts';
-import { readTextIfExists } from '../install/fs.ts';
+import {
+  EVAL_SCHEMA_VERSION,
+  loadBenchmarkFromIteration,
+  loadTriggerSummary,
+  parseBenchmarkSummary,
+  type ParseSummaryParams,
+  parseTriggerBenchmarkSummary,
+} from './artifacts.ts';
 import type { EvalCase, TriggerQuery, TriggerSplit } from './cases.ts';
 import {
   formatAssertionLabel,
@@ -12,8 +14,14 @@ import {
 } from './grade.ts';
 import type { EvalRunnerName, EvalVariant } from './workspace.ts';
 
-/** Version of the `benchmark.json` and `triggers.json` formats. */
-export const EVAL_SCHEMA_VERSION = 1;
+export {
+  EVAL_SCHEMA_VERSION,
+  loadBenchmarkFromIteration,
+  loadTriggerSummary,
+  parseBenchmarkSummary,
+  type ParseSummaryParams,
+  parseTriggerBenchmarkSummary,
+};
 
 export interface StatSummary {
   mean: number;
@@ -360,70 +368,34 @@ function aggregateCaseAssertions({
   });
 }
 
-export interface AggregateBenchmarkParams {
-  skillName: string;
-  skillPath: string;
-  runner: EvalRunnerName;
-  runsPerConfig: number;
-  cases: readonly EvalCase[];
-  runs: readonly EvalRunRecord[];
-  baselineEnabled: boolean;
-  /** From `without_skill` workspaces only (`PreparedWorkspace.possiblyContaminated`). */
-  possiblyContaminated?: boolean;
-  /** From `with_skill`/`old_skill` workspaces (`PreparedWorkspace.skillShadowed`). */
-  withSkillContaminated?: boolean;
-  compareRef?: string;
-  warnings?: readonly string[];
-  timestamp?: string;
+function summarizeCase(
+  evalCase: EvalCase,
+  runs: readonly EvalRunRecord[],
+): CaseBenchmarkSummary {
+  const caseRuns = runs.filter((run) => run.case_id === evalCase.id);
+  const variants: Partial<Record<EvalVariant, VariantAggregate>> = {};
+  for (const variant of ['with_skill', 'without_skill', 'old_skill'] as const) {
+    const vRuns = caseRuns.filter((run) => run.variant === variant);
+    if (vRuns.length > 0) {
+      variants[variant] = aggregateVariantRuns(vRuns);
+    }
+  }
+  return {
+    case_id: evalCase.id,
+    prompt: evalCase.prompt,
+    expected_output: evalCase.expected_output,
+    variants,
+    assertions: aggregateCaseAssertions({ evalCase, caseRuns }),
+    runs: caseRuns,
+  };
 }
 
-export function aggregateBenchmark({
-  skillName,
-  skillPath,
-  runner,
-  runsPerConfig,
-  cases,
-  runs,
-  baselineEnabled,
-  possiblyContaminated = false,
-  withSkillContaminated = false,
-  compareRef,
-  warnings = [],
-  timestamp = new Date().toISOString(),
-}: AggregateBenchmarkParams): BenchmarkSummary {
-  const withRuns = runs.filter((run) => run.variant === 'with_skill');
-  const withoutRuns = runs.filter((run) => run.variant === 'without_skill');
-  const oldRuns = runs.filter((run) => run.variant === 'old_skill');
-
-  const withAggregate = aggregateVariantRuns(withRuns);
-  const withoutAggregate =
-    withoutRuns.length > 0 ? aggregateVariantRuns(withoutRuns) : undefined;
-  const oldAggregate =
-    oldRuns.length > 0 ? aggregateVariantRuns(oldRuns) : undefined;
-
-  const caseSummaries: CaseBenchmarkSummary[] = cases.map((evalCase) => {
-    const caseRuns = runs.filter((run) => run.case_id === evalCase.id);
-    const variants: Partial<Record<EvalVariant, VariantAggregate>> = {};
-    for (const variant of [
-      'with_skill',
-      'without_skill',
-      'old_skill',
-    ] as const) {
-      const vRuns = caseRuns.filter((run) => run.variant === variant);
-      if (vRuns.length > 0) {
-        variants[variant] = aggregateVariantRuns(vRuns);
-      }
-    }
-    return {
-      case_id: evalCase.id,
-      prompt: evalCase.prompt,
-      expected_output: evalCase.expected_output,
-      variants,
-      assertions: aggregateCaseAssertions({ evalCase, caseRuns }),
-      runs: caseRuns,
-    };
-  });
-
+function analyzeCaseAssertions(
+  caseSummaries: readonly CaseBenchmarkSummary[],
+): {
+  nonDiscriminating: string[];
+  analysis: AssertionAnalysis;
+} {
   const nonDiscriminating: string[] = [];
   const passOnlyWithSkill: string[] = [];
   const passInBoth: string[] = [];
@@ -457,6 +429,92 @@ export function aggregateBenchmark({
     }
   }
 
+  return {
+    nonDiscriminating,
+    analysis: {
+      pass_only_with_skill: passOnlyWithSkill,
+      pass_in_both: passInBoth,
+      fail_in_both: failInBoth,
+      flaky,
+      regressing,
+      regressing_vs_old: regressingVsOld,
+    },
+  };
+}
+
+function buildRunSummary(runs: readonly EvalRunRecord[]): BenchmarkRunSummary {
+  const withRuns = runs.filter((run) => run.variant === 'with_skill');
+  const withoutRuns = runs.filter((run) => run.variant === 'without_skill');
+  const oldRuns = runs.filter((run) => run.variant === 'old_skill');
+
+  const withAggregate = aggregateVariantRuns(withRuns);
+  const withoutAggregate =
+    withoutRuns.length > 0 ? aggregateVariantRuns(withoutRuns) : undefined;
+  const oldAggregate =
+    oldRuns.length > 0 ? aggregateVariantRuns(oldRuns) : undefined;
+
+  return {
+    with_skill: withAggregate,
+    ...(withoutAggregate ? { without_skill: withoutAggregate } : {}),
+    ...(oldAggregate ? { old_skill: oldAggregate } : {}),
+    ...(withoutAggregate
+      ? {
+          delta: computeVariantDelta({
+            primary: withAggregate,
+            reference: withoutAggregate,
+          }),
+        }
+      : {}),
+    ...(oldAggregate
+      ? {
+          old_skill_delta: computeVariantDelta({
+            primary: withAggregate,
+            reference: oldAggregate,
+          }),
+        }
+      : {}),
+  };
+}
+
+export interface AggregateBenchmarkParams {
+  skillName: string;
+  skillPath: string;
+  runner: EvalRunnerName;
+  runsPerConfig: number;
+  cases: readonly EvalCase[];
+  runs: readonly EvalRunRecord[];
+  baselineEnabled: boolean;
+  /** From `without_skill` workspaces only (`PreparedWorkspace.possiblyContaminated`). */
+  possiblyContaminated?: boolean;
+  /** From `with_skill`/`old_skill` workspaces (`PreparedWorkspace.skillShadowed`). */
+  withSkillContaminated?: boolean;
+  compareRef?: string;
+  warnings?: readonly string[];
+  timestamp?: string;
+}
+
+/**
+ * Aggregates per-run grading and timing records across `with_skill`,
+ * `without_skill`, and `old_skill` variants into a `BenchmarkSummary`,
+ * computing mean/stddev statistics, variant deltas, per-assertion
+ * classifications, and contamination metadata.
+ */
+export function aggregateBenchmark({
+  skillName,
+  skillPath,
+  runner,
+  runsPerConfig,
+  cases,
+  runs,
+  baselineEnabled,
+  possiblyContaminated = false,
+  withSkillContaminated = false,
+  compareRef,
+  warnings = [],
+  timestamp = new Date().toISOString(),
+}: AggregateBenchmarkParams): BenchmarkSummary {
+  const caseSummaries = cases.map((evalCase) => summarizeCase(evalCase, runs));
+  const { nonDiscriminating, analysis } = analyzeCaseAssertions(caseSummaries);
   const baselineStatus: BaselineStatus = !baselineEnabled
     ? 'skipped'
     : possiblyContaminated
@@ -476,37 +534,10 @@ export function aggregateBenchmark({
       with_skill_contaminated: withSkillContaminated,
       warnings: [...warnings],
     },
-    run_summary: {
-      with_skill: withAggregate,
-      ...(withoutAggregate ? { without_skill: withoutAggregate } : {}),
-      ...(oldAggregate ? { old_skill: oldAggregate } : {}),
-      ...(withoutAggregate
-        ? {
-            delta: computeVariantDelta({
-              primary: withAggregate,
-              reference: withoutAggregate,
-            }),
-          }
-        : {}),
-      ...(oldAggregate
-        ? {
-            old_skill_delta: computeVariantDelta({
-              primary: withAggregate,
-              reference: oldAggregate,
-            }),
-          }
-        : {}),
-    },
+    run_summary: buildRunSummary(runs),
     cases: caseSummaries,
     non_discriminating_assertions: nonDiscriminating,
-    assertion_analysis: {
-      pass_only_with_skill: passOnlyWithSkill,
-      pass_in_both: passInBoth,
-      fail_in_both: failInBoth,
-      flaky,
-      regressing,
-      regressing_vs_old: regressingVsOld,
-    },
+    assertion_analysis: analysis,
   };
 }
 
@@ -533,6 +564,12 @@ function ratio({ numerator, denominator }: RatioParams): number | null {
   return denominator === 0 ? null : numerator / denominator;
 }
 
+/**
+ * Aggregates per-query trigger runs into confusion-matrix counts (`TP`, `FP`,
+ * `TN`, `FN`) and classification metrics (`recall`, `precision`, `specificity`,
+ * `false_positive_rate`, `accuracy`). Queries whose runs all errored are
+ * excluded from metric denominators and counted in `errored_queries`.
+ */
 export function aggregateTriggerRuns({
   skillName,
   skillPath,
@@ -613,239 +650,4 @@ export function aggregateTriggerRuns({
     },
     queries: queryAggregates,
   };
-}
-
-const RUNNER_NAMES = ['agy', 'claude', 'codex', 'gemini', 'fake'] as const;
-const VARIANTS = ['with_skill', 'without_skill', 'old_skill'] as const;
-const CLASSIFICATIONS = [
-  'differentiating',
-  'non-discriminating',
-  'regressing',
-  'failing',
-  'flaky',
-  'no-baseline',
-] as const;
-
-const schemaVersionSchema = z.literal(EVAL_SCHEMA_VERSION, {
-  error: `unsupported schema_version (expected ${EVAL_SCHEMA_VERSION})`,
-});
-
-const statSummarySchema = z.looseObject({
-  mean: z.number(),
-  stddev: z.number(),
-  min: z.number(),
-  max: z.number(),
-});
-
-const variantAggregateSchema = z.looseObject({
-  runs: z.number().int().nonnegative(),
-  failed_runs: z.number().int().nonnegative(),
-  usage_reported_runs: z.number().int().nonnegative(),
-  pass_rate: statSummarySchema,
-  time_seconds: statSummarySchema,
-  tokens: statSummarySchema.nullable(),
-});
-
-const deltaSummarySchema = z.looseObject({
-  pass_rate: z.string(),
-  time_seconds: z.string(),
-  tokens: z.string(),
-});
-
-const runRecordSchema = z.looseObject({
-  case_id: z.string(),
-  prompt: z.string(),
-  variant: z.enum(VARIANTS),
-  run_index: z.number().int(),
-  grading: z.looseObject({
-    expectations: z.array(
-      z.looseObject({
-        text: z.string(),
-        kind: z.string(),
-        passed: z.boolean(),
-        evidence: z.string(),
-      }),
-    ),
-    summary: z.looseObject({
-      passed: z.number(),
-      failed: z.number(),
-      total: z.number(),
-      pass_rate: z.number(),
-    }),
-  }),
-  timing: z.looseObject({
-    total_duration_seconds: z.number(),
-    total_tokens: z.number(),
-    timed_out: z.boolean(),
-    usage_reported: z.boolean().optional(),
-    error: z.string().optional(),
-  }),
-});
-
-const assertionAggregateSchema = z.looseObject({
-  text: z.string(),
-  kind: z.string(),
-  with_skill_pass_rate: z.number(),
-  baseline_pass_rate: z.number().optional(),
-  old_skill_pass_rate: z.number().optional(),
-  classification: z.enum(CLASSIFICATIONS),
-  old_skill_classification: z.enum(CLASSIFICATIONS).optional(),
-});
-
-const benchmarkSummarySchema = z.looseObject({
-  schema_version: schemaVersionSchema,
-  metadata: z.looseObject({
-    skill_name: z.string(),
-    skill_path: z.string(),
-    runner: z.enum(RUNNER_NAMES),
-    timestamp: z.string(),
-    runs_per_configuration: z.number().int(),
-    compare_ref: z.string().optional(),
-    baseline_status: z.enum(['clean', 'possibly contaminated', 'skipped']),
-    with_skill_contaminated: z.boolean().default(false),
-    warnings: z.array(z.string()),
-  }),
-  run_summary: z.looseObject({
-    with_skill: variantAggregateSchema,
-    without_skill: variantAggregateSchema.optional(),
-    old_skill: variantAggregateSchema.optional(),
-    delta: deltaSummarySchema.optional(),
-    old_skill_delta: deltaSummarySchema.optional(),
-  }),
-  cases: z.array(
-    z.looseObject({
-      case_id: z.string(),
-      prompt: z.string(),
-      expected_output: z.string(),
-      variants: z.partialRecord(z.enum(VARIANTS), variantAggregateSchema),
-      assertions: z.array(assertionAggregateSchema),
-      runs: z.array(runRecordSchema),
-    }),
-  ),
-  non_discriminating_assertions: z.array(z.string()),
-  assertion_analysis: z.looseObject({
-    pass_only_with_skill: z.array(z.string()),
-    pass_in_both: z.array(z.string()),
-    fail_in_both: z.array(z.string()),
-    flaky: z.array(z.string()),
-    regressing: z.array(z.string()),
-    regressing_vs_old: z.array(z.string()),
-  }),
-});
-
-const nullableRatioSchema = z.number().nullable();
-
-const triggerBenchmarkSummarySchema = z.looseObject({
-  schema_version: schemaVersionSchema,
-  metadata: z.looseObject({
-    skill_name: z.string(),
-    skill_path: z.string(),
-    runner: z.enum(RUNNER_NAMES),
-    split: z.enum(['train', 'validation', 'all']),
-    runs_per_query: z.number().int(),
-    threshold: z.number(),
-    timestamp: z.string(),
-    possibly_contaminated: z.boolean().default(false),
-    warnings: z.array(z.string()).default([]),
-  }),
-  metrics: z.looseObject({
-    total_queries: z.number().int(),
-    errored_queries: z.number().int(),
-    positive_queries: z.number().int(),
-    negative_queries: z.number().int(),
-    true_positives: z.number().int(),
-    false_positives: z.number().int(),
-    true_negatives: z.number().int(),
-    false_negatives: z.number().int(),
-    recall: nullableRatioSchema,
-    precision: nullableRatioSchema,
-    specificity: nullableRatioSchema,
-    false_positive_rate: nullableRatioSchema,
-    accuracy: nullableRatioSchema,
-  }),
-  queries: z.array(
-    z.looseObject({
-      query: z.string(),
-      should_trigger: z.boolean(),
-      trigger_count: z.number().int(),
-      runs: z.number().int(),
-      errored_runs: z.number().int(),
-      trigger_rate: z.number().nullable(),
-      passed: z.boolean(),
-    }),
-  ),
-});
-
-interface ParseSummaryParams {
-  raw: unknown;
-  sourcePath: string;
-}
-
-function describeIssues(error: z.ZodError): string {
-  return error.issues
-    .map((issue) => {
-      const where = issue.path.length > 0 ? issue.path.join('.') : '(root)';
-      return `${where}: ${issue.message}`;
-    })
-    .join('; ');
-}
-
-/** Validates a parsed `benchmark.json`, throwing an `EvalError` if invalid. */
-export function parseBenchmarkSummary({
-  raw,
-  sourcePath,
-}: ParseSummaryParams): BenchmarkSummary {
-  const result = benchmarkSummarySchema.safeParse(raw);
-  if (!result.success) {
-    throw new EvalError(
-      `Invalid benchmark in ${sourcePath}: ${describeIssues(result.error)}`,
-    );
-  }
-  return result.data as unknown as BenchmarkSummary;
-}
-
-/** Validates a parsed `triggers.json`, throwing an `EvalError` if invalid. */
-export function parseTriggerBenchmarkSummary({
-  raw,
-  sourcePath,
-}: ParseSummaryParams): TriggerBenchmarkSummary {
-  const result = triggerBenchmarkSummarySchema.safeParse(raw);
-  if (!result.success) {
-    throw new EvalError(
-      `Invalid trigger summary in ${sourcePath}: ${describeIssues(result.error)}`,
-    );
-  }
-  return result.data;
-}
-
-async function readJsonFile(path: string, dir: string): Promise<unknown> {
-  const content = await readTextIfExists(path);
-  if (content === null) {
-    throw new EvalError(`Missing ${path.slice(dir.length + 1)} in ${dir}`);
-  }
-  try {
-    return JSON.parse(content);
-  } catch (error) {
-    throw new EvalError(`Invalid JSON in ${path}`, { cause: error });
-  }
-}
-
-export async function loadBenchmarkFromIteration(
-  iterationDir: string,
-): Promise<BenchmarkSummary> {
-  const benchmarkPath = join(iterationDir, 'benchmark.json');
-  return parseBenchmarkSummary({
-    raw: await readJsonFile(benchmarkPath, iterationDir),
-    sourcePath: benchmarkPath,
-  });
-}
-
-export async function loadTriggerSummary(
-  outputDir: string,
-): Promise<TriggerBenchmarkSummary> {
-  const summaryPath = join(outputDir, 'triggers.json');
-  return parseTriggerBenchmarkSummary({
-    raw: await readJsonFile(summaryPath, outputDir),
-    sourcePath: summaryPath,
-  });
 }

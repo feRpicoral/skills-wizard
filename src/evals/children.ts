@@ -23,7 +23,10 @@ const POLL_MS = 50;
 const live = new Set<ChildProcess>();
 let stopping = false;
 
-function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
+export function signalProcessTree(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+): void {
   const pid = child.pid;
   if (pid === undefined) return;
   if (USE_PROCESS_GROUPS) {
@@ -40,6 +43,8 @@ function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
     // Already exited.
   }
 }
+
+const signalChild = signalProcessTree;
 
 function groupAlive(child: ChildProcess): boolean {
   const pid = child.pid;
