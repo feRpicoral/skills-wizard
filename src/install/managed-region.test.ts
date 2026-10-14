@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { ManagedRegionError } from '../errors.ts';
 import {
   excludeMarkers,
+  gitignorePattern,
   removeRegion,
   upsertRegion,
 } from './managed-region.ts';
@@ -164,7 +165,9 @@ test('upsertRegion strips trailing CRLF line endings from body', () => {
   assert.equal(content, `${BEGIN}\nrules\n${END}\n`);
 });
 
-test('excludeMarkers rejects ids containing line breaks', () => {
+test('excludeMarkers and gitignorePattern reject line breaks', () => {
   assert.throws(() => excludeMarkers('app\n!*'), ManagedRegionError);
   assert.throws(() => excludeMarkers('app\r!*'), ManagedRegionError);
+  assert.throws(() => gitignorePattern('app\n!*'), ManagedRegionError);
+  assert.throws(() => gitignorePattern('app\r!*'), ManagedRegionError);
 });

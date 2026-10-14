@@ -49,42 +49,6 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
 }
 
-export interface DropUnavailableBlocksParams {
-  ctx: Context;
-  prompting: boolean;
-  library: BlockLibrary;
-  ids: readonly string[];
-  scope: Scope;
-}
-
-export function dropUnavailableBlocks({
-  ctx,
-  prompting,
-  library,
-  ids,
-  scope,
-}: DropUnavailableBlocksParams): string[] {
-  const unknown = unknownBlockIds(library, ids);
-  const outOfScope = outOfScopeBlockIds(library, ids, scope);
-  if (unknown.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Blocks no longer in the library were dropped: ${unknown.join(', ')}`,
-      level: 'warn',
-    });
-  }
-  if (outOfScope.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScope.join(', ')}`,
-      level: 'warn',
-    });
-  }
-  return ids.filter((id) => !unknown.includes(id) && !outOfScope.includes(id));
-}
-
 export interface ReconcileManifestParams {
   manifest: Manifest;
   library: BlockLibrary;
@@ -93,6 +57,7 @@ export interface ReconcileManifestParams {
 }
 
 export interface ReconciledManifest {
+  knownBlocks: string[];
   blocks: string[];
   unknownBlocks: string[];
   outOfScopeBlocks: string[];
@@ -114,10 +79,13 @@ export async function reconcileManifest({
   const { scope } = location;
   const unknownBlocks = unknownBlockIds(library, manifest.blocks);
   const outOfScopeBlocks = outOfScopeBlockIds(library, manifest.blocks, scope);
-  const known = manifest.blocks.filter(
+  const knownBlocks = manifest.blocks.filter(
     (id) => !unknownBlocks.includes(id) && !outOfScopeBlocks.includes(id),
   );
-  const { ids: blocks, added: addedBlocks } = withRequirements(library, known);
+  const { ids: blocks, added: addedBlocks } = withRequirements(
+    library,
+    knownBlocks,
+  );
   const recordedLocal = manifest.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   const leftGit = location.project !== undefined && recordedLocal && !keepLocal;
@@ -136,6 +104,7 @@ export async function reconcileManifest({
     (name) => !foundVariables[name]?.trim(),
   );
   return {
+    knownBlocks,
     blocks,
     unknownBlocks,
     outOfScopeBlocks,
@@ -147,4 +116,45 @@ export async function reconcileManifest({
     foundVariables,
     unresolvedVariables,
   };
+}
+
+export interface NotifyReconciledBlocksParams {
+  ctx: Context;
+  prompting: boolean;
+  scope: Scope;
+  reconciled: Pick<
+    ReconciledManifest,
+    'unknownBlocks' | 'outOfScopeBlocks' | 'addedBlocks'
+  >;
+}
+
+export function notifyReconciledBlocks({
+  ctx,
+  prompting,
+  scope,
+  reconciled: { unknownBlocks, outOfScopeBlocks, addedBlocks },
+}: NotifyReconciledBlocksParams): void {
+  if (unknownBlocks.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer in the library were dropped: ${unknownBlocks.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  if (outOfScopeBlocks.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScopeBlocks.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  if (addedBlocks.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Added required blocks: ${addedBlocks.join(', ')}`,
+    });
+  }
 }

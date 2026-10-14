@@ -1,39 +1,24 @@
 import { resolve } from 'node:path';
 
-import {
-  defaultBlockIds,
-  outOfScopeBlockIds,
-  requiredVariables,
-  selectBlocks,
-  unknownBlockIds,
-  withRequirements,
-} from '../blocks/compose.ts';
-import type { BlockLibrary, Scope } from '../blocks/library.ts';
-import { lookupVariables } from '../blocks/variables.ts';
+import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
-import {
-  promptBlocks,
-  promptKeepLocal,
-  promptLinkCommand,
-  promptProjectDir,
-  promptScope,
-  promptTools,
-  promptVariables,
-} from '../prompts/selection.ts';
-import type { Manifest } from '../state/manifest.ts';
-import { detectTools } from '../tools/detect.ts';
+import { promptProjectDir, promptScope } from '../prompts/selection.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
+  resolveBlocksSelection,
+  resolveInstallOptions,
+  resolveToolsSelection,
+  resolveVariablesSelection,
+} from './init-selection.ts';
+import {
   confirmAndApply,
-  dropUnavailableBlocks,
   loadLibrary,
-  type Location,
   notify,
-  notifyLeftGit,
   readLocationManifest,
+  reconcileManifest,
   resolveLocation,
   warnTrackedFiles,
 } from './shared.ts';
@@ -48,23 +33,6 @@ interface InitOptions {
   keepLocal?: boolean;
   yes: boolean;
   dryRun: boolean;
-}
-
-function checkExplicitBlocks(
-  library: BlockLibrary,
-  ids: readonly string[],
-  scope: Scope,
-): void {
-  const unknown = unknownBlockIds(library, ids);
-  if (unknown.length > 0) {
-    throw new UsageError(`Unknown blocks: ${unknown.join(', ')}`);
-  }
-  const outOfScope = outOfScopeBlockIds(library, ids, scope);
-  if (outOfScope.length > 0) {
-    throw new UsageError(
-      `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
-    );
-  }
 }
 
 function isOnSearchPath(ctx: Context, dir: string): boolean {
@@ -89,179 +57,6 @@ function checkScopeOptions(
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
   }
-}
-
-interface ResolveToolsSelectionParams {
-  ctx: Context;
-  scope: Scope;
-  prompting: boolean;
-  requestedTools?: ToolId[];
-  previous: Manifest | null;
-}
-
-async function resolveToolsSelection({
-  ctx,
-  scope,
-  prompting,
-  requestedTools,
-  previous,
-}: ResolveToolsSelectionParams): Promise<ToolId[]> {
-  const initial =
-    requestedTools ??
-    previous?.tools ??
-    (await detectTools(ctx.paths, ctx.searchPath));
-  const tools = prompting
-    ? await promptTools({ scope, initial, paths: ctx.paths })
-    : initial;
-  if (!prompting && tools.length === 0 && !previous) {
-    throw new UsageError('No tools selected or detected; pass --tools <ids>.');
-  }
-  return tools;
-}
-
-interface ResolveBlocksSelectionParams {
-  ctx: Context;
-  library: BlockLibrary;
-  scope: Scope;
-  prompting: boolean;
-  requestedBlocks?: string[];
-  previous: Manifest | null;
-}
-
-async function resolveBlocksSelection({
-  ctx,
-  library,
-  scope,
-  prompting,
-  requestedBlocks,
-  previous,
-}: ResolveBlocksSelectionParams): Promise<string[]> {
-  if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
-  const initial =
-    requestedBlocks ??
-    (previous
-      ? dropUnavailableBlocks({
-          ctx,
-          prompting,
-          library,
-          ids: previous.blocks,
-          scope,
-        })
-      : defaultBlockIds(library, scope));
-  const chosen = prompting
-    ? await promptBlocks({ library, scope, initial })
-    : initial;
-  const { ids: blocks, added } = withRequirements(library, chosen);
-  if (added.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Added required blocks: ${added.join(', ')}`,
-    });
-  }
-  return blocks;
-}
-
-interface ResolveVariablesSelectionParams {
-  ctx: Context;
-  library: BlockLibrary;
-  scope: Scope;
-  blocks: readonly string[];
-  prompting: boolean;
-  givenVariables: Readonly<Record<string, string>>;
-  previous: Manifest | null;
-}
-
-async function resolveVariablesSelection({
-  ctx,
-  library,
-  scope,
-  blocks,
-  prompting,
-  givenVariables,
-  previous,
-}: ResolveVariablesSelectionParams): Promise<Record<string, string>> {
-  const needed = requiredVariables(selectBlocks(library, blocks, scope));
-  const unused = Object.keys(givenVariables).filter(
-    (name) => !needed.includes(name),
-  );
-  if (unused.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Ignoring unused variables: ${unused.join(', ')}`,
-      level: 'warn',
-    });
-  }
-  const known = await lookupVariables(
-    needed,
-    {
-      ...previous?.variables,
-      ...givenVariables,
-    },
-    { home: ctx.paths.home, searchPath: ctx.searchPath },
-  );
-  const variables = prompting ? await promptVariables(needed, known) : known;
-  const missing = needed.filter((name) => !variables[name]?.trim());
-  if (missing.length > 0) {
-    throw new UsageError(
-      `Missing variables: ${missing.map((name) => `--var ${name}=<value>`).join(' ')}`,
-    );
-  }
-  return variables;
-}
-
-interface ResolveInstallOptionsParams {
-  ctx: Context;
-  scope: Scope;
-  location: Location;
-  prompting: boolean;
-  requestedLinkCommand?: boolean;
-  requestedKeepLocal?: boolean;
-  previous: Manifest | null;
-}
-
-async function resolveInstallOptions({
-  ctx,
-  scope,
-  location,
-  prompting,
-  requestedLinkCommand,
-  requestedKeepLocal,
-  previous,
-}: ResolveInstallOptionsParams): Promise<{
-  linkCommand: boolean;
-  keepLocal: boolean;
-}> {
-  const previousLink = previous?.options.linkCommand ?? false;
-  const linkCommand =
-    scope === 'global'
-      ? (requestedLinkCommand ??
-        (prompting
-          ? await promptLinkCommand(previous ? previousLink : true, ctx.paths)
-          : previousLink))
-      : false;
-  const git = location.project?.git;
-  const previousLocal = previous?.options.keepLocal ?? false;
-  if (requestedKeepLocal && !git) {
-    throw new UsageError(
-      `${location.project?.dir ?? ctx.cwd} is not in a git repository, so files cannot be kept local.`,
-    );
-  }
-  if (
-    location.project &&
-    previousLocal &&
-    !git &&
-    requestedKeepLocal === undefined
-  ) {
-    notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
-  }
-  const keepLocal =
-    scope === 'project' && git
-      ? (requestedKeepLocal ??
-        (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
-      : false;
-  return { linkCommand, keepLocal };
 }
 
 export async function runInit(
@@ -296,6 +91,14 @@ export async function runInit(
   });
   const library = await loadLibrary(ctx);
   const previous = await readLocationManifest({ ctx, prompting, location });
+  const reconciled = previous
+    ? await reconcileManifest({
+        manifest: previous,
+        library,
+        location,
+        lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
+      })
+    : null;
 
   const tools = await resolveToolsSelection({
     ctx,
@@ -310,7 +113,7 @@ export async function runInit(
     scope,
     prompting,
     ...(requestedBlocks ? { requestedBlocks } : {}),
-    previous,
+    reconciled,
   });
   const variables = await resolveVariablesSelection({
     ctx,
@@ -320,6 +123,7 @@ export async function runInit(
     prompting,
     givenVariables,
     previous,
+    reconciled,
   });
   const { linkCommand, keepLocal } = await resolveInstallOptions({
     ctx,
@@ -329,6 +133,7 @@ export async function runInit(
     ...(requestedLinkCommand !== undefined ? { requestedLinkCommand } : {}),
     ...(requestedKeepLocal !== undefined ? { requestedKeepLocal } : {}),
     previous,
+    reconciled,
   });
 
   const plan = await buildPlan({

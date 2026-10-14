@@ -184,17 +184,15 @@ function parseCommand(argv: string[]): ParsedCommand {
   }
 
   const command = positionals[0];
-  if (command === undefined || command === 'help') {
-    if (command === undefined) {
-      const provided = Object.keys(values);
-      if (provided.length > 0) {
-        throw new UsageError(
-          `${flags(provided)} must follow a command such as init`,
-        );
-      }
-      return { kind: 'default' };
+  if (command === 'help') return { kind: 'help' };
+  if (command === undefined) {
+    const provided = Object.keys(values);
+    if (provided.length > 0) {
+      throw new UsageError(
+        `${flags(provided)} must follow a command such as init`,
+      );
     }
-    return { kind: 'help' };
+    return { kind: 'default' };
   }
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
@@ -221,28 +219,20 @@ function parseCommand(argv: string[]): ParsedCommand {
 async function main(argv: string[]): Promise<number> {
   const parsed = parseCommand(argv);
   const print = (line: string) => process.stdout.write(`${line}\n`);
-  if (parsed.kind === 'help') {
-    print(HELP);
-    return 0;
-  }
-  if (parsed.kind === 'version') {
-    print(await version());
-    return 0;
-  }
+  if (parsed.kind === 'help') return (print(HELP), 0);
+  if (parsed.kind === 'version') return (print(await version()), 0);
 
   const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (parsed.kind === 'default') {
-    if (terminal) {
-      return runMenu(
-        createContext({
-          repoRoot: REPO_ROOT,
-          cwd: process.cwd(),
-          interactive: true,
-        }),
-      );
-    }
-    print(HELP);
-    return 0;
+    return terminal
+      ? runMenu(
+          createContext({
+            repoRoot: REPO_ROOT,
+            cwd: process.cwd(),
+            interactive: true,
+          }),
+        )
+      : (print(HELP), 0);
   }
 
   const ctx = createContext({
