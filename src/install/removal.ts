@@ -144,7 +144,7 @@ async function resolveRemovalFile({
     target: { path: entry.path, label: REMOVAL_LABEL, kind: entry.kind },
     previous: entry,
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   if (!inspection.ok) return inspection;
   if (inspection.current === null) {
@@ -351,7 +351,7 @@ export async function planRemoval({
   const resolved = await resolveRemovalFile({
     entry,
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
   if (!resolved.ok) return resolved.action;
 
@@ -367,9 +367,7 @@ export async function planRemoval({
       return planMcpJsonRemoval({
         entry,
         file: resolved.file,
-        ...(retainedMcpServers !== undefined
-          ? { retainedServers: retainedMcpServers }
-          : {}),
+        retainedServers: retainedMcpServers,
       });
     case 'mcp-toml':
       return planMcpTomlRemoval(entry, resolved.file);

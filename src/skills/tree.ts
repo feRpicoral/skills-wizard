@@ -67,7 +67,7 @@ async function walk(
 ): Promise<TreeEntry[]> {
   const dir = join(root, ...segments);
   const children = await readdir(dir, { withFileTypes: true });
-  children.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  children.sort((a, b) => compareNames(a.name, b.name));
 
   const entries: TreeEntry[] = [];
   for (const child of children) {
@@ -204,4 +204,10 @@ export async function escapingLinks(root: string): Promise<EscapingLink[]> {
     }
   }
   return links;
+}
+
+function compareNames(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }

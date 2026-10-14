@@ -27,7 +27,7 @@ export async function runSync(
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const previous = await readLocationManifest({ ctx, prompting, location });
   if (!previous) {

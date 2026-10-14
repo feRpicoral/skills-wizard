@@ -69,7 +69,7 @@ async function runMcpList({
     const location = await resolveLocation({
       ctx,
       scope,
-      ...(projectDir !== undefined ? { projectDir } : {}),
+      projectDir,
     });
     const manifest = await readLocationManifest({
       ctx,
@@ -107,7 +107,7 @@ async function runMcpList({
     ? await resolveLocation({
         ctx,
         scope: 'project',
-        ...(projectDir !== undefined ? { projectDir } : {}),
+        projectDir,
       })
     : null;
   const projectManifest = projectLocation
@@ -171,7 +171,7 @@ async function applyMcpSelectionChange({
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const previous = await readLocationManifest({ ctx, prompting, location });
   if (!previous) {
@@ -263,8 +263,8 @@ export async function runMcp(
     return runMcpList({
       ctx,
       catalog,
-      ...(scope !== undefined ? { scope } : {}),
-      ...(projectDir !== undefined ? { projectDir } : {}),
+      scope,
+      projectDir,
     });
   }
 
@@ -278,9 +278,9 @@ export async function runMcp(
       catalog,
       mode: subcommand,
       names: args,
-      ...(scope !== undefined ? { requestedScope: scope } : {}),
-      ...(projectDir !== undefined ? { projectDir } : {}),
-      ...(tools !== undefined ? { requestedTools: tools } : {}),
+      requestedScope: scope,
+      projectDir,
+      requestedTools: tools,
       yes,
       dryRun,
     });
@@ -293,7 +293,7 @@ export async function runMcp(
     catalog,
     query,
     official,
-    ...(limit !== undefined ? { limit } : {}),
+    limit,
     add,
     yes,
     dryRun,

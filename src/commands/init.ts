@@ -222,9 +222,7 @@ async function resolveProjectPresetContext({
         style: style ?? (hasGlobalInstall ? 'lean' : 'self-contained'),
         blockLibrary: library,
         skillLibrary,
-        ...(location.detection?.packageManager !== undefined
-          ? { packageManager: location.detection.packageManager }
-          : {}),
+        packageManager: location.detection?.packageManager,
         detectedBlocks:
           preset === 'none' ? [] : (location.detection?.detectedBlocks ?? []),
         detectedSkills:
@@ -285,7 +283,7 @@ export async function runInit(
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
     detect: scope === 'project',
   });
   const library = await loadLibrary(ctx);
@@ -305,7 +303,7 @@ export async function runInit(
     ctx,
     scope,
     prompting,
-    ...(requestedTools ? { requestedTools } : {}),
+    requestedTools,
     previous,
   });
   const {
@@ -333,13 +331,13 @@ export async function runInit(
     library,
     scope,
     prompting,
-    ...(requestedBlocks ? { requestedBlocks } : {}),
-    ...(preset !== undefined ? { preset } : {}),
-    ...(style !== undefined ? { style } : {}),
+    requestedBlocks,
+    preset,
+    style,
     presetChanged,
     styleChanged,
     presetSelection,
-    ...(replacedPreset ? { replacedPreset } : {}),
+    replacedPreset,
     reconciled,
   });
   const variables = await resolveVariablesSelection({
@@ -357,11 +355,11 @@ export async function runInit(
     skillLibrary,
     scope,
     prompting,
-    ...(requestedSkills ? { requestedSkills } : {}),
-    ...(requestedSkillMode ? { requestedSkillMode } : {}),
+    requestedSkills,
+    requestedSkillMode,
     presetChanged,
     presetSelection,
-    ...(replacedPreset ? { replacedPreset } : {}),
+    replacedPreset,
     previous,
   });
   const mcp = await resolveMcpSelection({
@@ -369,7 +367,7 @@ export async function runInit(
     mcpCatalog,
     scope,
     prompting,
-    ...(requestedMcp ? { requestedMcp } : {}),
+    requestedMcp,
     location,
     previous,
   });
@@ -378,8 +376,8 @@ export async function runInit(
     scope,
     location,
     prompting,
-    ...(requestedLinkCommand !== undefined ? { requestedLinkCommand } : {}),
-    ...(requestedKeepLocal !== undefined ? { requestedKeepLocal } : {}),
+    requestedLinkCommand,
+    requestedKeepLocal,
     previous,
     reconciled,
   });
@@ -403,15 +401,15 @@ export async function runInit(
       linkCommand,
       keepLocal,
       skillMode,
-      ...(preset !== undefined ? { preset } : {}),
-      ...(style !== undefined ? { style } : {}),
+      preset,
+      style,
     },
     library,
     paths: ctx.paths,
     repoRoot: ctx.repoRoot,
     previous,
     manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
+    project: location.project,
     skillSources,
     mcpCatalog,
   });
@@ -420,7 +418,7 @@ export async function runInit(
       ctx,
       prompting,
       plan,
-      ...(location.project ? { project: location.project } : {}),
+      project: location.project,
     });
   }
 

@@ -205,19 +205,17 @@ export async function planFindings({
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
       skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
-      ...(preset !== undefined ? { preset } : {}),
-      ...(manifest.options.style !== undefined
-        ? { style: manifest.options.style }
-        : {}),
+      preset,
+      style: manifest.options.style,
     },
     library,
     paths: ctx.paths,
     repoRoot: ctx.repoRoot,
     previous: manifest,
     manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
+    project: location.project,
     skillSources,
-    ...(mcpCatalog ? { mcpCatalog } : {}),
+    mcpCatalog,
   });
 
   for (const action of plan.actions) {

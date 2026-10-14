@@ -35,10 +35,12 @@ export async function commandOutput(
             ...lookupEnv.env,
           }
         : undefined;
+
     const { stdout } = await run(command, args, {
       timeout: LOOKUP_TIMEOUT_MS,
-      ...(env ? { env } : {}),
+      env,
     });
+
     return stdout.trim() || undefined;
   } catch {
     return undefined;

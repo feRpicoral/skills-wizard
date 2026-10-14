@@ -333,11 +333,11 @@ async function resolveQueryTarget({
       catalog,
       query,
       source,
-      ...(requestedCategory ? { category: requestedCategory } : {}),
+      category: requestedCategory,
       includeOffensive,
-      ...(skillsShUrl ? { skillsShUrl } : {}),
-      ...(fetchFn ? { fetchFn } : {}),
-      ...(onWarn ? { onWarn } : {}),
+      skillsShUrl,
+      fetchFn,
+      onWarn,
     });
     if (candidates.length === 0) {
       throw new UsageError(`No skills found matching "${query}"`);
@@ -362,7 +362,7 @@ async function resolveQueryTarget({
   const ref = resolveEffectiveRef({
     catalog,
     repo: chosenCandidate.repo,
-    ...(requestedRef ? { requestedRef } : {}),
+    requestedRef,
   });
   const existingPaths = repositoryPaths(catalog, chosenCandidate.repo);
   const initialSnapshot =
@@ -370,14 +370,14 @@ async function resolveQueryTarget({
   const { result: inspected, checkoutSnapshot } = await withCheckoutSnapshot({
     cache,
     repo: chosenCandidate.repo,
-    ...(initialSnapshot ? { initialSnapshot } : {}),
+    initialSnapshot,
     action: async () => {
       let resolvedPath = chosenCandidate.path;
       if (resolvedPath === undefined) {
         const [located] = await locateSkillsInRepo({
           cache,
           repo: chosenCandidate.repo,
-          ...(ref ? { ref } : {}),
+          ref,
           expectedSkillName: chosenCandidate.name,
           existingPaths,
         });
@@ -393,9 +393,9 @@ async function resolveQueryTarget({
         cache,
         repo: chosenCandidate.repo,
         path: resolvedPath,
-        ...(ref ? { ref } : {}),
+        ref,
         expectedName: chosenCandidate.name,
-        ...(effectiveCategory ? { category: effectiveCategory } : {}),
+        category: effectiveCategory,
         existingPaths,
       });
     },
@@ -431,8 +431,8 @@ export async function resolveTargetSkill({
       cache,
       catalog,
       parsed,
-      ...(requestedRef ? { requestedRef } : {}),
-      ...(requestedCategory ? { requestedCategory } : {}),
+      requestedRef,
+      requestedCategory,
     });
   }
 
@@ -441,8 +441,8 @@ export async function resolveTargetSkill({
       cache,
       catalog,
       parsed,
-      ...(requestedRef ? { requestedRef } : {}),
-      ...(requestedCategory ? { requestedCategory } : {}),
+      requestedRef,
+      requestedCategory,
     });
   }
 
@@ -451,8 +451,8 @@ export async function resolveTargetSkill({
       cache,
       catalog,
       parsed,
-      ...(requestedRef ? { requestedRef } : {}),
-      ...(requestedCategory ? { requestedCategory } : {}),
+      requestedRef,
+      requestedCategory,
       prompting,
       chooseLocation,
     });
@@ -463,13 +463,13 @@ export async function resolveTargetSkill({
     catalog,
     query: parsed.query,
     source,
-    ...(requestedRef ? { requestedRef } : {}),
-    ...(requestedCategory ? { requestedCategory } : {}),
+    requestedRef,
+    requestedCategory,
     includeOffensive,
     prompting,
-    ...(skillsShUrl ? { skillsShUrl } : {}),
-    ...(fetchFn ? { fetchFn } : {}),
-    ...(onWarn ? { onWarn } : {}),
+    skillsShUrl,
+    fetchFn,
+    onWarn,
     chooseCandidate,
   });
 }

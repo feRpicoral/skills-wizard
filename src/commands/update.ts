@@ -196,7 +196,7 @@ async function planUpdateTarget({
     repoRoot: ctx.repoRoot,
     previous,
     manifestPath: location.manifestPath,
-    ...(location.project ? { project: location.project } : {}),
+    project: location.project || undefined,
     skillSources,
     mcpCatalog,
   });

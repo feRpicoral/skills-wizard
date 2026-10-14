@@ -40,7 +40,7 @@ export async function refreshCatalogSources({
     if (!specs.has(entry.repo)) {
       specs.set(entry.repo, {
         repo: entry.repo,
-        ...(entry.ref ? { ref: entry.ref } : {}),
+        ref: entry.ref || undefined,
         paths: repositoryPaths(skillLibrary.catalog, entry.repo),
       });
     }

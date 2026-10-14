@@ -76,7 +76,7 @@ export async function checkRunnerBinary({
   const resolved = env.PATH
     ? await which(binary, {
         path: env.PATH,
-        ...(env.PATHEXT !== undefined ? { pathExt: env.PATHEXT } : {}),
+        pathExt: env.PATHEXT,
         nothrow: true,
       })
     : null;

@@ -128,6 +128,9 @@ function formatAssertionRow({
   const oldClassification =
     assertion.old_skill_classification ??
     (hasBaseline ? undefined : assertion.classification);
+  const oldClassificationCell = oldClassification
+    ? cellCodeSpan(oldClassification)
+    : NOT_AVAILABLE;
   const cells = [
     escapeTableCell(assertion.text),
     cellCodeSpan(assertion.kind),
@@ -140,9 +143,7 @@ function formatAssertionRow({
     ...(hasBaseline || (!withOldSkill && !withCompareSkills)
       ? [cellCodeSpan(assertion.classification)]
       : []),
-    ...(withOldSkill
-      ? [oldClassification ? cellCodeSpan(oldClassification) : NOT_AVAILABLE]
-      : []),
+    ...(withOldSkill ? [oldClassificationCell] : []),
     ...compareSkillNames.map((name, index) => {
       const compareClassification =
         assertion.compare_classifications?.[name] ??
@@ -478,8 +479,7 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
   );
 
   for (const item of queries) {
-    const status =
-      item.trigger_rate === null ? 'ERROR' : item.passed ? 'PASS' : 'FAIL';
+    const status = triggerStatus(item);
     const expected = item.should_trigger ? 'trigger' : 'no-trigger';
     const okRuns = item.runs - item.errored_runs;
     const errored =
@@ -492,4 +492,15 @@ export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {
   lines.push('');
 
   return lines.join('\n');
+}
+
+function triggerStatus(item: {
+  trigger_rate: number | null;
+  passed: boolean;
+}): string {
+  if (item.trigger_rate === null) {
+    return 'ERROR';
+  }
+
+  return item.passed ? 'PASS' : 'FAIL';
 }

@@ -172,7 +172,7 @@ async function readRecordedManifest({
 
   const result = await readProjectManifest(manifestPath, {
     dir: project.dir,
-    ...(project.git ? { gitExcludePath: project.git.excludePath } : {}),
+    gitExcludePath: project.git?.excludePath,
   });
   for (const path of result?.ignored ?? []) {
     notify({
@@ -197,14 +197,14 @@ export async function readLocationManifest({
     ? skillFolders({
         scope: location.scope,
         paths: ctx.paths,
-        ...(location.project ? { project: location.project } : {}),
+        project: location.project,
       })
     : null;
   const mcpPaths = manifest
     ? mcpConfigPaths({
         scope: location.scope,
         paths: ctx.paths,
-        ...(location.project ? { project: location.project } : {}),
+        project: location.project,
       })
     : null;
   if (manifest && folders) {

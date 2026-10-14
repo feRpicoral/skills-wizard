@@ -280,7 +280,7 @@ export async function validateSkill(
         name,
         dir,
         strict,
-        ...(expectedName !== undefined ? { expectedName } : {}),
+        expectedName,
       }),
     );
   } else {

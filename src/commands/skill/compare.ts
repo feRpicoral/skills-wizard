@@ -93,7 +93,7 @@ async function resolveCatalogComparedSkill({
 }: ResolveCatalogComparedSkillParams): Promise<ComparedSkillSpec> {
   const root = await ensureSource(sourceCache(ctx), {
     repo: entry.repo,
-    ...(entry.ref ? { ref: entry.ref } : {}),
+    ref: entry.ref || undefined,
     paths,
   });
   const skillDir =

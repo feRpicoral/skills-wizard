@@ -117,14 +117,16 @@ async function installAddedSkill({
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const previous = await readLocationManifest({ ctx, prompting, location });
+
   if (!previous) {
     throw new UsageError(
       `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init ${scope === 'project' ? '--project' : '--global'} first.`,
     );
   }
+
   const library = await loadLibrary(ctx);
   const mcpCatalog = await loadMcpServers(ctx);
   const tools = mergeRequestedTools(previous.tools, requestedTools);
@@ -217,14 +219,12 @@ export async function runAdd(
     skillLibrary,
     rawTarget: targetInput,
     source,
-    ...(requestedCategory ? { requestedCategory } : {}),
-    ...(requestedRef ? { requestedRef } : {}),
+    requestedCategory: requestedCategory || undefined,
+    requestedRef: requestedRef || undefined,
     includeOffensive,
     prompting,
-    ...(ctx.discovery?.skillsShUrl
-      ? { skillsShUrl: ctx.discovery.skillsShUrl }
-      : {}),
-    ...(ctx.discovery?.fetch ? { fetchFn: ctx.discovery.fetch } : {}),
+    skillsShUrl: ctx.discovery?.skillsShUrl || undefined,
+    fetchFn: ctx.discovery?.fetch,
     onWarn: (message) => notify({ ctx, prompting, message, level: 'warn' }),
     chooseLocation: promptRepoSkillLocation,
     chooseCandidate: promptDiscoveredCandidate,
@@ -270,9 +270,9 @@ export async function runAdd(
         entry,
         inspected,
         catalogFile: file,
-        ...(requestedScope ? { requestedScope } : {}),
-        ...(projectDir !== undefined ? { projectDir } : {}),
-        ...(requestedTools ? { requestedTools } : {}),
+        requestedScope: requestedScope || undefined,
+        projectDir,
+        requestedTools,
         yes,
         dryRun,
       });

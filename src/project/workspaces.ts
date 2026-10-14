@@ -118,11 +118,13 @@ export async function readWorkspacePackage(
   const pkgJsonSource = await readProjectFile({
     projectDir,
     relativePath: `${relPkgDir}/package.json`,
-    ...(root !== undefined ? { root } : {}),
+    root,
   });
   if (pkgJsonSource === null) return null;
+
   const parsed = parsePackageJson(pkgJsonSource);
   if (!parsed) return null;
+
   const fallbackName = basename(relPkgDir);
   return {
     relativePath: relPkgDir,
