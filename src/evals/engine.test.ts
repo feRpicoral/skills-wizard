@@ -785,3 +785,158 @@ test('runSkillEval reports a personal Claude skill as with_skill contamination, 
   assert.equal(result.benchmark.metadata.with_skill_contaminated, true);
   assert.equal(result.benchmark.metadata.baseline_status, 'clean');
 });
+
+test('runSkillEval stages competing skills for compareSkills and records side-by-side results', async (t) => {
+  const { paths, repoRoot, skillDir, env } = await demoSkill({ t });
+  const altSkillDir = join(repoRoot, 'skills', 'alt-skill');
+  await writeFiles(altSkillDir, {
+    'SKILL.md': skillSource('alt-skill'),
+  });
+  const stagedChecks: string[] = [];
+  const fake = createFakeRunner();
+  const runner: EvalRunner = {
+    ...fake,
+    async runTask(request) {
+      const stagedMd = await lstatIfExists(
+        join(
+          request.workdir,
+          '.agents',
+          'skills',
+          request.skillName,
+          'SKILL.md',
+        ),
+      );
+      if (stagedMd?.isFile()) {
+        stagedChecks.push(request.skillName);
+      }
+      return fake.runTask(request);
+    },
+  };
+
+  const result = await runSkillEval({
+    skillName: 'demo-skill',
+    skillDir,
+    evalsRootDir: paths.evalsDir,
+    runner,
+    baseline: true,
+    compareSkills: [{ skillName: 'alt-skill', skillDir: altSkillDir }],
+    paths,
+    env,
+  });
+  const variants = result.benchmark.cases
+    .flatMap((item) => item.runs)
+    .map((run) => run.variant)
+    .sort();
+
+  assert.deepEqual(variants, [
+    'compare:alt-skill',
+    'compare:alt-skill',
+    'with_skill',
+    'with_skill',
+    'without_skill',
+    'without_skill',
+  ]);
+  assert.deepEqual(result.benchmark.metadata.compare_skills, ['alt-skill']);
+  assert.ok(stagedChecks.includes('alt-skill'));
+  assert.match(
+    result.reportMarkdown,
+    /\| `compare:alt-skill` \| 100\.0% ± 0\.0% \|/,
+  );
+});
+
+test('runSkillEval rejects invalid compareSkills names or escaping links before allocating an iteration directory', async (t) => {
+  const { paths, repoRoot, skillDir, env } = await demoSkill({ t });
+  const badLinkDir = join(repoRoot, 'skills', 'bad-link');
+  await writeFiles(badLinkDir, {
+    'SKILL.md': skillSource('bad-link'),
+  });
+  await symlink('../../secret.txt', join(badLinkDir, 'leak.txt'));
+
+  await assert.rejects(
+    runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: paths.evalsDir,
+      runner: createFakeRunner(),
+      compareSkills: [{ skillName: '../escape', skillDir: badLinkDir }],
+      paths,
+      env,
+    }),
+    (error: unknown) =>
+      error instanceof EvalError &&
+      /not a valid skill name/.test(error.message),
+  );
+  await assert.rejects(
+    runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: paths.evalsDir,
+      runner: createFakeRunner(),
+      compareSkills: [{ skillName: 'bad-link', skillDir: badLinkDir }],
+      paths,
+      env,
+    }),
+    (error: unknown) =>
+      error instanceof EvalError &&
+      /links that point outside the skill folder/.test(error.message),
+  );
+
+  assert.equal(await lstatIfExists(join(paths.evalsDir, 'demo-skill')), null);
+});
+
+test('runSkillEval marks with_skill_contaminated when a competing skill is shadowed or cannot be excluded', async (t) => {
+  const { paths, repoRoot, skillDir, env } = await demoSkill({ t });
+  const altSkillDir = join(repoRoot, 'skills', 'alt-skill');
+  await writeFiles(altSkillDir, {
+    'SKILL.md': skillSource('alt-skill'),
+  });
+  await writeFiles(join(paths.claudeHome, 'skills', 'alt-skill'), {
+    'SKILL.md': skillSource('alt-skill'),
+  });
+  await writeFiles(join(paths.skillsDir, 'alt-skill'), {
+    'SKILL.md': skillSource('alt-skill'),
+  });
+  const claudeRunner: EvalRunner = { ...createFakeRunner(), name: 'claude' };
+  const agyRunner: EvalRunner = { ...createFakeRunner(), name: 'agy' };
+
+  const [claudeResult, agyResult] = await Promise.all([
+    runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: join(paths.evalsDir, 'claude'),
+      runner: claudeRunner,
+      baseline: true,
+      compareSkills: [{ skillName: 'alt-skill', skillDir: altSkillDir }],
+      paths,
+      env,
+    }),
+    runSkillEval({
+      skillName: 'demo-skill',
+      skillDir,
+      evalsRootDir: join(paths.evalsDir, 'agy'),
+      runner: agyRunner,
+      baseline: true,
+      compareSkills: [{ skillName: 'alt-skill', skillDir: altSkillDir }],
+      paths,
+      env,
+    }),
+  ]);
+
+  assert.equal(claudeResult.benchmark.metadata.with_skill_contaminated, false);
+  assert.equal(claudeResult.benchmark.metadata.baseline_status, 'clean');
+  assert.ok(
+    claudeResult.benchmark.metadata.warnings.some((warning) =>
+      warning.includes('staged project skill "alt-skill"'),
+    ),
+  );
+  assert.equal(agyResult.benchmark.metadata.with_skill_contaminated, true);
+  assert.equal(
+    agyResult.benchmark.metadata.baseline_status,
+    'possibly contaminated',
+  );
+  assert.ok(
+    agyResult.benchmark.metadata.warnings.some((warning) =>
+      warning.includes('with_skill is possibly contaminated'),
+    ),
+  );
+});

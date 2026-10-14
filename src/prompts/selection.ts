@@ -10,6 +10,10 @@ import type {
   PresetDefinition,
   ProjectStyle,
 } from '../project/presets.ts';
+import type {
+  DiscoveryCandidate,
+  RepoSkillLocation,
+} from '../skills/discover.ts';
 import type { SkillMode } from '../skills/install.ts';
 import type { SkillDefinition, SkillLibrary } from '../skills/library.ts';
 import { TOOL_IDS, type ToolId, TOOLS } from '../tools/registry.ts';
@@ -296,6 +300,65 @@ export async function confirmApply(): Promise<boolean> {
     await clack.confirm({
       message: 'Apply these changes?',
       initialValue: true,
+    }),
+  );
+}
+
+export async function promptAddQuery(): Promise<string> {
+  return unwrap(
+    await clack.text({
+      message: 'Search query, owner/repo[@skill], or GitHub URL',
+      validate: (value) => (value?.trim() ? undefined : 'Required'),
+    }),
+  ).trim();
+}
+
+function candidateHint(candidate: DiscoveryCandidate): string {
+  const parts = [candidate.repo];
+  if (candidate.installs !== undefined) {
+    parts.push(`${candidate.installs} installs`);
+  }
+  if (candidate.category) {
+    parts.push(candidate.category);
+  }
+  if (candidate.description) {
+    parts.push(candidate.description);
+  }
+  return parts.join(' · ');
+}
+
+export async function promptDiscoveredCandidate(
+  candidates: readonly DiscoveryCandidate[],
+): Promise<DiscoveryCandidate> {
+  return unwrap(
+    await clack.select<DiscoveryCandidate>({
+      message: 'Which skill do you want to add?',
+      options: candidates.map((candidate) => ({
+        value: candidate,
+        label: candidate.name,
+        hint: candidateHint(candidate),
+      })),
+    }),
+  );
+}
+
+export interface PromptRepoSkillLocationParams {
+  repo: string;
+  locations: readonly RepoSkillLocation[];
+}
+
+export async function promptRepoSkillLocation({
+  repo,
+  locations,
+}: PromptRepoSkillLocationParams): Promise<RepoSkillLocation> {
+  return unwrap(
+    await clack.select<RepoSkillLocation>({
+      message: `Which skill from ${repo} do you want to add?`,
+      options: locations.map((location) => ({
+        value: location,
+        label: location.name,
+        hint: `${location.path} · ${location.description}`,
+      })),
     }),
   );
 }

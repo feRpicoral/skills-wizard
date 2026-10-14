@@ -5,7 +5,7 @@ import type { Paths } from '../env.ts';
 import { lstatIfExists, walkDirectories } from '../install/fs.ts';
 import { scanInstalledSkills, skillRoots } from '../skills/collisions.ts';
 import { TOOLS } from '../tools/registry.ts';
-import type { EvalRunnerName } from './workspace.ts';
+import type { EvalRunnerName, EvalVariant } from './workspace.ts';
 
 export interface PersonalSkillShadowParams {
   runner: EvalRunnerName;
@@ -85,23 +85,34 @@ export async function findClaudePluginSkill({
 
 export interface ApplyBaselineExclusionParams {
   workdir: string;
-  skillName: string;
+  skillName?: string;
+  skillNames?: readonly string[];
   runner: EvalRunnerName;
+  variant?: EvalVariant;
   paths?: Paths;
 }
 
 export async function applyBaselineExclusion({
   workdir,
   skillName,
+  skillNames,
   runner,
+  variant = 'without_skill',
   paths,
 }: ApplyBaselineExclusionParams): Promise<{
   possiblyContaminated: boolean;
   warning?: string;
 }> {
-  if (runner === 'fake') {
+  const names = [
+    ...new Set([
+      ...(skillName !== undefined ? [skillName] : []),
+      ...(skillNames ?? []),
+    ]),
+  ];
+  if (runner === 'fake' || names.length === 0) {
     return { possiblyContaminated: false };
   }
+  const targetLabel = variant === 'without_skill' ? 'baseline' : variant;
 
   if (runner === 'claude') {
     // Documented in the Claude Code skills and permissions docs: a
@@ -116,24 +127,37 @@ export async function applyBaselineExclusion({
       file,
       `${JSON.stringify(
         {
-          skillOverrides: { [skillName]: 'off' },
+          skillOverrides: Object.fromEntries(
+            names.map((name) => [name, 'off']),
+          ),
           permissions: {
-            deny: [
-              `Skill(${skillName})`,
-              `Skill(${skillName} *)`,
-              `Skill(skill:${skillName})`,
-            ],
+            deny: names.flatMap((name) => [
+              `Skill(${name})`,
+              `Skill(${name} *)`,
+              `Skill(skill:${name})`,
+            ]),
           },
         },
         null,
         2,
       )}\n`,
     );
-    const pluginSkill = await findClaudePluginSkill({ skillName, paths });
-    if (pluginSkill !== undefined) {
+    const warnings: string[] = [];
+    for (const name of names) {
+      const pluginSkill = await findClaudePluginSkill({
+        skillName: name,
+        paths,
+      });
+      if (pluginSkill !== undefined) {
+        warnings.push(
+          `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; ${targetLabel} is possibly contaminated.`,
+        );
+      }
+    }
+    if (warnings.length > 0) {
       return {
         possiblyContaminated: true,
-        warning: `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; baseline is possibly contaminated.`,
+        warning: warnings.join(' '),
       };
     }
     return { possiblyContaminated: false };
@@ -147,20 +171,28 @@ export async function applyBaselineExclusion({
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
       file,
-      `${JSON.stringify({ skills: { disabled: [skillName] } }, null, 2)}\n`,
+      `${JSON.stringify({ skills: { disabled: names } }, null, 2)}\n`,
     );
     return { possiblyContaminated: false };
   }
 
   // agy and codex document no workspace-level way to turn off one skill.
-  const installedGlobally = await isSkillInstalledGlobally({
-    skillName,
-    paths,
-  });
-  if (installedGlobally) {
+  const warnings: string[] = [];
+  for (const name of names) {
+    const installedGlobally = await isSkillInstalledGlobally({
+      skillName: name,
+      paths,
+    });
+    if (installedGlobally) {
+      warnings.push(
+        `Runner "${runner}" has no documented workspace-level skill exclusion and "${name}" is installed globally; ${targetLabel} is possibly contaminated.`,
+      );
+    }
+  }
+  if (warnings.length > 0) {
     return {
       possiblyContaminated: true,
-      warning: `Runner "${runner}" has no documented workspace-level skill exclusion and "${skillName}" is installed globally; baseline is possibly contaminated.`,
+      warning: warnings.join(' '),
     };
   }
   return { possiblyContaminated: false };

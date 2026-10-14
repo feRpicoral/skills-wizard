@@ -5,6 +5,12 @@ import { promisify } from 'node:util';
 
 import { type Environment, gitEnvironment } from '../env.ts';
 import { EvalError } from '../errors.ts';
+import {
+  EXECUTABLE_MODE,
+  parseLsTreeOutput,
+  readGitBlobBuffer,
+  SYMLINK_MODE,
+} from '../skills/git-tree.ts';
 import { failureDetail } from '../skills/process.ts';
 import { escapingLinks } from '../skills/tree.ts';
 
@@ -12,8 +18,6 @@ const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-const SYMLINK_MODE = '120000';
-const EXECUTABLE_MODE = '100755';
 
 /** Rejects refs git would read as an option, and other malformed refs. */
 export function assertSafeGitRef(ref: string): void {
@@ -124,20 +128,17 @@ export function parseTreeEntries({
   prefix,
 }: ParseTreeEntriesParams): TreeEntry[] {
   const entries: TreeEntry[] = [];
-  for (const record of output.split('\0')) {
-    if (!record) continue;
-    const tabIndex = record.indexOf('\t');
-    if (tabIndex === -1) continue;
-    const [mode, type, objectHash] = record.slice(0, tabIndex).split(' ');
-    const treePath = record.slice(tabIndex + 1);
-    // Submodules (type "commit") have no content to extract.
-    if (type !== 'blob' || !mode || !objectHash) continue;
-    if (!treePath.startsWith(prefix)) continue;
-    const relPath = treePath.slice(prefix.length);
+  for (const record of parseLsTreeOutput(output)) {
+    if (!record.path.startsWith(prefix)) continue;
+    const relPath = record.path.slice(prefix.length);
     if (!isSafeTreePath(relPath)) {
-      throw new EvalError(`Refusing to extract unsafe path "${treePath}"`);
+      throw new EvalError(`Refusing to extract unsafe path "${record.path}"`);
     }
-    entries.push({ mode, objectHash, relPath });
+    entries.push({
+      mode: record.mode,
+      objectHash: record.objectHash,
+      relPath,
+    });
   }
   return entries;
 }
@@ -156,18 +157,13 @@ export async function readBlob({
   env,
 }: ReadBlobParams): Promise<Buffer> {
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['cat-file', 'blob', entry.objectHash],
-      {
-        cwd: repoRoot,
-        env: gitEnvironment(env),
-        encoding: 'buffer',
-        maxBuffer: GIT_MAX_BUFFER,
-        timeout: GIT_TIMEOUT_MS,
-      },
-    );
-    return stdout;
+    return await readGitBlobBuffer({
+      cwd: repoRoot,
+      objectHash: entry.objectHash,
+      env,
+      maxBuffer: GIT_MAX_BUFFER,
+      timeout: GIT_TIMEOUT_MS,
+    });
   } catch (error) {
     throw new EvalError(
       `Failed to read "${entry.relPath}" at ref "${ref}": ${failureDetail(error)}`,
@@ -304,7 +300,7 @@ export async function verifySkillAtRef({
     cwd: repoRoot,
     args: ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
     env,
-    failure: `Git ref "${ref}" does not name a commit in ${repoRoot}`,
+    failure: `"${ref}" was not found as a skill in skills/, catalog.yaml, or on disk, and git ref "${ref}" does not name a commit in ${repoRoot}`,
   });
   const type = await gitOutput({
     cwd: repoRoot,

@@ -3,26 +3,18 @@ import { basename, join } from 'node:path';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
-import {
-  lstatIfExists,
-  readTextIfExists,
-  realLocation,
-} from '../install/fs.ts';
-import { buildPlan, type Plan } from '../install/plan.ts';
+import { lstatIfExists, realLocation } from '../install/fs.ts';
 import { type AdoptChoice, promptAdoptSkills } from '../prompts/selection.ts';
 import {
-  appendEntries,
   choiceHint,
-  restoreCatalog,
   upstreamEntry,
   withCatalogEntries,
 } from '../skills/adopt-catalog.ts';
-import { type CatalogEntry, catalogPath } from '../skills/catalog.ts';
+import { catalogPath } from '../skills/catalog.ts';
 import {
   type DiscoveredSkill,
   scanInstalledSkills,
 } from '../skills/collisions.ts';
-import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
 import {
   findSkill,
   loadSkillLibrary,
@@ -31,12 +23,11 @@ import {
 import { type LockedSkill, readSkillLock } from '../skills/lock.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
-  confirmAndApply,
-  fetchSkills,
+  applyWithCatalogRollback,
+  buildSyncPlanForLocation,
   loadLibrary,
   notify,
   readLocationManifest,
-  reconcileManifestSelection,
   resolveLocation,
 } from './shared.ts';
 
@@ -160,80 +151,6 @@ async function pickUnmanagedSkills({
   return picked;
 }
 
-interface ApplyAdoptPlanParams {
-  ctx: Context;
-  prompting: boolean;
-  plan: Plan;
-  file: string;
-  newCatalogEntries: readonly CatalogEntry[];
-  manifestPath: string;
-  backupDir: string;
-  yes: boolean;
-  dryRun: boolean;
-}
-
-async function applyAdoptPlan({
-  ctx,
-  prompting,
-  plan,
-  file,
-  newCatalogEntries,
-  manifestPath,
-  backupDir,
-  yes,
-  dryRun,
-}: ApplyAdoptPlanParams): Promise<number> {
-  let catalogBefore: string | null | undefined;
-  const writeCatalog = async () => {
-    if (newCatalogEntries.length === 0) return;
-    const original = await readTextIfExists(file);
-    await appendEntries(file, newCatalogEntries);
-    catalogBefore = original;
-  };
-  let result;
-  try {
-    result = await confirmAndApply(ctx, plan, {
-      yes,
-      dryRun,
-      beforeApply: writeCatalog,
-    });
-  } catch (error) {
-    if (catalogBefore !== undefined) {
-      await restoreCatalog({
-        file,
-        original: catalogBefore,
-        entries: newCatalogEntries,
-        manifestPath,
-      });
-    }
-    throw error;
-  }
-  const keptEntries =
-    catalogBefore !== undefined
-      ? await restoreCatalog({
-          file,
-          original: catalogBefore,
-          entries: newCatalogEntries,
-          manifestPath,
-        })
-      : newCatalogEntries;
-  if (result.applied && keptEntries.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Added to catalog.yaml: ${keptEntries.map((entry) => entry.name).join(', ')}`,
-    });
-  }
-  if (result.applied && (await lstatIfExists(backupDir))) {
-    notify({
-      ctx,
-      prompting,
-      message: `Backed up replaced skill files to ${displayPath({ path: backupDir, home: ctx.paths.home })}.`,
-    });
-  }
-  return result.code;
-}
-
 export async function runAdopt(
   ctx: Context,
   { names, tools: requestedTools, yes, dryRun }: AdoptOptions,
@@ -293,53 +210,36 @@ export async function runAdopt(
       'No tools recorded; pass --tools <ids> or run agents-config init --global.',
     );
   }
-  const reconciled = await reconcileManifestSelection({
+  const stamp = ctx.sources.now().toISOString().replace(/[:.]/g, '-');
+  const backupDir = join(ctx.paths.stateDir, 'backups', stamp);
+  const plan = await buildSyncPlanForLocation({
     ctx,
     prompting,
     location,
     previous,
     library,
     skillLibrary,
+    tools,
     extraSkills: picked,
-  });
-  const skillSources = await fetchSkills({
-    ctx,
-    prompting,
-    library: skillLibrary,
-    names: reconciled.skills,
-  });
-
-  const stamp = ctx.sources.now().toISOString().replace(/[:.]/g, '-');
-  const backupDir = join(ctx.paths.stateDir, 'backups', stamp);
-  const plan = await buildPlan({
-    scope: 'global',
-    selection: {
-      tools,
-      blocks: reconciled.blocks,
-      skills: reconciled.skills,
-      variables: reconciled.variables,
-      linkCommand: previous.options.linkCommand ?? false,
-      keepLocal: false,
-      skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
-    },
-    library,
-    paths: ctx.paths,
-    repoRoot: ctx.repoRoot,
-    previous,
-    manifestPath: location.manifestPath,
-    skillSources,
     adopt: { names: new Set(picked), backupDir },
   });
 
-  return applyAdoptPlan({
+  const outcome = await applyWithCatalogRollback({
     ctx,
     prompting,
     plan,
     file,
-    newCatalogEntries: additions.entries,
+    entries: additions.entries,
     manifestPath: location.manifestPath,
-    backupDir,
     yes,
     dryRun,
   });
+  if (outcome.applied && (await lstatIfExists(backupDir))) {
+    notify({
+      ctx,
+      prompting,
+      message: `Backed up replaced skill files to ${displayPath({ path: backupDir, home: ctx.paths.home })}.`,
+    });
+  }
+  return outcome.code;
 }

@@ -4,12 +4,20 @@ import { dirname, join } from 'node:path';
 import { isDirectory } from '../install/fs.ts';
 import { isCommitSha, WHOLE_REPOSITORY } from './catalog.ts';
 import {
+  listRepositoryFiles,
+  type ListRepositoryFilesParams,
+  readRepositoryBlob,
+  type ReadRepositoryBlobParams,
+  type RepositoryTreeFile,
+} from './git-tree.ts';
+import {
   checkSource,
   checkSpec,
   DEFAULT_REF,
   END_OF_OPTIONS,
   git,
   githubUrl,
+  gitRaw,
   type GitRunParams,
   readState,
   type SourceCache,
@@ -17,6 +25,7 @@ import {
   sourceDir,
   type SourceSettings,
   type SourceSpec,
+  type SourceState,
   writeState,
 } from './source-state.ts';
 
@@ -27,7 +36,13 @@ export {
   END_OF_OPTIONS,
   git,
   githubUrl,
+  gitRaw,
   type GitRunParams,
+  listRepositoryFiles,
+  type ListRepositoryFilesParams,
+  readRepositoryBlob,
+  type ReadRepositoryBlobParams,
+  type RepositoryTreeFile,
   type SourceCache,
   sourceCommit,
   sourceDir,
@@ -45,14 +60,23 @@ async function isSparse(cache: SourceCache, dir: string): Promise<boolean> {
   return value === 'true';
 }
 
-async function applyPaths(
-  cache: SourceCache,
-  dir: string,
-  spec: SourceSpec,
-): Promise<void> {
+interface ApplyPathsParams {
+  cache: SourceCache;
+  dir: string;
+  spec: SourceSpec;
+  isFreshClone?: boolean;
+}
+
+async function applyPaths({
+  cache,
+  dir,
+  spec,
+  isFreshClone = false,
+}: ApplyPathsParams): Promise<void> {
   const failure = `Could not limit the checkout of ${spec.repo}`;
+  const sparse = await isSparse(cache, dir);
   if (spec.paths.includes(WHOLE_REPOSITORY)) {
-    if (await isSparse(cache, dir)) {
+    if (sparse) {
       await git({
         cache,
         args: ['sparse-checkout', 'disable'],
@@ -62,8 +86,10 @@ async function applyPaths(
     }
     return;
   }
+  if (!isFreshClone && !sparse) return;
   const wanted = [...new Set(spec.paths)].sort();
-  if (await isSparse(cache, dir)) {
+  if (sparse) {
+    if (wanted.length === 0) return;
     const current = (
       await git({
         cache,
@@ -75,7 +101,15 @@ async function applyPaths(
       .split('\n')
       .filter(Boolean)
       .sort();
-    if (current.join('\n') === wanted.join('\n')) return;
+    const merged = [...new Set([...current, ...wanted])].sort();
+    if (current.join('\n') === merged.join('\n')) return;
+    await git({
+      cache,
+      args: ['sparse-checkout', 'set', '--cone', ...merged],
+      failure,
+      cwd: dir,
+    });
+    return;
   }
   // checkSpec rejects paths starting with "-"; sparse-checkout only accepts
   // --end-of-options from git 2.44, so it is not passed here.
@@ -141,7 +175,7 @@ async function clone(
       ],
       failure: `Could not clone ${spec.repo}`,
     });
-    await applyPaths(cache, staging, spec);
+    await applyPaths({ cache, dir: staging, spec, isFreshClone: true });
     if (pinnedCommit) {
       await checkoutRef(cache, staging, spec);
     } else {
@@ -180,7 +214,7 @@ export async function ensureSource(
     await clone(cache, dir, spec);
     return dir;
   }
-  await applyPaths(cache, dir, spec);
+  await applyPaths({ cache, dir, spec });
   const state = await readState(dir);
   if (state.ref !== (spec.ref ?? null)) {
     await checkoutRef(cache, dir, spec);
@@ -195,6 +229,160 @@ export async function cachedSource(
 ): Promise<string | null> {
   const dir = sourceDir(cache, repo);
   return (await isDirectory(join(dir, '.git'))) ? dir : null;
+}
+
+export async function cachedSourceRef(
+  cache: SourceCache,
+  repo: string,
+): Promise<string | undefined> {
+  const dir = await cachedSource(cache, repo);
+  if (!dir) return undefined;
+  const state = await readState(dir);
+  return state.ref ?? undefined;
+}
+
+export interface SourceCheckoutSnapshot {
+  repo: string;
+  existed: boolean;
+  sparse?: boolean;
+  paths?: string[];
+  commit?: string;
+  state?: SourceState;
+}
+
+/**
+ * Captures the current sparse-checkout cone, `HEAD` commit, and state file of
+ * a cached repository so speculative checkout changes can be rolled back via
+ * {@link restoreSourceCheckout}.
+ */
+export async function snapshotSourceCheckout(
+  cache: SourceCache,
+  repo: string,
+): Promise<SourceCheckoutSnapshot> {
+  const dir = await cachedSource(cache, repo);
+  if (!dir) {
+    return { repo, existed: false };
+  }
+  const sparse = await isSparse(cache, dir);
+  const paths = sparse
+    ? (
+        await git({
+          cache,
+          args: ['sparse-checkout', 'list'],
+          failure: `Could not read sparse checkout paths of ${repo}`,
+          cwd: dir,
+        })
+      )
+        .split('\n')
+        .filter(Boolean)
+        .sort()
+    : [];
+  const commit = await sourceCommit(cache, repo);
+  const state = await readState(dir);
+  return { repo, existed: true, sparse, paths, commit, state };
+}
+
+/**
+ * Restores a cached repository's sparse-checkout cone, detached `HEAD` commit,
+ * and `.git/agents-config.json` state to a prior {@link SourceCheckoutSnapshot},
+ * or deletes the cached checkout if `snapshot.existed` is `false`.
+ */
+export async function restoreSourceCheckout(
+  cache: SourceCache,
+  snapshot: SourceCheckoutSnapshot,
+): Promise<void> {
+  const dir = await cachedSource(cache, snapshot.repo);
+  if (!dir) return;
+  if (!snapshot.existed) {
+    await rm(dir, { recursive: true, force: true });
+    return;
+  }
+  const failure = `Could not restore checkout of ${snapshot.repo}`;
+  if (snapshot.sparse === false) {
+    if (await isSparse(cache, dir)) {
+      await git({
+        cache,
+        args: ['sparse-checkout', 'disable'],
+        failure,
+        cwd: dir,
+      });
+    }
+  } else if (snapshot.sparse && snapshot.paths) {
+    await git({
+      cache,
+      args: ['sparse-checkout', 'set', '--cone', ...snapshot.paths],
+      failure,
+      cwd: dir,
+    });
+  }
+  if (snapshot.commit) {
+    const currentCommit = await sourceCommit(cache, snapshot.repo);
+    if (currentCommit !== snapshot.commit) {
+      await git({
+        cache,
+        args: ['checkout', '--quiet', '--detach', snapshot.commit],
+        failure,
+        cwd: dir,
+      });
+    }
+  }
+  if (snapshot.state) {
+    await writeState(dir, snapshot.state);
+  }
+}
+
+export interface RemoteRefsInfo {
+  headCommit?: string;
+  defaultBranch?: string;
+  refCommits: ReadonlyMap<string, string>;
+}
+
+/**
+ * Queries `git ls-remote --symref` for `repo` and returns the remote `HEAD`
+ * commit, default branch name, and a map of branch and tag names to commits
+ * (preferring peeled `^{}` targets for annotated tags).
+ */
+export async function inspectRemoteRefs(
+  cache: SourceCache,
+  repo: string,
+): Promise<RemoteRefsInfo> {
+  const output = await git({
+    cache,
+    args: ['ls-remote', '--symref', END_OF_OPTIONS, cache.url(repo)],
+    failure: `Could not list remote refs of ${repo}`,
+  });
+  let headCommit: string | undefined;
+  let defaultBranch: string | undefined;
+  const refCommits = new Map<string, string>();
+  for (const line of output.split('\n')) {
+    if (!line) continue;
+    const [first = '', rawName = ''] = line.split('\t');
+    if (rawName === DEFAULT_REF && first.startsWith('ref: refs/heads/')) {
+      defaultBranch = first.slice('ref: refs/heads/'.length);
+      continue;
+    }
+    const commit = first;
+    if (!isCommitSha(commit) || !rawName) continue;
+    if (rawName === DEFAULT_REF) {
+      headCommit = commit;
+      continue;
+    }
+    if (rawName.startsWith('refs/heads/')) {
+      refCommits.set(rawName.slice('refs/heads/'.length), commit);
+    } else if (rawName.startsWith('refs/tags/')) {
+      const tag = rawName.endsWith('^{}')
+        ? rawName.slice('refs/tags/'.length, -3)
+        : rawName.slice('refs/tags/'.length);
+      if (!refCommits.has(tag) || rawName.endsWith('^{}')) {
+        refCommits.set(tag, commit);
+      }
+    }
+  }
+  return {
+    ...(headCommit ? { headCommit } : {}),
+    ...(defaultBranch ? { defaultBranch } : {}),
+    refCommits,
+  };
 }
 
 /**

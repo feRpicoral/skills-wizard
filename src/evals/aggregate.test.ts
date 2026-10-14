@@ -765,3 +765,89 @@ test('with_skill shadowing is reported apart from the baseline status', () => {
     /- \*\*`with_skill` status:\*\* possibly contaminated/,
   );
 });
+
+test('aggregateBenchmark and renderBenchmarkReport include compared skills and deltas in benchmark.json and report.md', async (t) => {
+  const dir = await tempDir(t);
+  const benchmark = aggregateBenchmark({
+    ...baseParams,
+    baselineEnabled: true,
+    compareSkills: ['skill-b', 'skill-c'],
+    runs: [
+      makeRun({ variant: 'with_skill', passed: [true, false] }),
+      makeRun({ variant: 'without_skill', passed: [false, false] }),
+      makeRun({ variant: 'compare:skill-b', passed: [true, false] }),
+      makeRun({ variant: 'compare:skill-c', passed: [false, true] }),
+    ],
+  });
+  const noBaselineCompare = aggregateBenchmark({
+    ...baseParams,
+    baselineEnabled: false,
+    compareSkills: ['skill-b'],
+    runs: [
+      makeRun({ variant: 'with_skill', passed: [true, false] }),
+      makeRun({ variant: 'compare:skill-b', passed: [true, true] }),
+    ],
+  });
+
+  await writeFile(join(dir, 'benchmark.json'), JSON.stringify(benchmark));
+  const reloaded = await loadBenchmarkFromIteration(dir);
+  const markdown = renderBenchmarkReport(benchmark);
+  const noBaselineMarkdown = renderBenchmarkReport(noBaselineCompare);
+
+  assert.deepEqual(reloaded, benchmark);
+  assert.deepEqual(benchmark.metadata.compare_skills, ['skill-b', 'skill-c']);
+  assert.equal(
+    benchmark.run_summary.compare_skills?.['skill-b']?.pass_rate.mean,
+    0.5,
+  );
+  assert.equal(
+    benchmark.run_summary.compare_deltas?.['skill-b']?.pass_rate,
+    '+0.00',
+  );
+  assert.deepEqual(benchmark.cases[0]?.assertions[0]?.compare_pass_rates, {
+    'skill-b': 1,
+    'skill-c': 0,
+  });
+  assert.deepEqual(benchmark.cases[0]?.assertions[0]?.compare_classifications, {
+    'skill-b': 'non-discriminating',
+    'skill-c': 'differentiating',
+  });
+  assert.deepEqual(benchmark.cases[0]?.assertions[1]?.compare_classifications, {
+    'skill-b': 'failing',
+    'skill-c': 'regressing',
+  });
+  assert.deepEqual(benchmark.assertion_analysis.regressing_vs_compare, {
+    'skill-b': [],
+    'skill-c': ['case-1: Assertion 2'],
+  });
+  assert.deepEqual(noBaselineCompare.assertion_analysis.regressing, []);
+  assert.deepEqual(noBaselineCompare.assertion_analysis.regressing_vs_compare, {
+    'skill-b': ['case-1: Assertion 2'],
+  });
+  assert.match(
+    markdown,
+    /- \*\*Compared against skills:\*\* `skill-b`, `skill-c`/,
+  );
+  assert.match(markdown, /\| `compare:skill-b` \| 50\.0% ± 0\.0% \|/);
+  assert.match(
+    markdown,
+    /\| \*\*Delta \(vs skill-b\)\*\* \| \*\*\+0\.0 pp\*\* \|/,
+  );
+  assert.match(
+    markdown,
+    /\| Assertion \| Kind \| `with_skill` \| `without_skill` \| `compare:skill-b` \| `compare:skill-c` \| Classification \(vs baseline\) \| Classification \(vs `compare:skill-b`\) \| Classification \(vs `compare:skill-c`\) \|/,
+  );
+  assert.match(
+    markdown,
+    /- \*\*Regressing \(vs `compare:skill-c`\) \(1\):\*\* `case-1: Assertion 2`/,
+  );
+  assert.match(
+    noBaselineMarkdown,
+    /These assertions passed 100% in both `with_skill` and `compare:skill-b` runs:/,
+  );
+  assert.match(noBaselineMarkdown, /Classification \(vs `compare:skill-b`\)/);
+  assert.match(
+    noBaselineMarkdown,
+    /- \*\*Regressing \(vs `compare:skill-b`\) \(1\):\*\* `case-1: Assertion 2`/,
+  );
+});

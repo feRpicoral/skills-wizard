@@ -5,6 +5,7 @@ import {
   resolveAgyExtraArgs,
   resolvePaths,
   resolveSearchPath,
+  resolveSkillsShUrl,
 } from './env.ts';
 import { githubUrl, type SourceSettings } from './skills/sources.ts';
 
@@ -16,6 +17,11 @@ export interface AgySettings {
   extraArgs: () => string[];
 }
 
+export interface DiscoverySettings {
+  skillsShUrl?: string | (() => string);
+  fetch?: typeof globalThis.fetch;
+}
+
 export interface Context {
   paths: Paths;
   repoRoot: string;
@@ -23,6 +29,7 @@ export interface Context {
   searchPath: string[];
   interactive: boolean;
   sources: SourceSettings;
+  discovery?: DiscoverySettings;
   agy?: AgySettings;
   print: (line?: string) => void;
 }
@@ -34,6 +41,7 @@ interface CreateContextParams {
   paths?: Paths;
   searchPath?: string[];
   sources?: Partial<SourceSettings>;
+  discovery?: Partial<DiscoverySettings>;
   print?: (line?: string) => void;
 }
 
@@ -44,6 +52,7 @@ export function createContext({
   paths = resolvePaths(),
   searchPath = resolveSearchPath(),
   sources,
+  discovery,
   print = (line = '') => {
     process.stdout.write(`${line}\n`);
   },
@@ -58,6 +67,10 @@ export function createContext({
       url: sources?.url ?? githubUrl,
       env: sources?.env ?? gitEnvironment(),
       now: sources?.now ?? (() => new Date()),
+    },
+    discovery: {
+      skillsShUrl: discovery?.skillsShUrl ?? (() => resolveSkillsShUrl()),
+      ...(discovery?.fetch !== undefined ? { fetch: discovery.fetch } : {}),
     },
     agy: {
       bin: () => resolveAgyBin(),

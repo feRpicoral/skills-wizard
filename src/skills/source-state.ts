@@ -18,6 +18,7 @@ import { failureDetail } from './process.ts';
 const run = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 5 * 60_000;
+const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const STATE_FILE = 'agents-config.json';
 
@@ -79,7 +80,7 @@ export interface GitRunParams {
   cwd?: string;
 }
 
-export async function git({
+export async function gitRaw({
   cache,
   args,
   failure,
@@ -90,13 +91,18 @@ export async function git({
       cwd,
       env: cache.env,
       timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
     });
-    return stdout.trim();
+    return stdout;
   } catch (error) {
     throw new SourceError(`${failure}: ${failureDetail(error)}`, {
       cause: error,
     });
   }
+}
+
+export async function git(params: GitRunParams): Promise<string> {
+  return (await gitRaw(params)).trim();
 }
 
 export async function sourceCommit(

@@ -97,8 +97,17 @@ async function recordManifest({ plan, applied }: RecordManifestParams) {
   const installedSkills = new Set(
     entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
   );
-  const skills = plan.manifest.skills.filter((name) =>
-    installedSkills.has(name),
+  const unappliedSkills = new Set(
+    plan.actions.flatMap((action) =>
+      action.skill !== undefined &&
+      !applied.has(action) &&
+      !installedSkills.has(action.skill)
+        ? [action.skill]
+        : [],
+    ),
+  );
+  const skills = plan.manifest.skills.filter(
+    (name) => !unappliedSkills.has(name),
   );
   const manifest = { ...plan.manifest, skills, entries };
   const existing = await readTextIfExists(plan.manifestPath);
@@ -118,7 +127,6 @@ function message(error: unknown): string {
 interface ExecuteAllResult {
   failure?: ApplyError;
   signal?: NodeJS.Signals;
-  partial: boolean;
 }
 
 async function executeAll(
@@ -138,16 +146,15 @@ async function executeAll(
           `Could not update ${action.path}: ${message(error)}`,
           { cause: error },
         ),
-        partial: true,
       };
     }
     outcome.applied.push(action);
     const signal = await setUp(action, outcome.setupFailures);
     if (signal !== undefined) {
-      return { signal, partial: true };
+      return { signal };
     }
   }
-  return { partial: false };
+  return {};
 }
 
 /**

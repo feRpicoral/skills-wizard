@@ -18,13 +18,19 @@ import {
 } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { MissingVariablesError } from '../errors.ts';
+import { buildPlan, type Plan } from '../install/plan.ts';
 import { isPresetChoice, type PresetChoice } from '../project/presets.ts';
 import { promptVariables } from '../prompts/selection.ts';
+import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
 import type { SkillLibrary } from '../skills/library.ts';
 import type { Manifest } from '../state/manifest.ts';
-import type { Location } from './location.ts';
+import type { ToolId } from '../tools/registry.ts';
+import { type Location, warnTrackedFiles } from './location.ts';
 import { notify, notifyLeftGit, setVariablesCommand } from './output.ts';
 import {
+  applyWithCatalogRollback,
+  type ApplyWithCatalogRollbackOutcome,
+  type ApplyWithCatalogRollbackParams,
   dropUnknownSkills,
   type DropUnknownSkillsParams,
   fetchSkills,
@@ -59,6 +65,9 @@ export {
   type SetVariablesCommandParams,
 } from './output.ts';
 export {
+  applyWithCatalogRollback,
+  type ApplyWithCatalogRollbackOutcome,
+  type ApplyWithCatalogRollbackParams,
   dropUnknownSkills,
   type DropUnknownSkillsParams,
   fetchSkills,
@@ -377,4 +386,95 @@ export async function reconcileManifestSelection({
     keepLocal: reconciled.keepLocal,
     ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
   };
+}
+
+export interface BuildSyncPlanForLocationParams {
+  ctx: Context;
+  prompting: boolean;
+  location: Location;
+  previous: Manifest;
+  library: BlockLibrary;
+  skillLibrary: SkillLibrary;
+  tools?: readonly ToolId[];
+  extraSkills?: readonly string[];
+  extraSkillSources?: ReadonlyMap<string, SkillSource>;
+  warnLocked?: boolean;
+  adopt?: { names: ReadonlySet<string>; backupDir: string };
+}
+
+/**
+ * Reconciles a recorded manifest against the current block and skill libraries,
+ * resolves skill sources, and builds the install {@link Plan} for `location`.
+ */
+export async function buildSyncPlanForLocation({
+  ctx,
+  prompting,
+  location,
+  previous,
+  library,
+  skillLibrary,
+  tools = previous.tools,
+  extraSkills = [],
+  extraSkillSources,
+  warnLocked = false,
+  adopt,
+}: BuildSyncPlanForLocationParams): Promise<Plan> {
+  const reconciled = await reconcileManifestSelection({
+    ctx,
+    prompting,
+    location,
+    previous,
+    library,
+    skillLibrary,
+    extraSkills,
+  });
+  if (warnLocked && location.scope === 'global') {
+    await warnLockedSkills(ctx, prompting, reconciled.skills);
+  }
+  const namesToFetch =
+    tools.length > 0
+      ? reconciled.skills.filter((name) => !extraSkillSources?.has(name))
+      : [];
+  const skillSources = await fetchSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: namesToFetch,
+  });
+  for (const [name, source] of extraSkillSources ?? []) {
+    skillSources.set(name, source);
+  }
+  const plan = await buildPlan({
+    scope: location.scope,
+    selection: {
+      tools: [...tools],
+      blocks: reconciled.blocks,
+      skills: reconciled.skills,
+      variables: reconciled.variables,
+      linkCommand: previous.options.linkCommand ?? false,
+      keepLocal: reconciled.keepLocal,
+      skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
+      ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
+      ...(previous.options.style !== undefined
+        ? { style: previous.options.style }
+        : {}),
+    },
+    library,
+    paths: ctx.paths,
+    repoRoot: ctx.repoRoot,
+    previous,
+    manifestPath: location.manifestPath,
+    ...(location.project ? { project: location.project } : {}),
+    skillSources,
+    ...(adopt ? { adopt } : {}),
+  });
+  if (reconciled.keepLocal) {
+    await warnTrackedFiles({
+      ctx,
+      prompting,
+      plan,
+      ...(location.project ? { project: location.project } : {}),
+    });
+  }
+  return plan;
 }

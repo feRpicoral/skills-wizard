@@ -1,8 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
+import { escapingLinks } from '../skills/tree.ts';
 import {
   aggregateBenchmark,
   type BenchmarkSummary,
@@ -28,10 +29,16 @@ import {
 } from './trigger-engine.ts';
 import {
   assertSafeGitRef,
+  type ComparedSkillSpec,
+  compareSkillVariant,
   type EvalVariant,
+  parseCompareSkillVariant,
+  prepareComparedSkillSetups,
   prepareEvalWorkspace,
   resolveSkillRepository,
+  validateComparedSkillSpecs,
   validateEvalSuiteFileDestinations,
+  variantDirName,
   verifySkillAtRef,
 } from './workspace.ts';
 
@@ -53,6 +60,7 @@ export interface RunSkillEvalParams {
   runs?: number;
   baseline?: boolean;
   compareRef?: string;
+  compareSkills?: readonly ComparedSkillSpec[];
   caseId?: string;
   caseIds?: readonly string[];
   parallel?: number;
@@ -76,7 +84,82 @@ interface EvalJob {
   runIndex: number;
 }
 
-interface RunSingleEvalJobParams {
+async function runAndGradeTask(params: {
+  job: EvalJob;
+  workdir: string;
+  runDir: string;
+  activeSkillName: string;
+  runner: EvalRunner;
+  timeoutSeconds: number;
+  sandbox: boolean;
+  env: Environment;
+  label: string;
+  onLog?: (line: string) => void;
+}): Promise<EvalRunRecord> {
+  const {
+    job,
+    workdir,
+    runDir,
+    activeSkillName,
+    runner,
+    timeoutSeconds,
+    sandbox,
+    env,
+    label,
+    onLog,
+  } = params;
+  const startedAt = Date.now();
+  let taskResult: RunnerTaskResult | undefined;
+  let launchError: string | undefined;
+  try {
+    taskResult = await runner.runTask({
+      prompt: job.evalCase.prompt,
+      workdir,
+      runDir,
+      skillName: activeSkillName,
+      timeoutSeconds,
+      sandbox,
+      excludeSkill: job.variant === 'without_skill',
+    });
+  } catch (error) {
+    launchError = error instanceof Error ? error.message : String(error);
+  }
+
+  const { grading, timing } =
+    taskResult === undefined
+      ? await recordFailedRun({
+          evalCase: job.evalCase,
+          runDir,
+          error: launchError ?? 'Runner failed',
+          durationMs: Date.now() - startedAt,
+        })
+      : await gradeEvalRun({
+          evalCase: job.evalCase,
+          workdir,
+          runDir,
+          taskResult,
+          runner,
+          timeoutSeconds,
+          env,
+        });
+
+  onLog?.(
+    timing.error === undefined
+      ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds.toFixed(1)}s)`
+      : `${label}: agent run failed: ${timing.error}`,
+  );
+
+  return {
+    case_id: job.evalCase.id,
+    prompt: job.evalCase.prompt,
+    variant: job.variant,
+    run_index: job.runIndex,
+    grading,
+    timing,
+  };
+}
+
+interface ExecuteEvalJobParams {
   job: EvalJob;
   iterationDir: string;
   skillDir: string;
@@ -89,42 +172,52 @@ interface RunSingleEvalJobParams {
   paths?: Paths;
   repoRoot?: string;
   compareRef?: string;
+  compareSkillsByName: ReadonlyMap<string, ComparedSkillSpec>;
   env: Environment;
   onLog?: (line: string) => void;
   onContamination: (flags: {
+    variant: EvalVariant;
     possiblyContaminated: boolean;
     skillShadowed: boolean;
     warning?: string;
   }) => void;
 }
 
-async function runSingleEvalJob({
-  job,
-  iterationDir,
-  skillDir,
-  skillName,
-  runner,
-  runs,
-  timeoutSeconds,
-  sandbox,
-  keepWorkdirs,
-  paths,
-  repoRoot,
-  compareRef,
-  env,
-  onLog,
-  onContamination,
-}: RunSingleEvalJobParams): Promise<EvalRunRecord> {
+async function executeEvalJob(
+  params: ExecuteEvalJobParams,
+): Promise<EvalRunRecord> {
+  const {
+    job,
+    iterationDir,
+    skillDir,
+    skillName,
+    runner,
+    runs,
+    timeoutSeconds,
+    sandbox,
+    keepWorkdirs,
+    paths,
+    repoRoot,
+    compareRef,
+    compareSkillsByName,
+    env,
+    onLog,
+    onContamination,
+  } = params;
   const label = `[${job.evalCase.id}] ${job.variant} run ${job.runIndex}/${runs}`;
   const runDir = join(
     iterationDir,
     `eval-${job.evalCase.id}`,
-    job.variant,
+    variantDirName(job.variant),
     `run-${job.runIndex}`,
   );
   await mkdir(runDir, { recursive: true });
-  // A workspace that cannot be prepared is a harness problem shared by
-  // every job, so it is fatal rather than a failed run.
+  const comparedName = parseCompareSkillVariant(job.variant);
+  const compareSkill =
+    comparedName !== undefined
+      ? compareSkillsByName.get(comparedName)
+      : undefined;
+  const activeSkillName = compareSkill?.skillName ?? skillName;
   const prepared = await prepareEvalWorkspace({
     runDir,
     skillDir,
@@ -135,65 +228,31 @@ async function runSingleEvalJob({
     paths,
     repoRoot,
     compareRef,
+    compareSkill,
+    compareSkills: [...compareSkillsByName.values()],
     env,
   });
 
   onContamination({
+    variant: job.variant,
     possiblyContaminated: prepared.possiblyContaminated,
     skillShadowed: Boolean(prepared.skillShadowed),
     warning: prepared.warning,
   });
 
   try {
-    const startedAt = Date.now();
-    let taskResult: RunnerTaskResult | undefined;
-    let launchError: string | undefined;
-    try {
-      taskResult = await runner.runTask({
-        prompt: job.evalCase.prompt,
-        workdir: prepared.workdir,
-        runDir,
-        skillName,
-        timeoutSeconds,
-        sandbox,
-        excludeSkill: job.variant === 'without_skill',
-      });
-    } catch (error) {
-      launchError = error instanceof Error ? error.message : String(error);
-    }
-
-    const { grading, timing } =
-      taskResult === undefined
-        ? await recordFailedRun({
-            evalCase: job.evalCase,
-            runDir,
-            error: launchError ?? 'Runner failed',
-            durationMs: Date.now() - startedAt,
-          })
-        : await gradeEvalRun({
-            evalCase: job.evalCase,
-            workdir: prepared.workdir,
-            runDir,
-            taskResult,
-            runner,
-            timeoutSeconds,
-            env,
-          });
-
-    onLog?.(
-      timing.error === undefined
-        ? `${label}: ${grading.summary.passed}/${grading.summary.total} passed (${timing.total_duration_seconds.toFixed(1)}s)`
-        : `${label}: agent run failed: ${timing.error}`,
-    );
-
-    return {
-      case_id: job.evalCase.id,
-      prompt: job.evalCase.prompt,
-      variant: job.variant,
-      run_index: job.runIndex,
-      grading,
-      timing,
-    };
+    return await runAndGradeTask({
+      job,
+      workdir: prepared.workdir,
+      runDir,
+      activeSkillName,
+      runner,
+      timeoutSeconds,
+      sandbox,
+      env,
+      label,
+      onLog,
+    });
   } finally {
     if (!keepWorkdirs) {
       await removeWorkdir({ path: prepared.workdir, onLog });
@@ -201,33 +260,29 @@ async function runSingleEvalJob({
   }
 }
 
-/**
- * Runs a skill evaluation suite across the selected cases and variants
- * (`with_skill`, optional `without_skill` baseline, and optional `old_skill`
- * at `compareRef`), grades each run, and writes `benchmark.json` and
- * `report.md` into a newly allocated `iteration-<N>` directory.
- *
- * Performs runner preflight and git ref verification before allocating the
- * iteration directory so invalid configuration leaves no empty directory behind.
- */
-export async function runSkillEval({
-  skillName,
-  skillDir,
-  evalsRootDir,
-  runner,
-  runs = 1,
-  baseline = true,
-  compareRef,
-  caseId,
-  caseIds,
-  parallel = 2,
-  timeoutSeconds = 600,
-  sandbox = false,
-  keepWorkdirs = false,
-  paths,
-  env,
-  onLog,
-}: RunSkillEvalParams): Promise<RunSkillEvalResult> {
+async function prepareEvalSuiteContext(params: RunSkillEvalParams): Promise<{
+  selectedCases: EvalCase[];
+  compareSkillsByName: Map<string, ComparedSkillSpec>;
+  compareSkillNames: string[];
+  variants: EvalVariant[];
+  repoRoot: string | undefined;
+}> {
+  const {
+    skillName,
+    skillDir,
+    runner,
+    baseline = true,
+    compareRef,
+    compareSkills,
+    caseId,
+    caseIds,
+    env,
+  } = params;
+  if (compareRef !== undefined && (compareSkills?.length ?? 0) > 0) {
+    throw new EvalError(
+      'Cannot combine compareRef and compareSkills in the same evaluation',
+    );
+  }
   const suite = await loadEvalSuite(skillDir);
   const requestedIds = [...(caseId ? [caseId] : []), ...(caseIds ?? [])];
   for (const id of requestedIds) {
@@ -239,18 +294,33 @@ export async function runSkillEval({
     requestedIds.length > 0
       ? suite.evals.filter((item) => requestedIds.includes(item.id))
       : suite.evals;
-
   if (selectedCases.length === 0) {
     throw new EvalError(`No eval cases found in ${skillName}`);
   }
-  validateEvalSuiteFileDestinations({ cases: selectedCases, skillName });
+  const primaryEscaping = await escapingLinks(skillDir);
+  if (primaryEscaping.length > 0) {
+    throw new EvalError(
+      `Skill "${skillName}" has links that point outside the skill folder: ${primaryEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
+    );
+  }
+  const compareSkillsByName = await validateComparedSkillSpecs(
+    skillName,
+    compareSkills,
+  );
+  const compareSkillNames = [...compareSkillsByName.keys()];
+  validateEvalSuiteFileDestinations({
+    cases: selectedCases,
+    skillName,
+    compareSkillNames,
+  });
 
   const variants: EvalVariant[] = ['with_skill'];
   if (baseline) variants.push('without_skill');
   if (compareRef) variants.push('old_skill');
+  for (const name of compareSkillNames) {
+    variants.push(compareSkillVariant(name));
+  }
 
-  // Everything that can fail for every job is checked before the iteration
-  // directory exists, so a bad ref or a missing CLI leaves nothing behind.
   await runner.preflight?.();
   let repoRoot: string | undefined;
   if (compareRef !== undefined) {
@@ -258,85 +328,139 @@ export async function runSkillEval({
     repoRoot = await resolveSkillRepository({ skillDir, env });
     await verifySkillAtRef({ repoRoot, skillDir, ref: compareRef, env });
   }
+  return {
+    selectedCases,
+    compareSkillsByName,
+    compareSkillNames,
+    variants,
+    repoRoot,
+  };
+}
 
-  const iterationDir = await allocateIterationDir({
-    evalsRootDir,
+/**
+ * Runs a skill evaluation suite across the selected cases and variants
+ * (`with_skill`, optional `without_skill` baseline, optional `old_skill`
+ * at `compareRef`, and optional competing `compareSkills`), grades each run,
+ * and writes `benchmark.json` and `report.md` into a newly allocated
+ * `iteration-<N>` directory.
+ *
+ * Performs runner preflight and git ref verification before allocating the
+ * iteration directory so invalid configuration leaves no empty directory behind.
+ */
+export async function runSkillEval(
+  params: RunSkillEvalParams,
+): Promise<RunSkillEvalResult> {
+  const {
     skillName,
-  });
+    skillDir,
+    evalsRootDir,
+    runner,
+    runs = 1,
+    baseline = true,
+    compareRef,
+    parallel = 2,
+    timeoutSeconds = 600,
+    sandbox = false,
+    keepWorkdirs = false,
+    paths,
+    env,
+    onLog,
+  } = params;
+  const {
+    selectedCases,
+    compareSkillsByName,
+    compareSkillNames,
+    variants,
+    repoRoot,
+  } = await prepareEvalSuiteContext(params);
 
-  const jobs: EvalJob[] = [];
-  for (const evalCase of selectedCases) {
-    for (const variant of variants) {
-      for (let runIndex = 1; runIndex <= runs; runIndex += 1) {
-        jobs.push({ evalCase, variant, runIndex });
+  const tempDirs: string[] = [];
+  try {
+    await prepareComparedSkillSetups(compareSkillsByName, tempDirs);
+    const iterationDir = await allocateIterationDir({
+      evalsRootDir,
+      skillName,
+    });
+    const jobs: EvalJob[] = [];
+    for (const evalCase of selectedCases) {
+      for (const variant of variants) {
+        for (let runIndex = 1; runIndex <= runs; runIndex += 1) {
+          jobs.push({ evalCase, variant, runIndex });
+        }
       }
     }
+
+    const warnings = new Set<string>();
+    let possiblyContaminated = false;
+    let withSkillContaminated = false;
+    const records = await runWithConcurrency({
+      items: jobs,
+      concurrency: parallel,
+      worker: (job) =>
+        executeEvalJob({
+          job,
+          iterationDir,
+          skillDir,
+          skillName,
+          runner,
+          runs,
+          timeoutSeconds,
+          sandbox,
+          keepWorkdirs,
+          paths,
+          repoRoot,
+          compareRef,
+          compareSkillsByName,
+          env,
+          onLog,
+          onContamination(flags) {
+            if (
+              flags.variant === 'without_skill' &&
+              flags.possiblyContaminated
+            ) {
+              possiblyContaminated = true;
+            }
+            if (
+              (flags.variant === 'with_skill' ||
+                flags.variant === 'old_skill') &&
+              (flags.possiblyContaminated || flags.skillShadowed)
+            ) {
+              withSkillContaminated = true;
+            }
+            if (flags.warning && !warnings.has(flags.warning)) {
+              warnings.add(flags.warning);
+              onLog?.(`warning: ${flags.warning}`);
+            }
+          },
+        }),
+    });
+
+    const benchmark = aggregateBenchmark({
+      skillName,
+      skillPath: skillDir,
+      runner: runner.name,
+      runsPerConfig: runs,
+      cases: selectedCases,
+      runs: records,
+      baselineEnabled: baseline,
+      possiblyContaminated,
+      withSkillContaminated,
+      compareRef,
+      compareSkills: compareSkillNames,
+      warnings: [...warnings],
+    });
+    const reportMarkdown = renderBenchmarkReport(benchmark);
+    await writeFile(
+      join(iterationDir, 'benchmark.json'),
+      `${JSON.stringify(benchmark, null, 2)}\n`,
+    );
+    await writeFile(join(iterationDir, 'report.md'), reportMarkdown);
+    return { iterationDir, benchmark, reportMarkdown };
+  } finally {
+    await Promise.all(
+      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   }
-
-  const warnings = new Set<string>();
-  let possiblyContaminated = false;
-  let withSkillContaminated = false;
-
-  const records = await runWithConcurrency({
-    items: jobs,
-    concurrency: parallel,
-    worker: (job) =>
-      runSingleEvalJob({
-        job,
-        iterationDir,
-        skillDir,
-        skillName,
-        runner,
-        runs,
-        timeoutSeconds,
-        sandbox,
-        keepWorkdirs,
-        paths,
-        repoRoot,
-        compareRef,
-        env,
-        onLog,
-        onContamination(flags) {
-          if (flags.possiblyContaminated) {
-            possiblyContaminated = true;
-          }
-          if (flags.skillShadowed) {
-            withSkillContaminated = true;
-          }
-          if (flags.warning && !warnings.has(flags.warning)) {
-            warnings.add(flags.warning);
-            onLog?.(`warning: ${flags.warning}`);
-          }
-        },
-      }),
-  });
-
-  const benchmark = aggregateBenchmark({
-    skillName,
-    skillPath: skillDir,
-    runner: runner.name,
-    runsPerConfig: runs,
-    cases: selectedCases,
-    runs: records,
-    baselineEnabled: baseline,
-    possiblyContaminated,
-    withSkillContaminated,
-    compareRef,
-    warnings: [...warnings],
-  });
-  const reportMarkdown = renderBenchmarkReport(benchmark);
-
-  await writeFile(
-    join(iterationDir, 'benchmark.json'),
-    `${JSON.stringify(benchmark, null, 2)}\n`,
-  );
-  await writeFile(join(iterationDir, 'report.md'), reportMarkdown);
-
-  return {
-    iterationDir,
-    benchmark,
-    reportMarkdown,
-  };
 }
 
 export interface RegenerateSkillReportParams {
@@ -356,21 +480,17 @@ export async function regenerateSkillReport({
   skillName,
   iterationDir,
 }: RegenerateSkillReportParams): Promise<RegenerateSkillReportResult> {
-  let targetDir = iterationDir;
-  if (!targetDir) {
-    if (!skillName) {
-      throw new EvalError(
-        'Either skillName or iterationDir is required to regenerate a report',
-      );
-    }
-    targetDir = await findLatestIterationDir({ evalsRootDir, skillName });
-  }
+  const targetDir =
+    iterationDir ??
+    (skillName
+      ? await findLatestIterationDir({ evalsRootDir, skillName })
+      : (() => {
+          throw new EvalError(
+            'Either skillName or iterationDir is required to regenerate a report',
+          );
+        })());
   const benchmark = await loadBenchmarkFromIteration(targetDir);
   const reportMarkdown = renderBenchmarkReport(benchmark);
   await writeFile(join(targetDir, 'report.md'), reportMarkdown);
-  return {
-    iterationDir: targetDir,
-    benchmark,
-    reportMarkdown,
-  };
+  return { iterationDir: targetDir, benchmark, reportMarkdown };
 }

@@ -25,6 +25,7 @@ import { displayPath } from '../../install/describe.ts';
 import { isDirectory, lstatIfExists } from '../../install/fs.ts';
 import { isSkillName } from '../../skills/validate.ts';
 import type { SkillCommandOptions } from '../skill.ts';
+import { resolveCompareSpec } from './compare.ts';
 
 const WARN_LABEL = styleText('yellow', 'warn ');
 
@@ -199,6 +200,10 @@ export function printBenchmarkSummary(
           `${formatPassRateDelta(summary.with_skill, summary.old_skill)} vs old_skill`,
         ]
       : []),
+    ...Object.entries(summary.compare_skills ?? {}).map(
+      ([name, variant]) =>
+        `${formatPassRateDelta(summary.with_skill, variant)} vs ${name}`,
+    ),
   ];
   const deltaStr = deltas.length > 0 ? ` (${deltas.join(', ')})` : '';
   ctx.print(
@@ -215,6 +220,7 @@ export async function runSkillEvalCommand(
     runs,
     baseline,
     compare,
+    forceCompareRef = false,
     caseId,
     cases,
     parallel,
@@ -225,12 +231,19 @@ export async function runSkillEvalCommand(
 ): Promise<number> {
   if (paths.length !== 1 || !paths[0]) {
     throw new UsageError(
-      'Usage: agents-config skill eval <name> [--runner <name>] [--runs <n>] [--baseline|--no-baseline|--baseline none|<ref>] [--compare <ref>] [--case <id>] [--cases <ids>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
+      'Usage: agents-config skill eval <name> [--runner <name>] [--runs <n>] [--baseline|--no-baseline|--baseline none|<ref>] [--compare <ref>|<skill-a>,<skill-b>] [--case <id>] [--cases <ids>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
     );
   }
   const { skillName, skillDir } = await resolveTargetSkill({
     ctx,
     nameOrPath: paths[0],
+  });
+  const { compareRef, compareSkills } = await resolveCompareSpec({
+    ctx,
+    primarySkillName: skillName,
+    primarySkillDir: skillDir,
+    compare,
+    forceCompareRef,
   });
   const runner = await resolveEvalRunner({ ctx, rawRunner, binary, sandbox });
   const result = await runSkillEval({
@@ -240,7 +253,8 @@ export async function runSkillEvalCommand(
     runner,
     runs: runs ?? 1,
     baseline: baseline ?? true,
-    compareRef: compare,
+    compareRef,
+    compareSkills,
     caseId,
     caseIds: cases,
     parallel: parallel ?? 2,

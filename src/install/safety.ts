@@ -28,6 +28,7 @@ export interface PlannedAction {
   path: string;
   writePath?: string;
   label: string;
+  skill?: string;
   status: ActionStatus;
   change: Change;
   entry: ManifestEntry | null;
