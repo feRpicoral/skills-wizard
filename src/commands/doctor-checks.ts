@@ -11,7 +11,7 @@ import { buildPlan, type PlannedAction } from '../install/plan.ts';
 import type { McpCatalog } from '../mcp/model.ts';
 import type { PresetChoice } from '../project/presets.ts';
 import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
-import type { Manifest } from '../state/manifest.ts';
+import type { Manifest, ManifestEntry } from '../state/manifest.ts';
 import { orderedTools, type ToolDefinition } from '../tools/registry.ts';
 import {
   type Location,
@@ -148,14 +148,17 @@ export async function globalFindings(
 
 // Skill folders, links, and MCP server configs never contain block variables,
 // so a placeholder cannot make them look out of date.
+const KINDS_WITHOUT_BLOCKS: ReadonlySet<ManifestEntry['kind']> = new Set([
+  'skill',
+  'symlink',
+  'mcp-json',
+  'mcp-toml',
+]);
+
 function rendersBlocks(action: PlannedAction): boolean {
   const kind = (action.entry ?? action.previous)?.kind;
-  return (
-    kind !== 'skill' &&
-    kind !== 'symlink' &&
-    kind !== 'mcp-json' &&
-    kind !== 'mcp-toml'
-  );
+
+  return kind === undefined || !KINDS_WITHOUT_BLOCKS.has(kind);
 }
 
 export interface PlanFindingsParams {

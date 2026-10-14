@@ -26,6 +26,7 @@ export async function resolveDoctorMcp(
   const findings: Finding[] = [];
   const mcpCatalog = await loadMcpServers(ctx);
   const recorded = manifest.mcp ?? [];
+
   const unknownMcp = unknownMcpServerNames(mcpCatalog, recorded);
   if (unknownMcp.length > 0) {
     findings.push({
@@ -33,6 +34,7 @@ export async function resolveDoctorMcp(
       message: `MCP servers no longer in mcp/servers.yaml: ${unknownMcp.join(', ')}; agents-config sync will remove them`,
     });
   }
+
   const outOfScopeMcp = outOfScopeMcpServerNames({
     catalog: mcpCatalog,
     names: recorded,
@@ -44,9 +46,11 @@ export async function resolveDoctorMcp(
       message: `MCP servers no longer available for ${scope} scope: ${outOfScopeMcp.join(', ')}; agents-config sync will remove them`,
     });
   }
+
   const mcp = recorded.filter(
     (name) => !unknownMcp.includes(name) && !outOfScopeMcp.includes(name),
   );
+
   return { mcpCatalog, mcp, findings };
 }
 
@@ -66,7 +70,14 @@ export function mcpFindings({
   mcp,
 }: McpFindingsParams): Finding[] {
   if (mcp.length === 0 || manifest.tools.length === 0) return [];
+
   const findings: Finding[] = [];
+  const tools = new Set(manifest.tools);
+  const usesAntigravity =
+    tools.has('antigravity') || tools.has('antigravity-cli');
+  const usesClaudeCode = tools.has('claude-code');
+  const usesCodex = tools.has('codex');
+  const usesGeminiCli = tools.has('gemini-cli');
   const servers = selectMcpServers({
     catalog: mcpCatalog,
     names: mcp,
@@ -85,10 +96,7 @@ export function mcpFindings({
     }
   }
 
-  if (
-    manifest.tools.includes('antigravity') ||
-    manifest.tools.includes('antigravity-cli')
-  ) {
+  if (usesAntigravity) {
     const stdioSecretServers = servers.filter(
       (server) =>
         server.transport === 'stdio' && allServerSecrets(server).length > 0,
@@ -103,21 +111,21 @@ export function mcpFindings({
   }
 
   if (scope === 'project') {
-    if (manifest.tools.includes('claude-code')) {
+    if (usesClaudeCode) {
       findings.push({
         level: 'note',
         message:
           'Claude Code requires interactive project approval before loading MCP servers from .mcp.json',
       });
     }
-    if (manifest.tools.includes('codex')) {
+    if (usesCodex) {
       findings.push({
         level: 'note',
         message:
           'Codex loads project .codex/config.toml MCP servers only after the project is marked trusted',
       });
     }
-    if (manifest.tools.includes('gemini-cli')) {
+    if (usesGeminiCli) {
       findings.push({
         level: 'note',
         message:
@@ -126,7 +134,7 @@ export function mcpFindings({
     }
   }
 
-  if (manifest.tools.includes('gemini-cli')) {
+  if (usesGeminiCli) {
     const hasEstimates = servers.some(
       (server) => server.estimatedTools !== undefined,
     );

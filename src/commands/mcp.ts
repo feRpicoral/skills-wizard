@@ -18,6 +18,7 @@ import {
   dropUnavailableMcpServers,
   loadLibrary,
   loadMcpServers,
+  mergeRequestedTools,
   readLocationManifest,
   resolveLocation,
 } from './shared.ts';
@@ -210,12 +211,8 @@ async function applyMcpSelectionChange({
     });
   }
 
-  const tools =
-    requestedTools !== undefined
-      ? requestedTools.length === 0
-        ? []
-        : [...new Set([...previous.tools, ...requestedTools])]
-      : previous.tools;
+  const tools = mergeRequestedTools(previous.tools, requestedTools);
+
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
