@@ -4,9 +4,12 @@ import { getProperty, hasProperty, parsePath } from 'dot-prop';
 import type { JSONPath } from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
-import type { ManifestEntry } from '../state/manifest.ts';
 import {
   appendArrayElements,
+  isEmptyJsonObject,
+  isObject,
+  type JsonObject,
+  parseJsonObject,
   rawJson,
   removeArrayElements,
   removeJsonProperty,
@@ -14,38 +17,15 @@ import {
   setJsonValue,
 } from './json-text.ts';
 import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
-import {
-  conflict,
-  type FileActionParams,
-  type PlannedAction,
-  writeAction,
-} from './safety.ts';
-import type { JsonArrayTarget } from './targets.ts';
 
-type JsonObject = Record<string, unknown>;
+export { isEmptyJsonObject, isObject, parseJsonObject };
 
 export const DEFAULT_INDENT = 2;
 
-export function isObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function parseJsonObject(content: string | null): JsonObject {
-  if (content === null || isBlank(content)) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(withoutBom(content));
-  } catch (error) {
-    throw new JsonMergeError(
-      'not plain JSON (comments or syntax errors); edit it by hand',
-      { cause: error },
-    );
-  }
-  if (!isObject(parsed)) {
-    throw new JsonMergeError('must contain a JSON object');
-  }
-  return parsed;
+export interface EmptyJsonState {
+  wasEmpty?: true;
+  blankText?: string;
+  rootOriginal?: string;
 }
 
 function parseKeyPath(doc: JsonObject, keyPath: string): JSONPath {
@@ -113,7 +93,7 @@ interface EnsureArrayValuesParams {
   ownedValues?: readonly string[];
 }
 
-interface EnsureResult {
+export interface EnsureResult {
   content: string;
   added: string[];
   wasString: boolean;
@@ -339,111 +319,4 @@ export function legacyCreatedKeys({
   createdFile,
 }: LegacyCreatedKeysParams): number {
   return createdFile ? parsePath(keyPath).length : 1;
-}
-
-export function isEmptyJsonObject(content: string): boolean {
-  return Object.keys(parseJsonObject(content)).length === 0;
-}
-
-export interface EmptyJsonState {
-  wasEmpty?: true;
-  blankText?: string;
-  rootOriginal?: string;
-}
-
-type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
-
-interface CreatedShape {
-  createdKeys?: number;
-  original?: string;
-}
-
-function shapeOf({ createdKeys, original }: CreatedShape): CreatedShape {
-  return {
-    ...(createdKeys === undefined ? {} : { createdKeys }),
-    ...(original === undefined ? {} : { original }),
-  };
-}
-
-interface CreatedShapeParams {
-  earlier: JsonArrayEntry | null;
-  result: EnsureResult;
-}
-
-function createdShape({ earlier, result }: CreatedShapeParams): CreatedShape {
-  if (!earlier) return shapeOf(result);
-  if (earlier.createdKeys === undefined) {
-    return result.createdKeys > 0 ? shapeOf(result) : {};
-  }
-  return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
-}
-
-export interface PlanJsonArrayParams extends FileActionParams<JsonArrayTarget> {
-  emptyJson?: EmptyJsonState;
-}
-
-export function planJsonArray({
-  target,
-  file,
-  previous,
-  emptyJson,
-}: PlanJsonArrayParams): PlannedAction {
-  try {
-    const earlier =
-      file.existing !== null && previous?.kind === 'json-array'
-        ? previous
-        : null;
-    const result = ensureArrayValues({
-      existing: file.existing,
-      keyPath: target.key,
-      values: target.values,
-      ...(earlier ? { ownedValues: earlier.added } : {}),
-    });
-    const added = [
-      ...new Set([
-        ...(earlier?.added ?? []).filter((value) =>
-          target.values.includes(value),
-        ),
-        ...result.added,
-      ]),
-    ];
-    const wasEmpty = earlier
-      ? earlier.wasEmpty
-      : (emptyJson?.wasEmpty ?? result.wasEmpty);
-    const blankText = earlier
-      ? earlier.blankText
-      : (emptyJson?.blankText ?? result.blankText);
-    const shape = createdShape({ earlier, result });
-    const effectiveShape =
-      !earlier &&
-      shape.original === undefined &&
-      emptyJson?.rootOriginal !== undefined
-        ? {
-            createdKeys: parsePath(target.key).length,
-            original: emptyJson.rootOriginal,
-          }
-        : shape;
-    return writeAction({
-      target,
-      file,
-      next: result.content,
-      entry: {
-        kind: 'json-array',
-        path: target.path,
-        key: target.key,
-        added,
-        wasString: earlier?.wasString ?? result.wasString,
-        ...effectiveShape,
-        ...(wasEmpty ? { wasEmpty: true } : {}),
-        ...(blankText !== undefined ? { blankText } : {}),
-        createdFile: file.createdFile,
-      },
-      previous,
-    });
-  } catch (error) {
-    if (error instanceof JsonMergeError) {
-      return conflict({ target, previous, reason: error.message });
-    }
-    throw error;
-  }
 }

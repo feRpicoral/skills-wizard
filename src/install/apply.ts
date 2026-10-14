@@ -4,7 +4,7 @@ import {
   removeTree,
   replaceWithCopy,
   replaceWithLink,
-} from '../skills/tree.ts';
+} from '../skills/tree-replace.ts';
 import { serializeManifest, writeManifest } from '../state/manifest.ts';
 import {
   readTextIfExists,

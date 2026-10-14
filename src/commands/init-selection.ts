@@ -9,7 +9,7 @@ import {
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import { lookupVariables } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
-import { ManifestError, UsageError } from '../errors.ts';
+import { UsageError } from '../errors.ts';
 import {
   defaultMcpServerNames,
   detectedMcpServerNames,
@@ -18,14 +18,10 @@ import {
 import {
   applyReRunPresetAndStyle,
   applyReRunPresetSkills,
-  findPreset,
-  loadPresetsIfAvailable,
   type PresetChoice,
   type PresetDefinition,
   type ProjectStyle,
   type ResolvedPresetSelection,
-  resolvePresetSelection,
-  resolveProjectPresetAndStyle,
 } from '../project/presets.ts';
 import {
   promptBlocks,
@@ -42,25 +38,21 @@ import {
   defaultSkillNames,
   findSkill,
   type SkillLibrary,
-  unknownSkillNames,
 } from '../skills/library.ts';
-import {
-  globalManifestPath,
-  type Manifest,
-  readGlobalManifest,
-} from '../state/manifest.ts';
+import type { Manifest } from '../state/manifest.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   checkExplicitMcp,
-  dropUnavailableBlocks,
   dropUnavailableMcpServers,
-  dropUnknownPreset,
   dropUnknownSkills,
   type Location,
   notify,
   notifyLeftGit,
+  notifyReconciledBlocks,
+  type ReconciledManifest,
 } from './shared.ts';
+import { checkExplicitSkills } from './skill-shared.ts';
 
 function checkExplicitBlocks(
   library: BlockLibrary,
@@ -76,45 +68,6 @@ function checkExplicitBlocks(
     throw new UsageError(
       `Blocks not available for ${scope} scope: ${outOfScope.join(', ')}`,
     );
-  }
-}
-
-function checkExplicitSkills(
-  library: SkillLibrary,
-  names: readonly string[],
-  scope: Scope,
-): void {
-  const unknown = unknownSkillNames(library, names);
-  if (unknown.length > 0) {
-    throw new UsageError(`Unknown skills: ${unknown.join(', ')}`);
-  }
-  const outOfScope = names.filter(
-    (name) => !findSkill(library, name)?.scopes.includes(scope),
-  );
-  if (outOfScope.length > 0) {
-    throw new UsageError(
-      `Skills not available for ${scope} scope: ${outOfScope.join(', ')}`,
-    );
-  }
-}
-
-async function readGlobalManifestForProject(
-  ctx: Context,
-  prompting: boolean,
-): Promise<Manifest | null> {
-  try {
-    return await readGlobalManifest(globalManifestPath(ctx.paths));
-  } catch (error) {
-    if (error instanceof ManifestError) {
-      notify({
-        ctx,
-        prompting,
-        message: `Skipping corrupt system-wide manifest when detecting default project style: ${error.message}`,
-        level: 'warn',
-      });
-      return null;
-    }
-    throw error;
   }
 }
 
@@ -146,118 +99,19 @@ export async function resolveToolsSelection({
   return tools;
 }
 
-export interface ResolveProjectPresetContextParams {
-  ctx: Context;
-  scope: Scope;
-  prompting: boolean;
-  tools: readonly ToolId[];
-  library: BlockLibrary;
-  skillLibrary: SkillLibrary;
-  location: Location;
-  previous: Manifest | null;
-  requestedPreset: PresetChoice | undefined;
-  requestedStyle: ProjectStyle | undefined;
-}
-
-export interface ResolvedProjectPresetContext {
-  preset: PresetChoice | undefined;
-  style: ProjectStyle | undefined;
-  presetSelection: ResolvedPresetSelection | null;
-  replacedPreset: PresetDefinition | undefined;
-}
-
-export async function resolveProjectPresetContext({
-  ctx,
-  scope,
-  prompting,
-  tools,
-  library,
-  skillLibrary,
-  location,
-  previous,
-  requestedPreset,
-  requestedStyle,
-}: ResolveProjectPresetContextParams): Promise<ResolvedProjectPresetContext> {
-  if (scope !== 'project') {
-    return {
-      preset: undefined,
-      style: undefined,
-      presetSelection: null,
-      replacedPreset: undefined,
-    };
-  }
-
-  const presets = await loadPresetsIfAvailable(ctx.repoRoot, {
-    blockLibrary: library,
-    skillLibrary,
-  });
-  const globalManifest = await readGlobalManifestForProject(ctx, prompting);
-  const hasGlobalInstall =
-    globalManifest !== null &&
-    tools.length > 0 &&
-    tools.every((tool) => globalManifest.tools.includes(tool));
-  const previousPreset = previous
-    ? dropUnknownPreset({
-        ctx,
-        prompting,
-        preset: previous.options.preset,
-      })
-    : undefined;
-  const { preset, style } = await resolveProjectPresetAndStyle({
-    scope,
-    prompting,
-    hasGlobalInstall,
-    presets,
-    detection: location.detection,
-    previous,
-    previousPreset,
-    requestedPreset,
-    requestedStyle,
-  });
-
-  const usePresetDefaults =
-    requestedPreset !== undefined ||
-    requestedStyle !== undefined ||
-    (previous === null &&
-      ((preset !== undefined && preset !== 'none') ||
-        style !== undefined ||
-        (location.detection?.detectedBlocks.length ?? 0) > 0 ||
-        (location.detection?.detectedSkills.length ?? 0) > 0));
-  const presetSelection = usePresetDefaults
-    ? resolvePresetSelection({
-        preset: findPreset(presets, preset),
-        style: style ?? (hasGlobalInstall ? 'lean' : 'self-contained'),
-        blockLibrary: library,
-        skillLibrary,
-        ...(location.detection?.packageManager !== undefined
-          ? { packageManager: location.detection.packageManager }
-          : {}),
-        detectedBlocks: location.detection?.detectedBlocks ?? [],
-        detectedSkills: location.detection?.detectedSkills ?? [],
-      })
-    : null;
-  const replacedPreset =
-    previous !== null &&
-    requestedPreset !== undefined &&
-    previousPreset !== undefined &&
-    previousPreset !== requestedPreset
-      ? findPreset(presets, previousPreset)
-      : undefined;
-
-  return { preset, style, presetSelection, replacedPreset };
-}
-
 export interface ResolveBlocksSelectionParams {
   ctx: Context;
   library: BlockLibrary;
   scope: Scope;
   prompting: boolean;
   requestedBlocks?: string[];
-  requestedPreset?: PresetChoice;
-  requestedStyle?: ProjectStyle;
+  preset?: PresetChoice;
+  style?: ProjectStyle;
+  presetChanged: boolean;
+  styleChanged: boolean;
   presetSelection: ResolvedPresetSelection | null;
   replacedPreset?: PresetDefinition;
-  previous: Manifest | null;
+  reconciled: ReconciledManifest | null;
 }
 
 export async function resolveBlocksSelection({
@@ -266,38 +120,48 @@ export async function resolveBlocksSelection({
   scope,
   prompting,
   requestedBlocks,
-  requestedPreset,
-  requestedStyle,
+  preset,
+  style,
+  presetChanged,
+  styleChanged,
   presetSelection,
   replacedPreset,
-  previous,
+  reconciled,
 }: ResolveBlocksSelectionParams): Promise<string[]> {
   if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
-  const recordedBlocks = previous
-    ? dropUnavailableBlocks({
-        ctx,
-        prompting,
-        library,
-        ids: previous.blocks,
-        scope,
-      })
-    : null;
+  if (!requestedBlocks && reconciled) {
+    notifyReconciledBlocks({
+      ctx,
+      prompting,
+      scope,
+      reconciled:
+        prompting || presetSelection !== null
+          ? { ...reconciled, addedBlocks: [] }
+          : reconciled,
+    });
+    if (!prompting && presetSelection === null) return reconciled.blocks;
+  }
+  const reRunBlocks =
+    reconciled !== null && presetSelection !== null
+      ? applyReRunPresetAndStyle({
+          library,
+          recordedBlocks: reconciled.knownBlocks,
+          previousPresetBlocks: replacedPreset?.blocks ?? [],
+          presetBlocks: presetChanged ? presetSelection.blocks : [],
+          requestedStyle: styleChanged ? style : undefined,
+        })
+      : null;
   const initial =
     requestedBlocks ??
-    (recordedBlocks !== null
-      ? presetSelection !== null
-        ? applyReRunPresetAndStyle({
-            library,
-            recordedBlocks,
-            previousPresetBlocks: replacedPreset?.blocks ?? [],
-            presetBlocks:
-              requestedPreset !== undefined ? presetSelection.blocks : [],
-            requestedStyle,
-          })
-        : recordedBlocks
-      : presetSelection !== null
-        ? presetSelection.blocks
-        : defaultBlockIds(library, scope));
+    (reRunBlocks !== null
+      ? prompting && preset === 'none' && reRunBlocks.length === 0
+        ? defaultBlockIds(library, scope)
+        : reRunBlocks
+      : reconciled !== null
+        ? reconciled.knownBlocks
+        : presetSelection !== null && presetSelection.blocks.length > 0
+          ? presetSelection.blocks
+          : defaultBlockIds(library, scope));
   const chosen = prompting
     ? await promptBlocks({ library, scope, initial })
     : initial;
@@ -320,6 +184,7 @@ export interface ResolveVariablesSelectionParams {
   prompting: boolean;
   givenVariables: Readonly<Record<string, string>>;
   previous: Manifest | null;
+  reconciled: ReconciledManifest | null;
 }
 
 export async function resolveVariablesSelection({
@@ -330,6 +195,7 @@ export async function resolveVariablesSelection({
   prompting,
   givenVariables,
   previous,
+  reconciled,
 }: ResolveVariablesSelectionParams): Promise<Record<string, string>> {
   const needed = requiredVariables(selectBlocks(library, blocks, scope));
   const unused = Object.keys(givenVariables).filter(
@@ -347,6 +213,7 @@ export async function resolveVariablesSelection({
     needed,
     {
       ...previous?.variables,
+      ...reconciled?.foundVariables,
       ...givenVariables,
     },
     { home: ctx.paths.home, searchPath: ctx.searchPath },
@@ -361,6 +228,60 @@ export async function resolveVariablesSelection({
   return variables;
 }
 
+export interface ResolveInstallOptionsParams {
+  ctx: Context;
+  scope: Scope;
+  location: Location;
+  prompting: boolean;
+  requestedLinkCommand?: boolean;
+  requestedKeepLocal?: boolean;
+  previous: Manifest | null;
+  reconciled: ReconciledManifest | null;
+}
+
+export async function resolveInstallOptions({
+  ctx,
+  scope,
+  location,
+  prompting,
+  requestedLinkCommand,
+  requestedKeepLocal,
+  previous,
+  reconciled,
+}: ResolveInstallOptionsParams): Promise<{
+  linkCommand: boolean;
+  keepLocal: boolean;
+}> {
+  const previousLink = previous?.options.linkCommand ?? false;
+  const linkCommand =
+    scope === 'global'
+      ? (requestedLinkCommand ??
+        (prompting
+          ? await promptLinkCommand(previous ? previousLink : true, ctx.paths)
+          : previousLink))
+      : false;
+  const git = location.project?.git;
+  if (requestedKeepLocal && !git) {
+    throw new UsageError(
+      `${location.project?.dir ?? ctx.cwd} is not in a git repository, so files cannot be kept local.`,
+    );
+  }
+  if (
+    reconciled?.leftGit &&
+    location.project &&
+    requestedKeepLocal === undefined
+  ) {
+    notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
+  }
+  const previousLocal = reconciled?.keepLocal ?? false;
+  const keepLocal =
+    scope === 'project' && git
+      ? (requestedKeepLocal ??
+        (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
+      : false;
+  return { linkCommand, keepLocal };
+}
+
 export interface ResolveSkillsSelectionParams {
   ctx: Context;
   skillLibrary: SkillLibrary;
@@ -368,7 +289,7 @@ export interface ResolveSkillsSelectionParams {
   prompting: boolean;
   requestedSkills?: string[];
   requestedSkillMode?: SkillMode;
-  requestedPreset?: PresetChoice;
+  presetChanged: boolean;
   presetSelection: ResolvedPresetSelection | null;
   replacedPreset?: PresetDefinition;
   previous: Manifest | null;
@@ -381,7 +302,7 @@ export async function resolveSkillsSelection({
   prompting,
   requestedSkills,
   requestedSkillMode,
-  requestedPreset,
+  presetChanged,
   presetSelection,
   replacedPreset,
   previous,
@@ -404,7 +325,7 @@ export async function resolveSkillsSelection({
   const initialSkills =
     requestedSkills ??
     (recordedSkills !== null
-      ? requestedPreset !== undefined && presetSelection !== null
+      ? presetChanged && presetSelection !== null
         ? applyReRunPresetSkills({
             recordedSkills,
             previousPresetSkills: replacedPreset?.skills ?? [],
@@ -488,57 +409,4 @@ export async function resolveMcpSelection({
         initial: initialMcp,
       })
     : initialMcp;
-}
-
-export interface ResolveInstallOptionsParams {
-  ctx: Context;
-  scope: Scope;
-  location: Location;
-  prompting: boolean;
-  requestedLinkCommand?: boolean;
-  requestedKeepLocal?: boolean;
-  previous: Manifest | null;
-}
-
-export async function resolveInstallOptions({
-  ctx,
-  scope,
-  location,
-  prompting,
-  requestedLinkCommand,
-  requestedKeepLocal,
-  previous,
-}: ResolveInstallOptionsParams): Promise<{
-  linkCommand: boolean;
-  keepLocal: boolean;
-}> {
-  const previousLink = previous?.options.linkCommand ?? false;
-  const linkCommand =
-    scope === 'global'
-      ? (requestedLinkCommand ??
-        (prompting
-          ? await promptLinkCommand(previous ? previousLink : true, ctx.paths)
-          : previousLink))
-      : false;
-  const git = location.project?.git;
-  const previousLocal = previous?.options.keepLocal ?? false;
-  if (requestedKeepLocal && !git) {
-    throw new UsageError(
-      `${location.project?.dir ?? ctx.cwd} is not in a git repository, so files cannot be kept local.`,
-    );
-  }
-  if (
-    location.project &&
-    previousLocal &&
-    !git &&
-    requestedKeepLocal === undefined
-  ) {
-    notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
-  }
-  const keepLocal =
-    scope === 'project' && git
-      ? (requestedKeepLocal ??
-        (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
-      : false;
-  return { linkCommand, keepLocal };
 }

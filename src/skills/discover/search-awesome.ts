@@ -105,12 +105,17 @@ export interface SearchAwesomeIndexParams {
   existingPaths?: readonly string[];
 }
 
+export interface AwesomeIndexSearchResult {
+  matched: DiscoveryCandidate[];
+  all: DiscoveryCandidate[];
+}
+
 /**
- * Searches `skills_index.json` in `sickn33/agentic-awesome-skills` (via sparse
- * git checkout), filtering by query terms, optional category, and offensive
- * risk status.
+ * Loads `skills_index.json` in `sickn33/agentic-awesome-skills` (via sparse git
+ * checkout) and returns both the query-filtered `matched` candidates and the
+ * unfiltered `all` candidates for metadata and offensive-risk enrichment.
  */
-export async function searchAwesomeIndex({
+export async function searchAwesomeIndexWithAll({
   cache,
   query,
   category,
@@ -118,7 +123,7 @@ export async function searchAwesomeIndex({
   repo = AWESOME_SKILLS_REPO,
   ref,
   existingPaths = [],
-}: SearchAwesomeIndexParams): Promise<DiscoveryCandidate[]> {
+}: SearchAwesomeIndexParams): Promise<AwesomeIndexSearchResult> {
   const effectiveRef = ref ?? (await cachedSourceRef(cache, repo));
   const root = await ensureSource(cache, {
     repo,
@@ -153,7 +158,8 @@ export async function searchAwesomeIndex({
   const terms = normalizedQuery.split(/\s+/).filter(Boolean);
   const normalizedCategory = category?.trim().toLowerCase();
 
-  const candidates: DiscoveryCandidate[] = [];
+  const all: DiscoveryCandidate[] = [];
+  const matched: DiscoveryCandidate[] = [];
   for (const rawEntry of validated.data) {
     const parsedEntry = awesomeItemSchema.safeParse(rawEntry);
     if (!parsedEntry.success) continue;
@@ -161,15 +167,7 @@ export async function searchAwesomeIndex({
     if (!isRepositoryPath(entry.path)) continue;
     const skillName = resolveAwesomeSkillName(entry);
     if (!skillName) continue;
-    if (!includeOffensive && isOffensiveEntry(entry)) continue;
-    if (
-      normalizedCategory &&
-      entry.category.toLowerCase() !== normalizedCategory
-    ) {
-      continue;
-    }
-    if (!matchesAwesomeQuery({ entry, skillName, terms })) continue;
-    candidates.push({
+    const candidate: DiscoveryCandidate = {
       sourceType: 'awesome',
       name: skillName,
       repo,
@@ -181,13 +179,36 @@ export async function searchAwesomeIndex({
       category: entry.category,
       ...(entry.risk ? { risk: entry.risk } : {}),
       ...(entry.tags ? { tags: entry.tags } : {}),
-    });
+    };
+    all.push(candidate);
+    if (!includeOffensive && isOffensiveEntry(entry)) continue;
+    if (
+      normalizedCategory &&
+      entry.category.toLowerCase() !== normalizedCategory
+    ) {
+      continue;
+    }
+    if (!matchesAwesomeQuery({ entry, skillName, terms })) continue;
+    matched.push(candidate);
   }
 
-  return candidates.sort(
+  matched.sort(
     (a, b) =>
       scoreAwesomeCandidate({ candidate: a, normalizedQuery }) -
         scoreAwesomeCandidate({ candidate: b, normalizedQuery }) ||
       a.name.localeCompare(b.name),
   );
+  return { matched, all };
+}
+
+/**
+ * Searches `skills_index.json` in `sickn33/agentic-awesome-skills` (via sparse
+ * git checkout), filtering by query terms, optional category, and offensive
+ * risk status.
+ */
+export async function searchAwesomeIndex(
+  params: SearchAwesomeIndexParams,
+): Promise<DiscoveryCandidate[]> {
+  const { matched } = await searchAwesomeIndexWithAll(params);
+  return matched;
 }

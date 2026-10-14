@@ -1,6 +1,4 @@
-import { styleText } from 'node:util';
-
-import type { BlockLibrary, Scope } from '../blocks/library.ts';
+import type { BlockLibrary } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath, planPath } from '../install/describe.ts';
 import {
@@ -12,17 +10,7 @@ import {
 import { buildPlan, type PlannedAction } from '../install/plan.ts';
 import type { McpCatalog } from '../mcp/model.ts';
 import type { PresetChoice } from '../project/presets.ts';
-import { scanInstalledSkills } from '../skills/collisions.ts';
-import {
-  DEFAULT_SKILL_MODE,
-  resolveSkillSources,
-  type SkillSource,
-} from '../skills/install.ts';
-import {
-  findSkill,
-  loadSkillLibrary,
-  unknownSkillNames,
-} from '../skills/library.ts';
+import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, type ToolDefinition } from '../tools/registry.ts';
 import {
@@ -30,7 +18,6 @@ import {
   type ReconciledManifest,
   replacementSkillHint,
   setVariablesCommand,
-  sourceCache,
 } from './shared.ts';
 
 export type Level = 'error' | 'warn' | 'note';
@@ -39,12 +26,6 @@ export interface Finding {
   level: Level;
   message: string;
 }
-
-const LEVEL_LABEL: Record<Level, string> = {
-  error: styleText('red', 'error'),
-  warn: styleText('yellow', 'warn '),
-  note: styleText('dim', 'note '),
-} as const;
 
 export async function symlinkFindings(
   ctx: Context,
@@ -262,91 +243,6 @@ export async function planFindings({
   return findings;
 }
 
-export async function skillFindings(
-  ctx: Context,
-  manifest: Manifest | null,
-): Promise<Finding[]> {
-  const findings: Finding[] = [];
-  const home = ctx.paths.home;
-  const scan = await scanInstalledSkills(ctx.paths, manifest);
-  for (const collision of scan.collisions) {
-    const locations = collision.paths
-      .map((path) => displayPath({ path, home }))
-      .join(', ');
-    findings.push({
-      level: 'warn',
-      message: `Skill "${collision.name}" is declared in multiple locations: ${locations}`,
-    });
-  }
-  for (const path of scan.skipped) {
-    findings.push({
-      level: 'warn',
-      message: `Skipped unreadable or incomplete skill folder: ${displayPath({ path, home })}`,
-    });
-  }
-  if (scan.unmanaged.length > 0) {
-    const list = scan.unmanaged
-      .map(
-        (skill) => `${skill.name} (${displayPath({ path: skill.path, home })})`,
-      )
-      .join(', ');
-    findings.push({
-      level: 'note',
-      message: `Unmanaged skills: ${list}`,
-    });
-  }
-  return findings;
-}
-
-export async function resolveDoctorSkills(
-  ctx: Context,
-  manifest: Manifest,
-  scope?: Scope,
-): Promise<{
-  skills: string[];
-  sources: Map<string, SkillSource>;
-  findings: Finding[];
-}> {
-  const findings: Finding[] = [];
-  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
-  const unknownSkills = unknownSkillNames(skillLibrary, manifest.skills);
-  const outOfScopeSkills =
-    scope !== undefined
-      ? manifest.skills.filter((name) => {
-          const skill = findSkill(skillLibrary, name);
-          return skill !== undefined && !skill.scopes.includes(scope);
-        })
-      : [];
-  if (unknownSkills.length > 0) {
-    findings.push({
-      level: 'warn',
-      message: `Skills no longer in catalog.yaml or skills/: ${unknownSkills.join(', ')}; agents-config sync will remove them`,
-    });
-  }
-  if (outOfScopeSkills.length > 0 && scope !== undefined) {
-    findings.push({
-      level: 'warn',
-      message: `Skills no longer available for ${scope} scope: ${outOfScopeSkills.join(', ')}; agents-config sync will remove them`,
-    });
-  }
-  const skills = manifest.skills.filter(
-    (name) => !unknownSkills.includes(name) && !outOfScopeSkills.includes(name),
-  );
-  const resolution = await resolveSkillSources({
-    library: skillLibrary,
-    names: skills,
-    cache: sourceCache(ctx),
-    fetch: false,
-  });
-  for (const [name, problem] of resolution.problems) {
-    findings.push({
-      level: 'note',
-      message: `Skipped checking the ${name} skill: ${problem}`,
-    });
-  }
-  return { skills, sources: resolution.sources, findings };
-}
-
 export interface ManifestFindingsParams {
   ctx: Context;
   location: Location;
@@ -421,29 +317,4 @@ export function manifestFindings({
     });
   }
   return findings;
-}
-
-export function printFindings(
-  ctx: Context,
-  findings: readonly Finding[],
-): { problems: Finding[]; errors: Finding[] } {
-  for (const finding of findings) {
-    ctx.print(`${LEVEL_LABEL[finding.level]}  ${finding.message}`);
-  }
-  const problems = findings.filter((finding) => finding.level !== 'note');
-  const errors = problems.filter((finding) => finding.level === 'error');
-  return { problems, errors };
-}
-
-export function printDoctorReport(
-  ctx: Context,
-  findings: readonly Finding[],
-): number {
-  const { problems, errors } = printFindings(ctx, findings);
-  ctx.print(
-    problems.length === 0
-      ? 'No problems found.'
-      : `${problems.length} problem${problems.length === 1 ? '' : 's'} found.`,
-  );
-  return errors.length > 0 ? 1 : 0;
 }

@@ -13,7 +13,7 @@
     "agents-config": "node src/cli.ts",
     "lint": "eslint .",
     "typecheck": "tsc",
-    "test": "node --test",
+    "test": "node --test 'src/**/*.test.ts'",
     "format": "prettier --write .",
     "postinstall": "husky"
   },
