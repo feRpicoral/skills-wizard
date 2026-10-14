@@ -94,6 +94,7 @@ export function parseCodexStreamJson({
       isRecordObject(event.item)
     ) {
       const item = event.item;
+
       if (
         item.type === 'command_execution' &&
         typeof item.command === 'string' &&
@@ -101,6 +102,7 @@ export function parseCodexStreamJson({
       ) {
         triggered = true;
       }
+
       if (
         event.type === 'item.completed' &&
         item.type === 'agent_message' &&
@@ -109,6 +111,7 @@ export function parseCodexStreamJson({
         response = item.text;
       }
     }
+
     if (event.type === 'turn.completed') {
       sawResult = true;
       turnCompleted = true;
@@ -116,14 +119,17 @@ export function parseCodexStreamJson({
       usage = normalizeUsage(event.usage);
       usageReported = isUsageReported(event.usage);
     }
+
     if (event.type === 'turn.failed') {
       sawResult = true;
       turnError = codexErrorMessage(event.error) ?? 'turn failed';
     }
+
     if (event.type === 'error') {
       streamError = codexErrorMessage(event.message) ?? 'stream error';
     }
   }
+
   // A top-level `error` event only fails the run when no turn completed.
   const error = turnError ?? (turnCompleted ? undefined : streamError);
 
@@ -152,17 +158,21 @@ export function parseCodexGraderJson({
     skillName: '',
     fallbackDurationMs,
   });
+
   if (stream.error !== undefined) {
     throw new RunnerError(`codex grader failed: ${stream.error}`);
   }
+
   if (!stream.sawResult) {
     throw new RunnerError(
       'codex grader output ended without a turn.completed event',
     );
   }
+
   if (!stream.response) {
     throw new RunnerError('codex grader returned no agent message');
   }
+
   return {
     output: extractJsonFromText(stream.response),
     durationMs: stream.durationMs,

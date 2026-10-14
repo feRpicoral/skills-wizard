@@ -24,6 +24,7 @@ function registryPath(paths: Paths): string {
 export async function readProjects(paths: Paths): Promise<string[]> {
   const file = registryPath(paths);
   const content = await readTextIfExists(file);
+
   if (content === null) return [];
 
   let raw: unknown;
@@ -32,19 +33,23 @@ export async function readProjects(paths: Paths): Promise<string[]> {
   } catch (error) {
     throw new RegistryError(`${file} is not valid JSON`, { cause: error });
   }
+
   const result = registrySchema.safeParse(raw);
   if (!result.success) {
     throw new RegistryError(`${file}: ${z.prettifyError(result.error)}`);
   }
+
   return result.data.projects;
 }
 
 async function writeProjects(paths: Paths, projects: string[]): Promise<void> {
   const file = registryPath(paths);
+
   if (projects.length === 0) {
     await removePath(file);
     return;
   }
+
   await writeTextAtomic({
     path: file,
     content: `${JSON.stringify({ version: REGISTRY_VERSION, projects }, null, 2)}\n`,
@@ -53,12 +58,14 @@ async function writeProjects(paths: Paths, projects: string[]): Promise<void> {
 
 export async function recordProject(paths: Paths, dir: string): Promise<void> {
   const projects = await readProjects(paths);
+
   if (projects.includes(dir)) return;
   await writeProjects(paths, [...projects, dir].sort());
 }
 
 export async function forgetProject(paths: Paths, dir: string): Promise<void> {
   const projects = await readProjects(paths);
+
   if (!projects.includes(dir)) return;
   await writeProjects(
     paths,

@@ -33,9 +33,11 @@ export function parseJsonObject(content: string | null): JsonObject {
       { cause: error },
     );
   }
+
   if (!isObject(parsed)) {
     throw new JsonMergeError('must contain a JSON object');
   }
+
   return parsed;
 }
 
@@ -46,6 +48,7 @@ export function isEmptyJsonObject(content: string): boolean {
 function formattingOptions(text: string): FormattingOptions {
   const { indent, type } = detectIndent(text);
   const unit = indent || DEFAULT_INDENT;
+
   return {
     insertSpaces: type !== 'tab',
     tabSize: type === 'tab' ? 1 : unit.length,
@@ -58,11 +61,13 @@ function rootObject(text: string): Node {
   if (root?.type !== 'object') {
     throw new JsonMergeError('must contain a JSON object');
   }
+
   return root;
 }
 
 function lineIndent(text: string, offset: number): string {
   const start = text.lastIndexOf('\n', offset - 1) + 1;
+
   return /^[ \t]*/.exec(text.slice(start))?.[0] ?? '';
 }
 
@@ -74,12 +79,14 @@ function inlineJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => inlineJson(item)).join(', ')}]`;
   }
+
   if (typeof value === 'object' && value !== null) {
     const members = Object.entries(value).map(
       ([key, item]) => `${JSON.stringify(key)}: ${inlineJson(item)}`,
     );
     return `{ ${members.join(', ')} }`;
   }
+
   return JSON.stringify(value);
 }
 
@@ -91,6 +98,7 @@ function nearestObject(
     const ancestor = findNodeAtLocation(root, keys.slice(0, depth));
     if (ancestor) return { ancestor, depth };
   }
+
   return { ancestor: root, depth: 0 };
 }
 
@@ -120,6 +128,7 @@ export function setJsonValue({
       !text.slice(parent.offset, first.offset).includes('\n'));
   const [edit] = modify(text, keys, value, {});
   if (!edit) return text;
+
   if (inline) {
     if (node) {
       return applyEdits(text, [
@@ -130,6 +139,7 @@ export function setJsonValue({
         },
       ]);
     }
+
     const insertedKey = String(keys[nearest.depth]);
     const insertedValue = keys
       .slice(nearest.depth + 1)
@@ -137,8 +147,10 @@ export function setJsonValue({
     const prefix = edit.content.startsWith(',') ? ', ' : '';
     const suffix = edit.content.endsWith(',') ? ', ' : '';
     const content = `${prefix}${JSON.stringify(insertedKey)}: ${inlineJson(insertedValue)}${suffix}`;
+
     return applyEdits(text, [{ ...edit, content }]);
   }
+
   const next = applyEdits(text, [edit]);
   const emptyParent = (parent.children?.length ?? 0) === 0;
   const range = emptyParent
@@ -147,6 +159,7 @@ export function setJsonValue({
         length: parent.length + edit.content.length - edit.length,
       }
     : { offset: edit.offset, length: edit.content.length };
+
   return applyEdits(next, format(next, range, formattingOptions(text)));
 }
 
@@ -161,6 +174,7 @@ export function removeJsonProperty({ text, keys }: JsonLocationParams): string {
   const container = property?.parent;
   const [edit] = modify(text, keys, undefined, {});
   if (!property || !container || !edit) return text;
+
   if ((container.children?.length ?? 0) === 1) {
     return applyEdits(text, [
       {
@@ -169,6 +183,7 @@ export function removeJsonProperty({ text, keys }: JsonLocationParams): string {
       },
     ]);
   }
+
   if (container.children?.[0] === property) {
     return applyEdits(text, [
       {
@@ -178,6 +193,7 @@ export function removeJsonProperty({ text, keys }: JsonLocationParams): string {
       },
     ]);
   }
+
   return applyEdits(text, [edit]);
 }
 
@@ -194,7 +210,9 @@ export function appendArrayElements({
   if (array?.type !== 'array') {
     throw new JsonMergeError('expected a list to append to');
   }
+
   if (values.length === 0) return text;
+
   const [first] = array.children ?? [];
   if (!first) {
     return applyEdits(text, [
@@ -205,16 +223,19 @@ export function appendArrayElements({
       },
     ]);
   }
+
   const [edit] = modify(text, [...keys, -1], values[0], {
     isArrayInsertion: true,
   });
   if (!edit) return text;
+
   const separator = text.slice(array.offset, first.offset).includes('\n')
     ? `,${lineEnding(text || null)}${lineIndent(text, first.offset)}`
     : ', ';
   const content = values
     .map((value) => `${separator}${JSON.stringify(value)}`)
     .join('');
+
   return applyEdits(text, [{ ...edit, content }]);
 }
 
@@ -224,6 +245,7 @@ export function removeArrayElements({
   values,
 }: ArrayElementsParams): string {
   let result = text;
+
   for (const value of values) {
     for (;;) {
       const array = findNodeAtLocation(rootObject(result), keys);
@@ -233,8 +255,10 @@ export function removeArrayElements({
       );
       const child = children[index];
       if (!array || !child) break;
+
       const [edit] = modify(result, [...keys, index], undefined, {});
       if (!edit) break;
+
       const fixedEdit =
         children.length > 1 && index === children.length - 1
           ? { ...edit, length: child.offset + child.length - edit.offset }
@@ -242,6 +266,7 @@ export function removeArrayElements({
       result = applyEdits(result, [fixedEdit]);
     }
   }
+
   return result;
 }
 

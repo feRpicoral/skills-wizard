@@ -108,6 +108,7 @@ export function classifyAssertion({
   if (referenceRate === undefined) {
     return 'no-baseline';
   }
+
   if (isPartialRate(withSkillRate) || isPartialRate(referenceRate)) {
     return 'flaky';
   }
@@ -144,9 +145,11 @@ export function aggregateCaseAssertions({
 
     const rateFor = (runs: readonly EvalRunRecord[]): number | undefined => {
       if (runs.length === 0) return undefined;
+
       const passedCount = runs.filter(
         (run) => run.grading.expectations[assertionIndex]?.passed === true,
       ).length;
+
       return passedCount / runs.length;
     };
 
@@ -155,10 +158,12 @@ export function aggregateCaseAssertions({
     const oldRate = rateFor(oldRuns);
     const comparePassRates: Record<string, number> = {};
     const compareClassifications: Record<string, AssertionClassification> = {};
+
     for (const name of compareSkillNames) {
       const rate = rateFor(
         caseRuns.filter((run) => run.variant === compareSkillVariant(name)),
       );
+
       if (rate !== undefined) {
         comparePassRates[name] = rate;
         compareClassifications[name] = classifyAssertion({
@@ -167,6 +172,7 @@ export function aggregateCaseAssertions({
         });
       }
     }
+
     const firstCompareRate =
       compareSkillNames[0] !== undefined
         ? comparePassRates[compareSkillNames[0]]
@@ -221,6 +227,7 @@ export function buildAssertionAnalysis(
   for (const caseSummary of caseSummaries) {
     for (const assertion of caseSummary.assertions) {
       const entry = `${caseSummary.case_id}: ${assertion.text}`;
+
       if (assertion.classification === 'non-discriminating') {
         nonDiscriminating.push(entry);
         passInBoth.push(entry);
@@ -231,15 +238,18 @@ export function buildAssertionAnalysis(
       } else if (assertion.classification === 'flaky') {
         flaky.push(entry);
       }
+
       if (
         assertion.baseline_pass_rate !== undefined &&
         assertion.classification === 'regressing'
       ) {
         regressing.push(entry);
       }
+
       if (assertion.old_skill_classification === 'regressing') {
         regressingVsOld.push(entry);
       }
+
       for (const name of compareSkillNames) {
         if (assertion.compare_classifications?.[name] === 'regressing') {
           regressingVsCompare[name]?.push(entry);

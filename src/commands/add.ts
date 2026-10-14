@@ -35,6 +35,7 @@ import {
   buildSyncPlanForLocation,
   loadLibrary,
   loadMcpServers,
+  mergeRequestedTools,
   notify,
   readLocationManifest,
   resolveLocation,
@@ -64,6 +65,7 @@ function printInspectedSkill(
   skill: ResolvedDiscoveredSkill,
 ): void {
   const refSuffix = skill.ref ? ` @ ${skill.ref}` : '';
+
   ctx.print(`Skill: ${skill.name}`);
   ctx.print(
     `Source: ${skill.repo} (${skill.path}${refSuffix}, commit ${skill.commit.slice(0, 12)})`,
@@ -71,10 +73,13 @@ function printInspectedSkill(
   if (skill.license) {
     ctx.print(`License: ${skill.license}`);
   }
+
   ctx.print(`Description: ${skill.description}`);
+
   for (const warning of skill.report.warnings) {
     ctx.print(`${WARN_LABEL}  ${skill.name}: ${warning}`);
   }
+
   for (const risk of skill.risks) {
     ctx.print(`${RISK_LABEL}  ${skill.name} (${risk.file}): ${risk.detail}`);
   }
@@ -116,22 +121,20 @@ async function installAddedSkill({
   const location = await resolveLocation({
     ctx,
     scope,
-    ...(projectDir !== undefined ? { projectDir } : {}),
+    projectDir,
   });
   const previous = await readLocationManifest({ ctx, prompting, location });
+
   if (!previous) {
     throw new UsageError(
       `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init ${scope === 'project' ? '--project' : '--global'} first.`,
     );
   }
+
   const library = await loadLibrary(ctx);
   const mcpCatalog = await loadMcpServers(ctx);
-  const tools =
-    requestedTools !== undefined
-      ? requestedTools.length === 0
-        ? []
-        : [...new Set([...previous.tools, ...requestedTools])]
-      : previous.tools;
+  const tools = mergeRequestedTools(previous.tools, requestedTools);
+
   if (tools.length === 0) {
     throw new UsageError('No tools selected or detected; pass --tools <ids>.');
   }
@@ -179,10 +182,21 @@ async function installAddedSkill({
     yes,
     dryRun,
   });
+
   return {
     code: outcome.code,
     catalogCommitted: outcome.applied && outcome.keptEntries.length > 0,
   };
+}
+
+async function resolveTargetInput(
+  rawTarget: string | undefined,
+  prompting: boolean,
+): Promise<string | undefined> {
+  const trimmed = rawTarget?.trim();
+  if (trimmed) return trimmed;
+
+  return prompting ? await promptAddQuery() : undefined;
 }
 
 export async function runAdd(
@@ -202,12 +216,8 @@ export async function runAdd(
   }: AddOptions,
 ): Promise<number> {
   const prompting = ctx.interactive && !yes;
-  const targetInput =
-    rawTarget && rawTarget.trim() !== ''
-      ? rawTarget.trim()
-      : prompting
-        ? await promptAddQuery()
-        : undefined;
+  const targetInput = await resolveTargetInput(rawTarget, prompting);
+
   if (!targetInput) {
     throw new UsageError(
       'Pass a search query, owner/repo[@skill], or GitHub URL to add.',
@@ -220,24 +230,24 @@ export async function runAdd(
     skillLibrary,
     rawTarget: targetInput,
     source,
-    ...(requestedCategory ? { requestedCategory } : {}),
-    ...(requestedRef ? { requestedRef } : {}),
+    requestedCategory: requestedCategory || undefined,
+    requestedRef: requestedRef || undefined,
     includeOffensive,
     prompting,
-    ...(ctx.discovery?.skillsShUrl
-      ? { skillsShUrl: ctx.discovery.skillsShUrl }
-      : {}),
-    ...(ctx.discovery?.fetch ? { fetchFn: ctx.discovery.fetch } : {}),
+    skillsShUrl: ctx.discovery?.skillsShUrl || undefined,
+    fetchFn: ctx.discovery?.fetch,
     onWarn: (message) => notify({ ctx, prompting, message, level: 'warn' }),
     chooseLocation: promptRepoSkillLocation,
     chooseCandidate: promptDiscoveredCandidate,
   });
 
   let catalogCommitted = false;
+
   try {
     const existingLocal = skillLibrary.skills.find(
       (skill) => skill.name === inspected.name && skill.origin.type === 'local',
     );
+
     if (existingLocal && existingLocal.origin.type === 'local') {
       throw new CatalogError(
         `${inspected.name} already exists as a first-party skill in ${existingLocal.origin.path}`,
@@ -253,6 +263,7 @@ export async function runAdd(
       scopes: ['global', 'project'],
       defaults: [],
     };
+
     const file = catalogPath(ctx.repoRoot);
     const updatedCatalog = extendCatalog({
       catalog: skillLibrary.catalog,
@@ -265,6 +276,7 @@ export async function runAdd(
 
     const shouldInstall =
       install || requestedScope !== undefined || requestedTools !== undefined;
+
     if (shouldInstall) {
       const outcome = await installAddedSkill({
         ctx,
@@ -273,27 +285,31 @@ export async function runAdd(
         entry,
         inspected,
         catalogFile: file,
-        ...(requestedScope ? { requestedScope } : {}),
-        ...(projectDir !== undefined ? { projectDir } : {}),
-        ...(requestedTools ? { requestedTools } : {}),
+        requestedScope: requestedScope || undefined,
+        projectDir,
+        requestedTools,
         yes,
         dryRun,
       });
       catalogCommitted = outcome.catalogCommitted;
+
       return outcome.code;
     }
 
     ctx.print(`update  catalog.yaml (+${entry.name})`);
+
     if (dryRun) {
       notify({ ctx, prompting, message: 'Dry run: nothing was written.' });
       return 0;
     }
+
     if (!ctx.interactive && !yes) {
       ctx.print(
         'Re-run with --yes to apply these changes, or --dry-run to preview them.',
       );
       return 1;
     }
+
     if (prompting && !(await confirmApply())) {
       notify({ ctx, prompting: true, message: 'Nothing was written.' });
       return 1;
@@ -301,11 +317,13 @@ export async function runAdd(
 
     await appendEntries(file, [entry], `${entry.name} was not added`);
     catalogCommitted = true;
+
     notify({
       ctx,
       prompting,
       message: `Added to catalog.yaml: ${entry.name}`,
     });
+
     return 0;
   } finally {
     if (!catalogCommitted) {

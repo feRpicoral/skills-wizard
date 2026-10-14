@@ -27,6 +27,7 @@ async function writeMcpCatalogEntry(
     await appendMcpServers(file, [server]);
   } catch (error) {
     if (!isSystemError(error)) throw error;
+
     throw new McpError(
       `Could not update ${file} (${fsErrorReason(error) ?? error.message}), so ${server.name} was not added.`,
       { cause: error },
@@ -75,21 +76,26 @@ export async function addCandidateToMcpCatalog({
     notify({ ctx, prompting, message: 'Dry run: nothing was written.' });
     return 0;
   }
+
   if (!ctx.interactive && !yes) {
     ctx.print(
       'Re-run with --yes to add this server to mcp/servers.yaml, or --dry-run to preview it.',
     );
     return 1;
   }
+
   if (prompting && !(await confirmApply())) {
     notify({ ctx, prompting: true, message: 'Nothing was written.' });
     return 1;
   }
 
   await writeMcpCatalogEntry(file, chosen.server);
+
   const summary = `Added to mcp/servers.yaml: ${chosen.server.name}`;
+
   if (prompting) clack.outro(summary);
   else ctx.print(summary);
+
   return 0;
 }
 
@@ -126,17 +132,16 @@ export async function runMcpSearch({
   const candidates = await searchMcpRegistry({
     query: trimmed,
     official,
-    ...(ctx.sources.mcpRegistryUrl !== undefined
-      ? { baseUrl: ctx.sources.mcpRegistryUrl }
-      : {}),
-    ...(limit !== undefined ? { limit } : {}),
-    ...(ctx.sources.fetch ? { fetchFn: ctx.sources.fetch } : {}),
+    baseUrl: ctx.sources.mcpRegistryUrl,
+    limit,
+    fetchFn: ctx.sources.fetch,
   });
 
   if (candidates.length === 0) {
     if (add) {
       throw new UsageError(`No MCP servers found matching "${trimmed}"`);
     }
+
     ctx.print(`No MCP servers found matching "${trimmed}".`);
     return 0;
   }

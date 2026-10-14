@@ -36,6 +36,7 @@ export function parseEvalRunnerName(value: string): EvalRunnerName {
       `Unknown eval runner "${value}". Expected one of: ${EVAL_RUNNER_NAMES.join(', ')}`,
     );
   }
+
   return value;
 }
 
@@ -50,17 +51,22 @@ export async function detectDefaultRunner({
 }: DetectDefaultRunnerParams): Promise<EvalRunnerName> {
   if (agyConfig?.bin) {
     const info = await lstatIfExists(agyConfig.bin);
+
     if (info && !info.isDirectory()) {
       return 'agy';
     }
   }
+
   const path = searchPath.join(delimiter);
+
   if (!path) return 'agy';
+
   for (const candidate of AUTO_DETECT_ORDER) {
     if (await which(candidate, { path, nothrow: true })) {
       return candidate;
     }
   }
+
   return 'agy';
 }
 
@@ -91,6 +97,7 @@ export function createEvalRunner({
     rawBinary === undefined
       ? undefined
       : resolveRunnerBinary({ binary: rawBinary, cwd });
+
   switch (runner) {
     case 'agy':
       return createAgyRunner({ binary, agyConfig, env });

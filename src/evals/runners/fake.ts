@@ -43,6 +43,7 @@ async function isSkillActiveInWorkdir({
     stagedSkillDir({ workdir, runner: 'fake', skillName }),
     'SKILL.md',
   );
+
   return (await lstatIfExists(skillFile)) !== null;
 }
 
@@ -65,6 +66,7 @@ export function fakeTriggerDecision({
   const digest = createHash('sha256')
     .update(`${skillName}\0${prompt}`)
     .digest('hex');
+
   return Number.parseInt(digest.slice(0, 8), 16) % 100 < 50;
 }
 
@@ -72,9 +74,12 @@ function extractAssertionsFromGraderPrompt(prompt: string): string[] {
   const match =
     /<assertions>\s*([\s\S]*?)\s*<\/assertions>/.exec(prompt) ??
     /Assertions JSON:\s*(\[[\s\S]*?\])/.exec(prompt);
+
   if (!match?.[1]) return [];
+
   try {
     const parsed: unknown = JSON.parse(match[1]);
+
     if (
       Array.isArray(parsed) &&
       parsed.every((item): item is string => typeof item === 'string')
@@ -84,6 +89,7 @@ function extractAssertionsFromGraderPrompt(prompt: string): string[] {
   } catch {
     return [];
   }
+
   return [];
 }
 
@@ -109,6 +115,7 @@ export function createFakeRunner({
       excludeSkill,
     }: RunnerTaskRequest): Promise<RunnerTaskResult> {
       await mkdir(runDir, { recursive: true });
+
       const active =
         !excludeSkill &&
         (await isSkillActiveInWorkdir({
@@ -180,6 +187,7 @@ export function createFakeRunner({
       timeoutSeconds,
     }: RunnerGraderRequest): Promise<RunnerGraderResult> {
       await mkdir(runDir, { recursive: true });
+
       const custom = onGrader
         ? await onGrader({
             prompt,

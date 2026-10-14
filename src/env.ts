@@ -29,11 +29,13 @@ export type Environment = Readonly<Record<string, string | undefined>>;
 function directory(env: Environment, name: string): string | undefined {
   const value = env[name]?.trim();
   if (!value) return undefined;
+
   if (!isAbsolute(value)) {
     throw new EnvironmentError(
       `${name} must be an absolute path, got "${value}"`,
     );
   }
+
   return resolve(value);
 }
 
@@ -64,11 +66,13 @@ export function resolveAgyBin(
 ): string | undefined {
   const value = env.AGY_BIN?.trim();
   if (!value) return undefined;
+
   if (!isAbsolute(value)) {
     throw new EnvironmentError(
       `AGY_BIN must be an absolute path, got "${value}"`,
     );
   }
+
   return value;
 }
 
@@ -77,6 +81,7 @@ const stringArraySchema = z.array(z.string());
 export function resolveAgyExtraArgs(env: Environment = process.env): string[] {
   const rawExtra = env.AGY_EXTRA_ARGS?.trim();
   if (!rawExtra) return [];
+
   try {
     return stringArraySchema.parse(JSON.parse(rawExtra));
   } catch (error) {
@@ -89,6 +94,7 @@ export function resolveAgyExtraArgs(env: Environment = process.env): string[] {
 
 export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
   const bin = resolveAgyBin(env);
+
   return { ...(bin ? { bin } : {}), extraArgs: resolveAgyExtraArgs(env) };
 }
 
@@ -101,7 +107,9 @@ export const DEFAULT_SKILLS_SH_URL = 'https://skills.sh';
 export function resolveSkillsShUrl(env: Environment = process.env): string {
   const value = env.SKILLS_SH_URL?.trim();
   if (!value) return DEFAULT_SKILLS_SH_URL;
+
   let parsed: URL;
+
   try {
     parsed = new URL(value);
   } catch (error) {
@@ -110,11 +118,13 @@ export function resolveSkillsShUrl(env: Environment = process.env): string {
       { cause: error },
     );
   }
+
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new EnvironmentError(
       `SKILLS_SH_URL must be an http:// or https:// URL, got "${value}"`,
     );
   }
+
   if (
     parsed.search !== '' ||
     parsed.hash !== '' ||
@@ -125,6 +135,7 @@ export function resolveSkillsShUrl(env: Environment = process.env): string {
       `SKILLS_SH_URL must not include credentials, query parameters, or fragments, got "${value}"`,
     );
   }
+
   return value.replace(/\/+$/, '');
 }
 
@@ -148,7 +159,9 @@ export function resolveMcpRegistryUrl({
       ? DEFAULT_OFFICIAL_MCP_REGISTRY_URL
       : DEFAULT_GITHUB_MCP_REGISTRY_URL;
   }
+
   let parsed: URL;
+
   try {
     parsed = new URL(value);
   } catch (error) {
@@ -157,11 +170,13 @@ export function resolveMcpRegistryUrl({
       { cause: error },
     );
   }
+
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new EnvironmentError(
       `MCP_REGISTRY_URL must be an http:// or https:// URL, got "${value}"`,
     );
   }
+
   if (
     parsed.search !== '' ||
     parsed.hash !== '' ||
@@ -172,6 +187,7 @@ export function resolveMcpRegistryUrl({
       `MCP_REGISTRY_URL must not include credentials, query parameters, or fragments, got "${value}"`,
     );
   }
+
   return value.replace(/\/+$/, '');
 }
 
@@ -218,5 +234,6 @@ export function gitEnvironment(env: Environment = process.env): Environment {
   const kept = Object.entries(env).filter(
     ([name]) => !isRepositoryGitVariable(name),
   );
+
   return { ...Object.fromEntries(kept), GIT_TERMINAL_PROMPT: '0' };
 }

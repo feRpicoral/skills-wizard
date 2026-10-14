@@ -33,6 +33,7 @@ export function excludeMarkers(id: string): Markers {
       'exclude region id must not contain line breaks',
     );
   }
+
   return {
     begin: `# BEGIN:agents-config ${id}`,
     end: `# END:agents-config ${id}`,
@@ -45,9 +46,11 @@ export function gitignorePattern(path: string): string {
       'git exclude entry path must not contain line breaks',
     );
   }
+
   const escaped = path
     .replace(/[[\]*?\\]/g, '\\$&')
     .replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length));
+
   return `/${escaped}`;
 }
 
@@ -59,6 +62,7 @@ interface Bounds {
 function locate(lines: readonly Line[], markers: Markers): Bounds | null {
   const begins: number[] = [];
   const ends: number[] = [];
+
   lines.forEach((line, index) => {
     // Markers are compared trimmed on both sides, so an id that ends in
     // whitespace (a directory such as `app `) still finds its own region.
@@ -73,11 +77,14 @@ function locate(lines: readonly Line[], markers: Markers): Bounds | null {
       `expected one managed region, found ${begins.length} begin and ${ends.length} end markers`,
     );
   }
+
   const [begin] = begins as [number];
   const [end] = ends as [number];
+
   if (begin > end) {
     throw new ManagedRegionError('end marker appears before begin marker');
   }
+
   return { begin, end };
 }
 
@@ -107,6 +114,7 @@ export function upsertRegion({
   ...rest
 }: UpsertRegionParams): string {
   if (existing === null) return upsertText({ existing, ...rest });
+
   return keepBom(existing, (text) => upsertText({ existing: text, ...rest }));
 }
 
@@ -121,6 +129,7 @@ function upsertText({
 
   if (existing === null || isBlank(existing)) {
     const prefix = preamble ? `${preamble}${eol}${eol}` : '';
+
     return `${prefix}${region}${eol}`;
   }
 
@@ -150,6 +159,7 @@ function removeText(existing: string, markers: Markers): string {
 
   const before = lines.slice(0, bounds.begin);
   const after = lines.slice(bounds.end + 1);
+
   if (before.length > 0 && before.at(-1)?.text.trim() === '') {
     before.pop();
   } else if (before.length === 0 && after[0]?.text.trim() === '') {
@@ -157,6 +167,7 @@ function removeText(existing: string, markers: Markers): string {
   }
 
   const remaining = joinLines([...before, ...after]);
+
   return remaining.trim() === '' ? '' : remaining;
 }
 
@@ -173,9 +184,12 @@ function regionPreamble({
 }: RegionPreambleParams): string | undefined {
   // A file reached through a link is not the CLI's, so neither is its heading.
   if (file.writePath !== target.path) return undefined;
+
   const { existing } = file;
   if (existing === null || isBlank(existing)) return target.preamble;
+
   const preamble = previous?.kind === 'region' ? previous.preamble : undefined;
+
   return preamble && existing.trimStart().startsWith(preamble)
     ? preamble
     : undefined;
@@ -194,7 +208,7 @@ export function planRegion({
       existing: file.existing,
       body: target.body,
       markers: MARKDOWN_MARKERS,
-      ...(target.preamble && ownsHeading ? { preamble: target.preamble } : {}),
+      preamble: ownsHeading ? target.preamble : undefined,
     });
     const preamble = regionPreamble({ target, file, previous });
     const entry: ManifestEntry = {
@@ -203,11 +217,13 @@ export function planRegion({
       createdFile: file.createdFile,
       ...(preamble ? { preamble } : {}),
     };
+
     return writeAction({ target, file, next, entry, previous });
   } catch (error) {
     if (error instanceof ManagedRegionError) {
       return conflict({ target, previous, reason: error.message });
     }
+
     throw error;
   }
 }
@@ -230,11 +246,13 @@ export function planExcludeRegion({
       id: target.id,
       createdFile: file.createdFile,
     };
+
     return writeAction({ target, file, next, entry, previous });
   } catch (error) {
     if (error instanceof ManagedRegionError) {
       return conflict({ target, previous, reason: error.message });
     }
+
     throw error;
   }
 }

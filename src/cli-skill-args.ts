@@ -49,6 +49,7 @@ function isBaselineRefCandidate(value: string | undefined): value is string {
 
 function isExistingSkillTarget(candidate: string): boolean {
   const cwd = process.cwd();
+
   return (
     (isSkillName(candidate) &&
       (existsSync(join(cwd, 'skills', candidate, 'SKILL.md')) ||
@@ -68,14 +69,17 @@ function hasLaterSkillTarget(
     if (token === '--') {
       return argv.slice(index + 1).some(isExistingSkillTarget);
     }
+
     if (stringOptions.has(token)) {
       index += 1;
       continue;
     }
+
     if (!token.startsWith('-') && isExistingSkillTarget(token)) {
       return true;
     }
   }
+
   return false;
 }
 
@@ -87,6 +91,7 @@ function isBaselineRefToken(
 ): boolean {
   const next = argv[index + 1];
   if (!isBaselineRefCandidate(next)) return false;
+
   if (
     positionalsSeen < SKILL_EVAL_POSITIONALS &&
     isExistingSkillTarget(next) &&
@@ -94,6 +99,7 @@ function isBaselineRefToken(
   ) {
     return false;
   }
+
   return true;
 }
 
@@ -107,10 +113,12 @@ function countPositionals(
   stringOptions: ReadonlySet<string>,
 ): number {
   let count = 0;
+
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === undefined) continue;
     if (token === '--') return count + argv.length - index - 1;
+
     if (
       token === '--baseline' &&
       isBaselineRefToken(argv, index, count, stringOptions)
@@ -118,12 +126,15 @@ function countPositionals(
       index += 1;
       continue;
     }
+
     if (stringOptions.has(token)) {
       index += 1;
       continue;
     }
+
     if (!token.startsWith('-')) count += 1;
   }
+
   return count;
 }
 
@@ -131,11 +142,13 @@ function baselineRefValue(ref: string, previous: string | undefined): string {
   if (previous !== undefined) {
     throw new UsageError('--baseline <ref> was given more than once');
   }
+
   if (ref.startsWith('-')) {
     throw new UsageError(
       `--baseline ref must not start with "-", got "${ref}"`,
     );
   }
+
   return ref;
 }
 
@@ -164,12 +177,15 @@ export function normalizeBaselineArgv(
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === undefined) continue;
+
     if (token === '--') {
       args.push(...argv.slice(index));
       break;
     }
+
     if (token.startsWith('--baseline=')) {
       const val = token.slice('--baseline='.length).trim();
+
       if (val === '' || val === 'true') {
         args.push('--baseline');
       } else if (val === 'false' || val === 'none') {
@@ -177,10 +193,13 @@ export function normalizeBaselineArgv(
       } else {
         baselineRef = baselineRefValue(val, baselineRef);
       }
+
       continue;
     }
+
     if (token === '--baseline') {
       const next = argv[index + 1];
+
       if (next === 'none' || next === 'false') {
         args.push('--no-baseline');
         index += 1;
@@ -197,17 +216,22 @@ export function normalizeBaselineArgv(
       } else {
         args.push('--baseline');
       }
+
       continue;
     }
+
     if (stringOptions.has(token)) {
       args.push(token);
       const next = argv[index + 1];
+
       if (next !== undefined) {
         args.push(next);
         index += 1;
       }
+
       continue;
     }
+
     if (!token.startsWith('-')) positionalsSeen += 1;
     args.push(token);
   }
@@ -217,6 +241,7 @@ export function normalizeBaselineArgv(
 
 export function parseList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
+
   return value
     .split(',')
     .map((item) => item.trim())
@@ -237,12 +262,15 @@ export function parsePositiveInt({
   flagName,
 }: ParseFlagParams): number | undefined {
   if (value === undefined) return undefined;
+
   const parsed = Number(value);
+
   if (!POSITIVE_INTEGER.test(value) || !Number.isSafeInteger(parsed)) {
     throw new UsageError(
       `--${flagName} must be a positive integer, got "${value}"`,
     );
   }
+
   return parsed;
 }
 
@@ -251,9 +279,11 @@ export function parseFloatFlag({
   flagName,
 }: ParseFlagParams): number | undefined {
   if (value === undefined) return undefined;
+
   if (!DECIMAL.test(value)) {
     throw new UsageError(`--${flagName} must be a number, got "${value}"`);
   }
+
   return Number(value);
 }
 
@@ -305,25 +335,30 @@ export function buildSkillCommandOptions({
     flagName: 'threshold',
   });
   const cases = parseList(values.cases);
+
   if (baselineRef !== undefined && values.compare !== undefined) {
     throw new UsageError(
       'Use either --baseline <ref> or --compare <ref>|<skill-a>,<skill-b>, not both.',
     );
   }
+
   if (baselineRef !== undefined && values.baseline !== undefined) {
     throw new UsageError(
       'Use one form of --baseline: --baseline <ref>, --baseline none or --no-baseline.',
     );
   }
+
   if (values.compare?.startsWith('-')) {
     throw new UsageError(
       `--compare value must not start with "-", got "${values.compare}"`,
     );
   }
+
   // `--baseline <ref>` replaces the without_skill baseline with the
   // old_skill snapshot from <ref>.
   const baseline = baselineRef !== undefined ? false : values.baseline;
   const compare = baselineRef ?? values.compare;
+
   return {
     subcommand: positionals[1],
     paths: positionals.slice(2),

@@ -18,12 +18,14 @@ const SKILL_TEMPLATES: readonly SkillTemplate[] = [
 
 export function parseTemplate(value: string | undefined): SkillTemplate {
   if (value === undefined) return 'basic';
+
   const found = SKILL_TEMPLATES.find((item) => item === value);
   if (!found) {
     throw new UsageError(
       `--template must be one of ${SKILL_TEMPLATES.join(', ')}, got "${value}"`,
     );
   }
+
   return found;
 }
 
@@ -40,6 +42,7 @@ export function renderScaffoldSkillMd({
     .split('-')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+
   const lines = [
     '---',
     `name: ${name}`,
@@ -58,6 +61,7 @@ export function renderScaffoldSkillMd({
     '2. Apply the minimal, standard configuration required for the task.',
     '3. Verify the result with a deterministic check before finishing.',
   ];
+
   if (template === 'scripted') {
     lines.push(
       '',
@@ -75,7 +79,9 @@ export function renderScaffoldSkillMd({
       '- Read [references/examples.md](references/examples.md) for canonical examples.',
     );
   }
+
   lines.push('');
+
   return lines.join('\n');
 }
 
@@ -95,11 +101,13 @@ export async function runSkillNew({
   const name = rawName.startsWith('skills/')
     ? rawName.slice('skills/'.length)
     : rawName;
+
   if (!isSkillName(name)) {
     throw new UsageError(
       `Invalid skill name "${rawName}". Use lowercase alphanumeric characters and single hyphens.`,
     );
   }
+
   const skillDir = join(ctx.cwd, 'skills', name);
   if ((await lstatIfExists(skillDir)) !== null) {
     throw new UsageError(`Skill directory already exists: skills/${name}`);
@@ -177,6 +185,7 @@ export async function runSkillNew({
     const fullPath = join(skillDir, relPath);
     await mkdir(dirname(fullPath), { recursive: true });
     await writeFile(fullPath, content);
+
     if (relPath.startsWith('scripts/')) {
       await chmod(fullPath, 0o755);
     }
@@ -184,9 +193,11 @@ export async function runSkillNew({
 
   const report = await validateSkill(skillDir, { strict: true });
   printReport({ ctx, label: name, report });
+
   ctx.print(
     `Scaffolded skills/${name} (template: ${template}${withEvals ? ', with evals' : ''}).`,
   );
+
   return report.errors.length > 0 ? 1 : 0;
 }
 
@@ -199,6 +210,7 @@ export async function runSkillNewCommand(
       'Usage: agents-config skill new <name> [--template basic|scripted|reference-heavy] [--with-evals]',
     );
   }
+
   const template = parseTemplate(rawTemplate);
   return runSkillNew({
     ctx,

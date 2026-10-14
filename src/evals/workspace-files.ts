@@ -49,6 +49,7 @@ const RUNNER_TOOLS: Readonly<Record<EvalRunnerName, ToolId | null>> = {
 export function projectSkillsDir(runner: EvalRunnerName): string {
   const tool = RUNNER_TOOLS[runner];
   const folder = tool ? TOOLS[tool].project.skills : undefined;
+
   return folder ? folder.replaceAll('\\', '/') : DEFAULT_PROJECT_SKILLS_DIR;
 }
 
@@ -91,6 +92,7 @@ export function mapCaseFileRelativePath({
   if (posix.basename(relative) === FIXTURE_SKILL_FILE) {
     return posix.join(posix.dirname(relative), 'SKILL.md');
   }
+
   return relative;
 }
 
@@ -131,6 +133,7 @@ export function validateCaseFileDestinations({
   for (const fileEntry of evalCase.files) {
     const dest = mapCaseFileRelativePath({ fileEntry, caseId: evalCase.id });
     const folded = dest.toLowerCase();
+
     if (
       dest === '' ||
       dest === '.' ||
@@ -141,31 +144,39 @@ export function validateCaseFileDestinations({
       problems.push(`"${fileEntry}" maps outside the workspace ("${dest}")`);
       continue;
     }
+
     if (isUnderDir(folded, '.git')) {
       problems.push(`"${fileEntry}" maps into ".git/" ("${dest}")`);
       continue;
     }
+
     const stagedDir = [...stagedDirs].find((dir) => isUnderDir(folded, dir));
+
     if (stagedDir) {
       problems.push(
         `"${fileEntry}" maps into the staged skill folder "${stagedDir}/" ("${dest}")`,
       );
       continue;
     }
+
     const ownedDir = HARNESS_OWNED_DIRS.find((dir) => isUnderDir(folded, dir));
+
     if (ownedDir) {
       problems.push(
         `"${fileEntry}" maps into "${ownedDir}/", which the eval harness and agent CLIs own ("${dest}")`,
       );
       continue;
     }
+
     const previous = seen.get(folded);
+
     if (previous !== undefined) {
       problems.push(
         `"${fileEntry}" and "${previous}" map to the same destination "${dest}"`,
       );
       continue;
     }
+
     seen.set(folded, fileEntry);
   }
 
@@ -230,6 +241,7 @@ export async function copyCaseFiles({
     });
     const destPath = join(workdir, relDest);
     const info = await stat(srcPath);
+
     await mkdir(dirname(destPath), { recursive: true });
     await copyFile(srcPath, destPath);
     await chmod(destPath, info.mode & 0o777);
@@ -247,36 +259,45 @@ export async function validateComparedSkillSpecs(
   compareSkills: readonly ComparedSkillSpec[] | undefined,
 ): Promise<Map<string, ComparedSkillSpec>> {
   const compareSkillsByName = new Map<string, ComparedSkillSpec>();
+
   for (const item of compareSkills ?? []) {
     if (!isSkillName(item.skillName)) {
       throw new EvalError(
         `Compared skill name "${item.skillName}" is not a valid skill name`,
       );
     }
+
     if (item.skillName === skillName) {
       throw new EvalError(
         `Compared skill "${item.skillName}" must have a different name from the target skill "${skillName}"`,
       );
     }
+
     if (compareSkillsByName.has(item.skillName)) {
       throw new EvalError(
         `Duplicate compared skill name "${item.skillName}" in compareSkills`,
       );
     }
+
     const skillMd = await statIfExists(join(item.skillDir, 'SKILL.md'));
+
     if (!skillMd?.isFile()) {
       throw new EvalError(
         `Compared skill "${item.skillName}" is missing SKILL.md in ${item.skillDir}`,
       );
     }
+
     const itemEscaping = await escapingLinks(item.skillDir);
+
     if (itemEscaping.length > 0) {
       throw new EvalError(
         `Compared skill "${item.skillName}" has links that point outside the skill folder: ${itemEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
       );
     }
+
     compareSkillsByName.set(item.skillName, item);
   }
+
   return compareSkillsByName;
 }
 
@@ -286,9 +307,12 @@ export async function prepareComparedSkillSetups(
 ): Promise<void> {
   for (const [name, item] of compareSkillsByName) {
     if (!item.setup) continue;
+
     const tempRoot = await mkdtemp(join(tmpdir(), 'agents-config-compare-'));
+
     tempDirs.push(tempRoot);
     const preparedDir = join(tempRoot, item.skillName);
+
     await copySkillTree({ source: item.skillDir, destination: preparedDir });
     await runSetup({ dir: preparedDir, command: item.setup });
     compareSkillsByName.set(name, {

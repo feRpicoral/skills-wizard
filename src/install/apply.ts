@@ -49,13 +49,13 @@ async function execute(action: PlannedAction): Promise<void> {
       return replaceWithCopy({
         source: action.change.source,
         destination: action.path,
-        ...(action.change.backup ? { backup: action.change.backup } : {}),
+        backup: action.change.backup,
       });
     case 'link-tree':
       return replaceWithLink({
         target: action.change.target,
         destination: action.path,
-        ...(action.change.backup ? { backup: action.change.backup } : {}),
+        backup: action.change.backup,
       });
     case 'delete-tree':
       return removeTree(action.path);
@@ -69,6 +69,7 @@ async function setUp(
   if (action.change.type !== 'copy-tree' || !action.change.setup) {
     return undefined;
   }
+
   try {
     await runSetup({
       dir: action.path,
@@ -78,6 +79,7 @@ async function setUp(
     return undefined;
   } catch (error) {
     if (!(error instanceof SetupError)) throw error;
+
     failures.push({ path: action.path, message: error.message });
     return error.signal;
   }
@@ -94,6 +96,7 @@ async function recordManifest({ plan, applied }: RecordManifestParams) {
     actions: plan.actions,
     isApplied: (action) => applied.has(action),
   });
+
   if (effective.entries.length === 0 && effective.manifest.tools.length === 0) {
     await removePath(plan.manifestPath);
     return;
@@ -101,11 +104,12 @@ async function recordManifest({ plan, applied }: RecordManifestParams) {
 
   const manifest = { ...effective.manifest, entries: effective.entries };
   const existing = await readTextIfExists(plan.manifestPath);
+
   if (existing !== serializeManifest(manifest, plan.projectDir)) {
     await writeManifest({
       file: plan.manifestPath,
       manifest,
-      ...(plan.projectDir ? { projectDir: plan.projectDir } : {}),
+      projectDir: plan.projectDir,
     });
   }
 }
@@ -128,6 +132,7 @@ async function executeAll(
       outcome.skipped.push(action);
       continue;
     }
+
     try {
       await execute(action);
     } catch (error) {
@@ -138,12 +143,15 @@ async function executeAll(
         ),
       };
     }
+
     outcome.applied.push(action);
     const signal = await setUp(action, outcome.setupFailures);
+
     if (signal !== undefined) {
       return { signal };
     }
   }
+
   return {};
 }
 
@@ -178,6 +186,7 @@ export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
         ? [`changed but not recorded: ${unrecorded.join(', ')}`]
         : []),
     ];
+
     throw new ApplyError(
       [
         `Could not record the manifest at ${plan.manifestPath}: ${message(error)}`,
@@ -186,9 +195,11 @@ export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
       { cause: error },
     );
   }
+
   if (signal !== undefined) {
     process.kill(process.pid, signal);
   }
+
   if (failure !== undefined) throw failure;
 
   return outcome;

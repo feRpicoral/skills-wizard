@@ -25,12 +25,15 @@ export function checkExplicitSkills(
   scope: Scope,
 ): void {
   const unknown = unknownSkillNames(library, names);
+
   if (unknown.length > 0) {
     throw new UsageError(`Unknown skills: ${unknown.join(', ')}`);
   }
+
   const outOfScope = names.filter(
     (name) => !findSkill(library, name)?.scopes.includes(scope),
   );
+
   if (outOfScope.length > 0) {
     throw new UsageError(
       `Skills not available for ${scope} scope: ${outOfScope.join(', ')}`,
@@ -58,9 +61,11 @@ export function dropUnknownSkills({
     scope !== undefined
       ? names.filter((name) => {
           const skill = findSkill(library, name);
+
           return skill !== undefined && !skill.scopes.includes(scope);
         })
       : [];
+
   if (unknown.length > 0) {
     notify({
       ctx,
@@ -69,6 +74,7 @@ export function dropUnknownSkills({
       level: 'warn',
     });
   }
+
   if (outOfScope.length > 0 && scope !== undefined) {
     notify({
       ctx,
@@ -77,6 +83,7 @@ export function dropUnknownSkills({
       level: 'warn',
     });
   }
+
   return names.filter(
     (name) => !unknown.includes(name) && !outOfScope.includes(name),
   );
@@ -100,6 +107,7 @@ export async function fetchSkills({
   names,
 }: FetchSkillsParams): Promise<Map<string, SkillSource>> {
   if (names.length === 0) return new Map();
+
   const spinner = prompting ? clack.spinner() : null;
   spinner?.start('Fetching skills');
   const { sources, problems } = await resolveSkillSources({
@@ -109,6 +117,7 @@ export async function fetchSkills({
     fetch: true,
   });
   spinner?.stop('Fetched skills');
+
   for (const [name, problem] of problems) {
     notify({
       ctx,
@@ -117,6 +126,7 @@ export async function fetchSkills({
       level: 'warn',
     });
   }
+
   return sources;
 }
 
@@ -127,6 +137,7 @@ export async function warnLockedSkills(
 ): Promise<void> {
   const locked = await readSkillLock(ctx.paths);
   const shared = names.filter((name) => locked.has(name));
+
   if (shared.length > 0) {
     notify({
       ctx,
@@ -174,11 +185,14 @@ export async function applyWithCatalogRollback({
   let catalogBefore: string | null | undefined;
   const writeCatalog = async () => {
     if (entries.length === 0) return;
+
     const original = await readTextIfExists(file);
     await appendEntries(file, entries, failureOutcome);
     catalogBefore = original;
   };
+
   let result;
+
   try {
     result = await confirmAndApply(ctx, plan, {
       yes,
@@ -196,6 +210,7 @@ export async function applyWithCatalogRollback({
     }
     throw error;
   }
+
   const keptEntries =
     catalogBefore !== undefined
       ? await restoreCatalog({
@@ -205,6 +220,7 @@ export async function applyWithCatalogRollback({
           manifestPath,
         })
       : [...entries];
+
   if (result.applied && keptEntries.length > 0) {
     notify({
       ctx,
@@ -212,5 +228,6 @@ export async function applyWithCatalogRollback({
       message: `Added to catalog.yaml: ${keptEntries.map((entry) => entry.name).join(', ')}`,
     });
   }
+
   return { code: result.code, applied: result.applied, keptEntries };
 }

@@ -155,12 +155,14 @@ async function initWorkspaceGit({
     env,
     failure: 'Failed to initialize eval workspace git repository',
   });
+
   const excludePath = join(workdir, '.git', 'info', 'exclude');
   await mkdir(dirname(excludePath), { recursive: true });
   await writeFile(
     excludePath,
     [...HARNESS_OWNED_DIRS.map((dir) => `${dir}/`), ''].join('\n'),
   );
+
   await gitOutput({
     cwd: workdir,
     args: [...WORKSPACE_GIT_CONFIG, 'add', '-A'],
@@ -243,10 +245,12 @@ export async function prepareEvalWorkspace({
     workdir,
     evalCase,
   });
+
   await initWorkspaceGit({ workdir, env });
 
   if (variant === 'with_skill' || variant === 'old_skill') {
     const destSkillDir = stagedSkillDir({ workdir, runner, skillName });
+
     if (variant === 'with_skill') {
       await copySkillTree({ source: skillDir, destination: destSkillDir });
     } else {
@@ -255,8 +259,10 @@ export async function prepareEvalWorkspace({
           'old_skill workspace requires both repoRoot and compareRef',
         );
       }
+
       const snapshotDir = join(runDir, '.old-skill-snapshot');
       await rm(snapshotDir, { recursive: true, force: true });
+
       try {
         await extractSkillAtRef({
           repoRoot,
@@ -270,6 +276,7 @@ export async function prepareEvalWorkspace({
         await rm(snapshotDir, { recursive: true, force: true });
       }
     }
+
     const exclusion = await applyBaselineExclusion({
       workdir,
       skillNames: allCompareNames,
@@ -285,6 +292,7 @@ export async function prepareEvalWorkspace({
     const combinedWarning = [exclusion.warning, shadowWarning]
       .filter((item): item is string => item !== undefined)
       .join(' ');
+
     return {
       workdir,
       variant,
@@ -300,6 +308,7 @@ export async function prepareEvalWorkspace({
     if (!compareSkill) {
       throw new EvalError(`${variant} workspace requires compareSkill`);
     }
+
     const destSkillDir = stagedSkillDir({
       workdir,
       runner,
@@ -309,6 +318,7 @@ export async function prepareEvalWorkspace({
       source: compareSkill.skillDir,
       destination: destSkillDir,
     });
+
     const otherCompareNames = allCompareNames.filter(
       (name) => name !== compareSkill.skillName,
     );
@@ -327,6 +337,7 @@ export async function prepareEvalWorkspace({
     const combinedWarning = [exclusion.warning, shadowWarning]
       .filter((item): item is string => item !== undefined)
       .join(' ');
+
     return {
       workdir,
       variant,
@@ -345,6 +356,7 @@ export async function prepareEvalWorkspace({
     variant,
     paths,
   });
+
   return {
     workdir,
     variant,
@@ -379,8 +391,11 @@ export async function prepareTriggerWorkspace({
   const workdir = join(runDir, 'workdir');
   await rm(workdir, { recursive: true, force: true });
   await mkdir(workdir, { recursive: true });
+
   await initWorkspaceGit({ workdir, env });
+
   const destSkillDir = stagedSkillDir({ workdir, runner, skillName });
   await copySkillTree({ source: skillDir, destination: destSkillDir });
+
   return workdir;
 }

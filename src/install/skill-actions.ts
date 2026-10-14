@@ -45,18 +45,22 @@ export async function installedState(
   const stats = await lstatIfExists(path);
   if (!stats) return 'missing';
   if (!prior) return 'unmanaged';
+
   if (prior.install.mode === 'link') {
     return (await readSymlink(path)) === prior.install.target
       ? 'owned'
       : 'changed';
   }
+
   if (!stats.isDirectory()) return 'changed';
+
   // Copies always record `setup`; records written before the flag existed
   // have none, so the current source decides whether setup output is
   // expected. Without a source (removal), setup output is not assumed, so a
   // legacy copy is never deleted together with files a user added.
   const setup = prior.install.setup ?? sourceHasSetup ?? false;
   const hash = await hashInstalledCopy({ dir: path, setup });
+
   return hash === prior.install.hash ? 'owned' : 'changed';
 }
 
@@ -81,9 +85,11 @@ interface PlaceSkillParams {
 
 function placeSkill({ source, install, backup }: PlaceSkillParams): Change {
   const kept = backup === undefined ? {} : { backup };
+
   if (install.mode === 'link') {
     return { type: 'link-tree', target: install.target, ...kept };
   }
+
   return {
     type: 'copy-tree',
     source: source.dir,
@@ -95,7 +101,9 @@ function placeSkill({ source, install, backup }: PlaceSkillParams): Change {
 async function folderLocation(dir: string): Promise<string | null> {
   const real = await realLocation(dir);
   if (real !== null) return real;
+
   const target = await readSymlink(dir);
+
   return target === null ? null : realLocation(resolve(dirname(dir), target));
 }
 
@@ -112,6 +120,7 @@ export async function sharesSkillsFolder({
     folderLocation(dirname(path)),
     folderLocation(dirname(resolve(dirname(path), target))),
   ]);
+
   return linkFolder !== null && linkFolder === copyFolder;
 }
 
@@ -137,13 +146,16 @@ export async function planSymlink({
       reason: SHARED_FOLDER,
     };
   }
+
   const problem = await locationProblem({
     path: dirname(target.path),
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
+
   if (problem) {
     return conflict({ target, previous, reason: leftInPlace(problem) });
   }
+
   const stats = await lstatIfExists(target.path);
   const current = await readSymlink(target.path);
   const entry: ManifestEntry = {
@@ -156,6 +168,7 @@ export async function planSymlink({
   if (current === target.target) {
     return { ...base, status: 'unchanged', change: NONE };
   }
+
   if (!stats) {
     return {
       ...base,
@@ -163,6 +176,7 @@ export async function planSymlink({
       change: { type: 'symlink', target: target.target },
     };
   }
+
   if (previous?.kind === 'symlink' && current === previous.target) {
     return {
       ...base,
@@ -170,6 +184,7 @@ export async function planSymlink({
       change: { type: 'symlink', target: target.target },
     };
   }
+
   if (!previous && target.backup !== undefined) {
     return {
       ...base,
@@ -182,6 +197,7 @@ export async function planSymlink({
       },
     };
   }
+
   return conflict({
     target,
     previous,
@@ -204,12 +220,15 @@ export async function planSkill({
 }: PlanSkillParams): Promise<PlannedAction> {
   const problem = await locationProblem({
     path: dirname(target.path),
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
+
   if (problem) {
     return conflict({ target, previous, reason: leftInPlace(problem) });
   }
+
   const { source } = target;
+
   if (!source) {
     return {
       path: target.path,
@@ -247,6 +266,7 @@ export async function planSkill({
   const state = await installedState(target.path, prior, {
     sourceHasSetup: source.setup !== undefined,
   });
+
   if (state === 'missing') {
     return {
       ...base,
@@ -254,6 +274,7 @@ export async function planSkill({
       change: placeSkill({ source, install }),
     };
   }
+
   if (state === 'unmanaged') {
     if (target.backup !== undefined) {
       return {
@@ -263,6 +284,7 @@ export async function planSkill({
         change: placeSkill({ source, install, backup: target.backup }),
       };
     }
+
     return conflict({
       target,
       previous,
@@ -272,12 +294,15 @@ export async function planSkill({
           : NOT_MANAGED,
     });
   }
+
   if (state === 'changed' || !prior) {
     return conflict({ target, previous, reason: CHANGED_OUTSIDE });
   }
+
   if (sameInstall({ current: prior.install, next: install })) {
     return { ...base, label: target.label, status: 'unchanged', change: NONE };
   }
+
   return {
     ...base,
     status: 'update',

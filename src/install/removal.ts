@@ -63,6 +63,7 @@ function removal({
   reason,
 }: RemovalActionParams): PlannedAction {
   const untouched = change.type === 'none';
+
   return {
     path: entry.path,
     ...(writePath ? { writePath } : {}),
@@ -88,22 +89,25 @@ function rewriteOrDelete({
   next,
   emptyWhen,
 }: RewriteOrDeleteParams): PlannedAction {
-  const writePath = file.viaLink ? { writePath: file.writePath } : {};
+  const writePath = file.viaLink ? file.writePath : undefined;
+
   if (entry.createdFile && !file.viaLink && emptyWhen(next)) {
     return removal({ entry, change: { type: 'delete' } });
   }
+
   if (next === file.existing) {
     return removal({
       entry,
       change: NONE,
-      ...writePath,
+      writePath,
       reason: NOTHING_LEFT,
     });
   }
+
   return removal({
     entry,
     change: { type: 'write', content: next },
-    ...writePath,
+    writePath,
   });
 }
 
@@ -111,17 +115,21 @@ async function planSymlinkRemoval(entry: SymlinkEntry): Promise<PlannedAction> {
   if ((await readSymlink(entry.path)) === entry.target) {
     return removal({ entry, change: { type: 'delete' } });
   }
+
   return removal({ entry, change: NONE, reason: CHANGED_OUTSIDE });
 }
 
 async function planSkillRemoval(entry: SkillEntry): Promise<PlannedAction> {
   const state = await installedState(entry.path, entry);
+
   if (state === 'missing') {
     return removal({ entry, change: NONE, reason: 'already gone' });
   }
+
   if (state !== 'owned') {
     return removal({ entry, change: NONE, reason: CHANGED_OUTSIDE });
   }
+
   return removal({ entry, change: { type: 'delete-tree' } });
 }
 
@@ -144,15 +152,18 @@ async function resolveRemovalFile({
     target: { path: entry.path, label: REMOVAL_LABEL, kind: entry.kind },
     previous: entry,
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
+
   if (!inspection.ok) return inspection;
+
   if (inspection.current === null) {
     return {
       ok: false,
       action: removal({ entry, change: NONE, reason: 'already gone' }),
     };
   }
+
   return {
     ok: true,
     file: {
@@ -174,6 +185,7 @@ function planRegionRemoval(
     const remaining = removeRegion(file.existing, markers);
     // Through a link the file is not the CLI's, so a heading it once wrote stays.
     const strip = preamble && !file.viaLink && remaining.trim() === preamble;
+
     return rewriteOrDelete({
       entry,
       file,
@@ -188,6 +200,7 @@ function planRegionRemoval(
         reason: error.message,
       });
     }
+
     throw error;
   }
 }
@@ -203,6 +216,7 @@ function planLineRemoval(
       reason: 'the line was there before agents-config',
     });
   }
+
   return rewriteOrDelete({
     entry,
     file,
@@ -233,6 +247,7 @@ function planJsonArrayRemoval(
       entry.wasEmpty && isEmptyJsonObject(removed)
         ? (entry.blankText ?? '')
         : removed;
+
     return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
@@ -242,6 +257,7 @@ function planJsonArrayRemoval(
         reason: error.message,
       });
     }
+
     throw error;
   }
 }
@@ -262,13 +278,14 @@ function planMcpJsonRemoval({
       existing: file.existing,
       servers: entry.servers,
       createdMcpServers: entry.createdMcpServers ?? entry.createdFile,
-      ...(entry.original === undefined ? {} : { original: entry.original }),
-      ...(retainedServers !== undefined ? { retainedServers } : {}),
+      original: entry.original,
+      retainedServers,
     });
     const next =
       entry.wasEmpty && isEmptyJsonObject(removed)
         ? (entry.blankText ?? '')
         : removed;
+
     return rewriteOrDelete({ entry, file, next, emptyWhen: isEmptyJsonObject });
   } catch (error) {
     if (error instanceof JsonMergeError) {
@@ -278,6 +295,7 @@ function planMcpJsonRemoval({
         reason: error.message,
       });
     }
+
     throw error;
   }
 }
@@ -288,6 +306,7 @@ function planMcpTomlRemoval(
 ): PlannedAction {
   try {
     const remaining = removeMcpTomlServers(file.existing);
+
     return rewriteOrDelete({
       entry,
       file,
@@ -302,6 +321,7 @@ function planMcpTomlRemoval(
         reason: error.message,
       });
     }
+
     throw error;
   }
 }
@@ -328,12 +348,14 @@ export async function planRemoval({
       reason: `the same file is still used for ${sharedWith}`,
     });
   }
+
   if (entry.kind === 'symlink' || entry.kind === 'skill') {
     if (boundary !== undefined) {
       const problem = await locationProblem({
         path: dirname(entry.path),
         boundary,
       });
+
       if (problem) {
         return conflict({
           target: { path: entry.path, label: REMOVAL_LABEL },
@@ -342,17 +364,22 @@ export async function planRemoval({
         });
       }
     }
+
     if (entry.kind === 'skill') return planSkillRemoval(entry);
+
     if (await sharesSkillsFolder(entry)) {
       return removal({ entry, change: NONE, reason: SHARED_FOLDER });
     }
+
     return planSymlinkRemoval(entry);
   }
+
   const resolved = await resolveRemovalFile({
     entry,
     staged,
-    ...(boundary ? { boundary } : {}),
+    boundary,
   });
+
   if (!resolved.ok) return resolved.action;
 
   switch (entry.kind) {
@@ -367,9 +394,7 @@ export async function planRemoval({
       return planMcpJsonRemoval({
         entry,
         file: resolved.file,
-        ...(retainedMcpServers !== undefined
-          ? { retainedServers: retainedMcpServers }
-          : {}),
+        retainedServers: retainedMcpServers,
       });
     case 'mcp-toml':
       return planMcpTomlRemoval(entry, resolved.file);

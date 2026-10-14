@@ -33,14 +33,17 @@ export async function refreshCatalogSources({
   cache,
 }: RefreshCatalogSourcesParams): Promise<MovedSource[]> {
   const specs = new Map<string, SourceSpec>();
+
   for (const name of names) {
     const skill = findSkill(skillLibrary, name);
     if (skill?.origin.type !== 'catalog') continue;
+
     const entry: CatalogEntry = skill.origin.entry;
+
     if (!specs.has(entry.repo)) {
       specs.set(entry.repo, {
         repo: entry.repo,
-        ...(entry.ref ? { ref: entry.ref } : {}),
+        ref: entry.ref || undefined,
         paths: repositoryPaths(skillLibrary.catalog, entry.repo),
       });
     }
@@ -51,6 +54,7 @@ export async function refreshCatalogSources({
     try {
       await ensureSource(cache, spec);
       const check = await checkSource(cache, spec, { force: true });
+
       if (check.current !== check.latest) {
         const updated = await updateSource(cache, spec);
         if (updated.previous !== updated.current) {
@@ -59,9 +63,11 @@ export async function refreshCatalogSources({
       }
     } catch (error) {
       if (!(error instanceof SourceError)) throw error;
+
       notify({ ctx, prompting, message: error.message, level: 'warn' });
     }
   }
+
   return moved;
 }
 

@@ -26,6 +26,7 @@ export async function commandSandbox(t: TestContext): Promise<CommandSandbox> {
   const baseSearchPath = (await tempSearchPath(t, ['node', 'git']))
     .split(delimiter)
     .filter(Boolean);
+
   return {
     paths,
     home: paths.home,
@@ -34,6 +35,7 @@ export async function commandSandbox(t: TestContext): Promise<CommandSandbox> {
       const searchPath = extraPath
         ? [extraPath, ...baseSearchPath]
         : baseSearchPath;
+
       const ctx = createContext({
         repoRoot: REPO_ROOT,
         cwd: paths.home,
@@ -48,6 +50,7 @@ export async function commandSandbox(t: TestContext): Promise<CommandSandbox> {
           lines.push(line);
         },
       });
+
       return {
         ctx,
         output: () => `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`,

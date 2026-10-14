@@ -60,6 +60,7 @@ function shellQuote(value: string): string {
 // A leading ~ stays unquoted so the shell still expands it.
 function shellPath(path: string): string {
   if (path === '~') return path;
+
   return path.startsWith('~/')
     ? `~/${shellQuote(path.slice(2))}`
     : shellQuote(path);

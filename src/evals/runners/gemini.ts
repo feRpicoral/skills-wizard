@@ -77,6 +77,7 @@ function isGeminiTriggerEvent({
   skillName,
 }: GeminiTriggerEventParams): boolean {
   if (event.type !== 'tool_use') return false;
+
   const toolName = typeof event.tool_name === 'string' ? event.tool_name : '';
   const params = isRecordObject(event.parameters)
     ? event.parameters
@@ -86,6 +87,7 @@ function isGeminiTriggerEvent({
   if (toolName === 'activate_skill') {
     return params.name === skillName;
   }
+
   return Object.values(params).some(
     (value) => typeof value === 'string' && mentionsSkillFile(value, skillName),
   );
@@ -122,6 +124,7 @@ export function parseGeminiStreamJson({
     if (isGeminiTriggerEvent({ event, skillName })) {
       triggered = true;
     }
+
     if (
       event.type === 'message' &&
       event.role === 'assistant' &&
@@ -129,18 +132,22 @@ export function parseGeminiStreamJson({
     ) {
       assistantChunks.push(event.content);
     }
+
     if (event.type === 'error' && event.severity === 'error') {
       error = geminiErrorMessage(event.message) ?? 'error event';
     }
+
     if (event.type === 'result') {
       sawResult = true;
       if (event.status === 'error') {
         error = geminiErrorMessage(event.error) ?? 'status error';
       }
+
       if (isRecordObject(event.stats)) {
         if (typeof event.stats.duration_ms === 'number') {
           durationMs = event.stats.duration_ms;
         }
+
         usage = normalizeUsage(event.stats);
         usageReported = isUsageReported(event.stats);
       }
@@ -161,16 +168,21 @@ export function parseGeminiStreamJson({
 /** Sums `stats.models[*].tokens` from `--output-format json`. */
 export function geminiJsonUsage(stats: unknown): RunnerUsage {
   const usage = normalizeUsage(undefined);
+
   if (!isRecordObject(stats) || !isRecordObject(stats.models)) return usage;
+
   for (const model of Object.values(stats.models)) {
     if (!isRecordObject(model) || !isRecordObject(model.tokens)) continue;
+
     const { prompt, candidates, total } = model.tokens;
     const input = typeof prompt === 'number' ? prompt : 0;
     const output = typeof candidates === 'number' ? candidates : 0;
+
     usage.input_tokens += input;
     usage.output_tokens += output;
     usage.total_tokens += typeof total === 'number' ? total : input + output;
   }
+
   return usage;
 }
 
@@ -185,12 +197,15 @@ export function parseGeminiGraderJson({
 }: ParseGeminiGraderParams): ParsedGraderOutput {
   const doc = parseJsonDocument(stdout);
   const error = geminiErrorMessage(doc.error);
+
   if (error !== undefined) {
     throw new RunnerError(`gemini grader failed: ${error}`);
   }
+
   if (typeof doc.response !== 'string') {
     throw new RunnerError('gemini grader output contained no response');
   }
+
   return {
     output: extractJsonFromText(doc.response),
     durationMs: fallbackDurationMs,

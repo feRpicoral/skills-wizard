@@ -39,6 +39,7 @@ function isGone(error: unknown): boolean {
 // including background jobs, can be stopped together.
 function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   if (pid === undefined) return;
+
   try {
     process.kill(-pid, signal);
   } catch (error) {
@@ -56,11 +57,14 @@ function forwardSignals(
   function stop(): void {
     for (const signal of FORWARDED_SIGNALS) process.off(signal, forward);
   }
+
   function forward(signal: NodeJS.Signals): void {
     onSignal(signal);
     killGroup(pid, 'SIGTERM');
   }
+
   for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);
+
   return stop;
 }
 
@@ -83,10 +87,12 @@ function execute({
       stdio: ['ignore', 'ignore', 'pipe'],
       detached: true,
     });
+
     let interruptedBy: NodeJS.Signals | undefined;
     const stopForwarding = forwardSignals(child.pid, (signal) => {
       interruptedBy ??= signal;
     });
+
     let stderr = '';
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -107,10 +113,12 @@ function execute({
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       stopForwarding();
+
       if (interruptedBy !== undefined && !deferSignal) {
         process.kill(process.pid, interruptedBy);
         return;
       }
+
       if (interruptedBy !== undefined) {
         reject(
           setupFailure(`stopped by ${interruptedBy}`, stderr, interruptedBy),
@@ -144,6 +152,7 @@ export async function runSetup({
       typeof error.signal === 'string'
         ? (error.signal as NodeJS.Signals)
         : undefined;
+
     throw new SetupError(`"${command}" failed: ${failureDetail(error)}`, {
       cause: error,
       ...(signal ? { signal } : {}),

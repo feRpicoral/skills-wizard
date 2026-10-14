@@ -22,6 +22,7 @@ import { TOOL_IDS, type ToolId, TOOLS } from '../tools/registry.ts';
 
 export function unwrap<T>(value: T | symbol): Exclude<T, symbol> {
   if (clack.isCancel(value)) throw new CancelledError('Cancelled');
+
   return value as Exclude<T, symbol>;
 }
 
@@ -148,6 +149,7 @@ export async function promptBlocks({
   const available = library.blocks.filter((block) =>
     block.scopes.includes(scope),
   );
+
   for (const block of available) {
     const group = library.groups[block.group] ?? block.group;
     (groups[group] ??= []).push({
@@ -171,7 +173,9 @@ export async function promptBlocks({
 
 function skillHint(skill: SkillDefinition): string {
   if (skill.origin.type === 'local') return skill.origin.path;
+
   const { repo, note } = skill.origin.entry;
+
   return note ? `${repo}: ${note}` : repo;
 }
 
@@ -183,11 +187,14 @@ export async function promptSkills(
   const available = library.skills.filter((skill) =>
     skill.scopes.includes(scope),
   );
+
   if (available.length === 0) return [];
+
   const groups: Record<
     string,
     { value: string; label: string; hint: string }[]
   > = {};
+
   for (const skill of available) {
     (groups[skill.group] ??= []).push({
       value: skill.name,
@@ -234,6 +241,7 @@ export async function promptVariables(
   defaults: Readonly<Record<string, string>>,
 ): Promise<Record<string, string>> {
   const values: Record<string, string> = {};
+
   for (const name of names) {
     values[name] = unwrap(
       await clack.text({
@@ -243,6 +251,7 @@ export async function promptVariables(
       }),
     ).trim();
   }
+
   return values;
 }
 
@@ -317,15 +326,19 @@ export async function promptAddQuery(): Promise<string> {
 
 function candidateHint(candidate: DiscoveryCandidate): string {
   const parts = [candidate.repo];
+
   if (candidate.installs !== undefined) {
     parts.push(`${candidate.installs} installs`);
   }
+
   if (candidate.category) {
     parts.push(candidate.category);
   }
+
   if (candidate.description) {
     parts.push(candidate.description);
   }
+
   return parts.join(' · ');
 }
 
@@ -379,7 +392,9 @@ export async function promptMcpServers({
   const available = catalog.servers.filter((server) =>
     server.scopes.includes(scope),
   );
+
   if (available.length === 0) return [];
+
   return unwrap(
     await clack.multiselect<string>({
       message: 'Which MCP servers should be configured?',
