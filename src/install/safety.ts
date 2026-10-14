@@ -7,13 +7,10 @@ import {
   lstatIfExists,
   realLocation,
   resolveIfSymlink,
-  sameFile,
   statIfExists,
 } from './fs.ts';
 import { readStaged, type StagedContents } from './staged.ts';
 import type { FileTarget } from './targets.ts';
-
-export { fileKindProblem, sameFile };
 
 export type ActionStatus =
   'create' | 'update' | 'unchanged' | 'remove' | 'conflict';
