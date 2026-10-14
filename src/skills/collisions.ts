@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import type { Paths } from '../env.ts';
 import { FrontmatterError } from '../errors.ts';
-import { parseFrontmatter } from '../frontmatter.ts';
+import { isRecord, parseFrontmatter } from '../frontmatter.ts';
 import {
   fsErrorReason,
   lstatIfExists,
@@ -46,10 +46,6 @@ interface RawEntry {
   path: string;
   root: SkillRoot;
   real: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function locate(path: string): Promise<string> {
@@ -167,6 +163,16 @@ async function scanRoot(
   return entries;
 }
 
+/**
+ * Scans all canonical, tool, external, and plugin skill directories under
+ * `paths` to discover installed skills, unmanaged skills, and name collisions.
+ *
+ * Deduplicates skills that resolve to the same `realLocation` across distinct
+ * roots (such as a tool skill symlink pointing into the canonical `.agents/skills`
+ * folder), while treating two entries within the same root or distinct real
+ * folders declaring the same `SKILL.md` frontmatter `name` as separate entries
+ * so collisions are surfaced.
+ */
 export async function scanInstalledSkills(
   paths: Paths,
   manifest: Manifest | null,

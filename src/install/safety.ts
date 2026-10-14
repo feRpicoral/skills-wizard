@@ -9,7 +9,11 @@ import {
   lstatIfExists,
   readSymlink,
   realLocation,
+  resolveIfSymlink,
+  statIfExists,
 } from './fs.ts';
+import { readStaged, type StagedContents } from './staged.ts';
+import type { FileTarget } from './targets.ts';
 
 export type ActionStatus =
   'create' | 'update' | 'unchanged' | 'remove' | 'conflict';
@@ -184,4 +188,162 @@ export async function checkManifestPath({
       `${manifestPath} ${LOCATION_PROBLEMS[problem]}; refusing to record the install there`,
     );
   }
+}
+
+export type FileInspection =
+  | {
+      ok: true;
+      writePath: string;
+      viaLink: boolean;
+      current: string | null;
+      onDisk: string | null;
+    }
+  | { ok: false; action: PlannedAction };
+
+export interface InspectTargetFileParams {
+  target: TargetLabel & { kind: ManifestEntry['kind'] };
+  previous: ManifestEntry | null;
+  staged: StagedContents;
+  boundary?: string;
+  danglingTargetReason?: string;
+}
+
+export async function inspectTargetFile({
+  target,
+  previous,
+  staged,
+  boundary,
+  danglingTargetReason,
+}: InspectTargetFileParams): Promise<FileInspection> {
+  const stats = await lstatIfExists(target.path);
+  const resolved = stats?.isSymbolicLink()
+    ? await resolveIfSymlink(target.path)
+    : null;
+  if (
+    stats?.isSymbolicLink() &&
+    resolved === null &&
+    danglingTargetReason !== undefined
+  ) {
+    return {
+      ok: false,
+      action: conflict({ target, previous, reason: danglingTargetReason }),
+    };
+  }
+  const writePath = resolved ?? target.path;
+  const effectiveBoundary =
+    target.kind === 'exclude-region' ? undefined : boundary;
+  const problem = await locationProblem({
+    path: writePath,
+    ...(effectiveBoundary ? { boundary: effectiveBoundary } : {}),
+  });
+  if (problem) {
+    return {
+      ok: false,
+      action: conflict({ target, previous, reason: leftInPlace(problem) }),
+    };
+  }
+  const kindProblem = fileKindProblem(await statIfExists(writePath));
+  if (kindProblem) {
+    return {
+      ok: false,
+      action: conflict({ target, previous, reason: kindProblem }),
+    };
+  }
+  const { current, onDisk } = await readStaged({ staged, path: writePath });
+  return {
+    ok: true,
+    writePath,
+    viaLink: resolved !== null,
+    current,
+    onDisk,
+  };
+}
+
+export interface ResolvedTargetFile {
+  writePath: string;
+  existing: string | null;
+  createdFile: boolean;
+}
+
+export interface FileActionParams<T extends FileTarget> {
+  target: T;
+  file: ResolvedTargetFile;
+  previous: ManifestEntry | null;
+}
+
+interface WriteActionParams {
+  target: TargetLabel;
+  file: ResolvedTargetFile;
+  next: string;
+  entry: ManifestEntry;
+  previous: ManifestEntry | null;
+}
+
+export function writeAction({
+  target,
+  file,
+  next,
+  entry,
+  previous,
+}: WriteActionParams): PlannedAction {
+  const status =
+    file.existing === null
+      ? 'create'
+      : next === file.existing
+        ? 'unchanged'
+        : 'update';
+  return {
+    path: target.path,
+    ...(file.writePath !== target.path ? { writePath: file.writePath } : {}),
+    label: target.label,
+    status,
+    change: status === 'unchanged' ? NONE : { type: 'write', content: next },
+    entry,
+    previous,
+  };
+}
+
+export function wasCreated(
+  existing: string | null,
+  previous: ManifestEntry | null,
+): boolean {
+  if (existing === null) return true;
+  return previous !== null && 'createdFile' in previous
+    ? previous.createdFile
+    : false;
+}
+
+export interface PlanFileParams {
+  target: FileTarget;
+  previous: ManifestEntry | null;
+  staged: StagedContents;
+  boundary?: string;
+}
+
+export type ResolvedTargetOutcome =
+  { ok: true; file: ResolvedTargetFile } | { ok: false; action: PlannedAction };
+
+export async function resolveTargetFile({
+  target,
+  previous,
+  staged,
+  boundary,
+}: PlanFileParams): Promise<ResolvedTargetOutcome> {
+  const inspection = await inspectTargetFile({
+    target,
+    previous,
+    staged,
+    ...(boundary ? { boundary } : {}),
+    danglingTargetReason: 'is a symlink to a missing file',
+  });
+  if (!inspection.ok) return inspection;
+  return {
+    ok: true,
+    file: {
+      writePath: inspection.writePath,
+      existing: inspection.current,
+      createdFile:
+        !inspection.viaLink && wasCreated(inspection.onDisk, previous),
+    },
+  };
 }

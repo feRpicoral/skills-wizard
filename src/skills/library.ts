@@ -58,6 +58,19 @@ async function firstPartySkills(repoRoot: string): Promise<SkillDefinition[]> {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function catalogSkillDefinition(
+  catalog: Catalog,
+  entry: CatalogEntry,
+): SkillDefinition {
+  return {
+    name: entry.name,
+    group: catalog.categories[entry.category] ?? entry.category,
+    scopes: entry.scopes,
+    defaults: entry.defaults,
+    origin: { type: 'catalog', entry },
+  };
+}
+
 export async function loadSkillLibrary(
   repoRoot: string,
 ): Promise<SkillLibrary> {
@@ -75,13 +88,21 @@ export async function loadSkillLibrary(
     catalog,
     skills: [
       ...local,
-      ...catalog.skills.map((entry): SkillDefinition => ({
-        name: entry.name,
-        group: catalog.categories[entry.category] ?? entry.category,
-        scopes: entry.scopes,
-        defaults: entry.defaults,
-        origin: { type: 'catalog', entry },
-      })),
+      ...catalog.skills.map((entry) => catalogSkillDefinition(catalog, entry)),
+    ],
+  };
+}
+
+export function extendSkillLibrary(
+  library: SkillLibrary,
+  catalog: Catalog,
+): SkillLibrary {
+  const newEntries = catalog.skills.slice(library.catalog.skills.length);
+  return {
+    catalog,
+    skills: [
+      ...library.skills,
+      ...newEntries.map((entry) => catalogSkillDefinition(catalog, entry)),
     ],
   };
 }

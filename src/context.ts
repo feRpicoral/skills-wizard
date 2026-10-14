@@ -20,26 +20,34 @@ interface CreateContextParams {
   repoRoot: string;
   cwd: string;
   interactive: boolean;
+  paths?: Paths;
+  searchPath?: string[];
+  sources?: Partial<SourceSettings>;
+  print?: (line?: string) => void;
 }
 
 export function createContext({
   repoRoot,
   cwd,
   interactive,
+  paths = resolvePaths(),
+  searchPath = resolveSearchPath(),
+  sources,
+  print = (line = '') => {
+    process.stdout.write(`${line}\n`);
+  },
 }: CreateContextParams): Context {
   return {
-    paths: resolvePaths(),
+    paths,
     repoRoot,
     cwd,
-    searchPath: resolveSearchPath(),
+    searchPath,
     interactive,
     sources: {
-      url: githubUrl,
-      env: gitEnvironment(),
-      now: () => new Date(),
+      url: sources?.url ?? githubUrl,
+      env: sources?.env ?? gitEnvironment(),
+      now: sources?.now ?? (() => new Date()),
     },
-    print: (line = '') => {
-      process.stdout.write(`${line}\n`);
-    },
+    print,
   };
 }

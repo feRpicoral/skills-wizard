@@ -35,8 +35,12 @@ function isRefCharacter(character: string): boolean {
   return code > 0x20 && code !== 0x7f && !REF_FORBIDDEN.has(character);
 }
 
+export function isCommitSha(ref: string): boolean {
+  return COMMIT.test(ref);
+}
+
 export function isGitRef(ref: string): boolean {
-  if (COMMIT.test(ref)) return true;
+  if (isCommitSha(ref)) return true;
   return (
     ref !== '@' &&
     !ref.startsWith('-') &&
@@ -190,6 +194,14 @@ function catalogDocument(source: string | null, file: string): Document {
   return doc;
 }
 
+/**
+ * Appends `entries` to the YAML catalog at `file` while preserving existing
+ * comments and formatting, and writes the updated document atomically.
+ *
+ * Validates the combined catalog via {@link extendCatalog}, adds any missing
+ * category labels, formats `scopes` and `defaults` sequences in flow style,
+ * and inserts a blank line between entries from different repositories.
+ */
 export async function appendCatalogEntries(
   file: string,
   entries: readonly CatalogEntry[],
