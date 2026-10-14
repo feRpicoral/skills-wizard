@@ -17,6 +17,7 @@ import {
   runShellCommand,
   summarizeWorkspace,
   type TimingReport,
+  utf8Head,
 } from './grade.ts';
 import { createFakeRunner } from './runners/index.ts';
 import type { RunnerTaskResult } from './runners/types.ts';
@@ -753,4 +754,22 @@ test('runShellCommand kills the whole process group on timeout', async (t) => {
   assert.equal(result.timedOut, true);
   assert.ok(Date.now() - started < 10_000);
   assert.equal(alive, false);
+});
+
+test('utf8Head and summarizeWorkspace omit trailing incomplete UTF-8 lead bytes without emitting U+FFFD', async (t) => {
+  // Buffer ending with a 3-byte UTF-8 lead byte (0xe2 for '—') followed by no continuation bytes
+  const raw = Buffer.from([0x61, 0x62, 0xe2]);
+  assert.equal(utf8Head(raw, 3), 'ab');
+  assert.equal(utf8Head(raw, 2), 'ab');
+
+  // In summarizeWorkspace, readHead reads FILE_PREVIEW_BYTES + 1 (8001 bytes).
+  // If a multi-byte character starts at byte index 7999 (so byte 7999 is lead byte 0xe2,
+  // byte 8000 is continuation 0x80, byte 8001 is 0x94), utf8Head(head, 8000) slices at 8000
+  // and must drop the incomplete sequence rather than emitting U+FFFD.
+  const workdir = await tempDir(t);
+  const content = `${'a'.repeat(7999)}—tail`;
+  await writeFiles(workdir, { 'boundary.txt': content });
+  const summary = await summarizeWorkspace({ workdir });
+  assert.equal(summary[0]?.includes('\ufffd'), false);
+  assert.match(summary[0] ?? '', /^--- boundary\.txt \(truncated, /);
 });

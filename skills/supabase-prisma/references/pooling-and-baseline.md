@@ -57,8 +57,8 @@ yarn prisma migrate diff \
   > prisma/migrations/0_init/migration.sql
 
 # Ensure Row Level Security is enabled on every public table
-grep -E '^CREATE TABLE "([^"]+)"' prisma/migrations/0_init/migration.sql \
-  | sed -E 's/^CREATE TABLE "([^"]+)".*/ALTER TABLE "\1" ENABLE ROW LEVEL SECURITY;/' \
+sed -nE 's/^CREATE TABLE ("[^"]+"\.)?"([^"]+)".*/ALTER TABLE \1"\2" ENABLE ROW LEVEL SECURITY;/p' \
+  prisma/migrations/0_init/migration.sql \
   >> prisma/migrations/0_init/migration.sql
 
 yarn prisma migrate status || true
@@ -78,8 +78,8 @@ yarn prisma migrate diff \
   --script \
   > prisma/migrations/0_init/migration.sql
 
-grep -E '^CREATE TABLE "([^"]+)"' prisma/migrations/0_init/migration.sql \
-  | sed -E 's/^CREATE TABLE "([^"]+)".*/ALTER TABLE "\1" ENABLE ROW LEVEL SECURITY;/' \
+sed -nE 's/^CREATE TABLE ("[^"]+"\.)?"([^"]+)".*/ALTER TABLE \1"\2" ENABLE ROW LEVEL SECURITY;/p' \
+  prisma/migrations/0_init/migration.sql \
   >> prisma/migrations/0_init/migration.sql
 
 yarn prisma migrate deploy

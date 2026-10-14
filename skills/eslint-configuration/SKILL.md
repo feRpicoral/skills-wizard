@@ -5,6 +5,12 @@ compatibility: Requires Node.js. scripts/check-version.mjs reads the project's p
 metadata:
   docs-version: '10.12.0'
   docs-source: https://github.com/eslint/eslint/tree/v10.12.0/docs/src
+  package: eslint
+  display-name: ESLint
+  older-reference: references/version-differences.md
+  older-risk: features documented in the other references may not exist
+  release-notes: https://github.com/eslint/eslint/releases
+  docs-url-template: https://github.com/eslint/eslint/tree/v{version}/docs/src
 ---
 
 # ESLint configuration

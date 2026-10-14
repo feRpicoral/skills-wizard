@@ -5,6 +5,7 @@ import which from 'which';
 import type { AgyConfig, Environment } from '../../env.ts';
 import { UsageError } from '../../errors.ts';
 import { lstatIfExists } from '../../install/fs.ts';
+import { EVAL_RUNNER_NAMES } from '../workspace.ts';
 import { createAgyRunner } from './agy.ts';
 import { createClaudeRunner } from './claude.ts';
 import { createCodexRunner } from './codex.ts';
@@ -16,13 +17,7 @@ import {
   resolveRunnerBinary,
 } from './types.ts';
 
-export const EVAL_RUNNER_NAMES: readonly EvalRunnerName[] = [
-  'agy',
-  'claude',
-  'codex',
-  'gemini',
-  'fake',
-];
+export { EVAL_RUNNER_NAMES };
 
 const AUTO_DETECT_ORDER: readonly EvalRunnerName[] = [
   'agy',

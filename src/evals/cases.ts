@@ -217,19 +217,33 @@ export function parseEvalSuite({
   return suite;
 }
 
-export async function loadEvalSuite(skillDir: string): Promise<EvalSuite> {
-  const evalsPath = join(skillDir, 'evals', 'evals.json');
-  const content = await readTextIfExists(evalsPath);
+export interface ReadEvalJsonFileParams {
+  path: string;
+  missingMessage: string;
+}
+
+export async function readEvalJsonFile({
+  path,
+  missingMessage,
+}: ReadEvalJsonFileParams): Promise<unknown> {
+  const content = await readTextIfExists(path);
   if (content === null) {
-    throw new EvalError(`Missing eval suite at ${evalsPath}`);
+    throw new EvalError(missingMessage);
   }
 
-  let raw: unknown;
   try {
-    raw = JSON.parse(content);
+    return JSON.parse(content);
   } catch (error) {
-    throw new EvalError(`Invalid JSON in ${evalsPath}`, { cause: error });
+    throw new EvalError(`Invalid JSON in ${path}`, { cause: error });
   }
+}
+
+export async function loadEvalSuite(skillDir: string): Promise<EvalSuite> {
+  const evalsPath = join(skillDir, 'evals', 'evals.json');
+  const raw = await readEvalJsonFile({
+    path: evalsPath,
+    missingMessage: `Missing eval suite at ${evalsPath}`,
+  });
 
   const suite = parseEvalSuite({
     raw,
@@ -283,17 +297,10 @@ export async function loadTriggerQueries(
   skillDir: string,
 ): Promise<TriggerQuery[]> {
   const queriesPath = join(skillDir, 'evals', 'trigger_queries.json');
-  const content = await readTextIfExists(queriesPath);
-  if (content === null) {
-    throw new EvalError(`Missing trigger queries at ${queriesPath}`);
-  }
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch (error) {
-    throw new EvalError(`Invalid JSON in ${queriesPath}`, { cause: error });
-  }
+  const raw = await readEvalJsonFile({
+    path: queriesPath,
+    missingMessage: `Missing trigger queries at ${queriesPath}`,
+  });
 
   return parseTriggerQueries(raw, queriesPath);
 }
