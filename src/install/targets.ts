@@ -47,8 +47,7 @@ export interface ExcludeRegionTarget {
   kind: 'exclude-region';
   path: string;
   id: string;
-  paths?: readonly string[];
-  body: string;
+  paths: readonly string[];
   label: string;
 }
 
@@ -222,7 +221,6 @@ function gitExcludeTarget({
     path: excludePath,
     id: relative(root, projectDir) || '.',
     paths,
-    body: paths.map((path) => `/${path}`).join('\n'),
     label: 'git exclude entries',
   };
 }
