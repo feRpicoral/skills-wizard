@@ -4,9 +4,12 @@ import { getProperty, hasProperty, parsePath } from 'dot-prop';
 import type { JSONPath } from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
-import type { ManifestEntry } from '../state/manifest.ts';
 import {
   appendArrayElements,
+  isEmptyJsonObject,
+  isObject,
+  type JsonObject,
+  parseJsonObject,
   rawJson,
   removeArrayElements,
   removeJsonProperty,
@@ -14,39 +17,10 @@ import {
   setJsonValue,
 } from './json-text.ts';
 import { isBlank, keepBom, lineEnding, withoutBom } from './lines.ts';
-import {
-  conflict,
-  type FileActionParams,
-  type PlannedAction,
-  writeAction,
-} from './safety.ts';
-import type { JsonArrayTarget } from './targets.ts';
 
-type JsonObject = Record<string, unknown>;
+export { isEmptyJsonObject, parseJsonObject };
 
 const DEFAULT_INDENT = 2;
-
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function parseJsonObject(content: string | null): JsonObject {
-  if (content === null || isBlank(content)) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(withoutBom(content));
-  } catch (error) {
-    throw new JsonMergeError(
-      'not plain JSON (comments or syntax errors); edit it by hand',
-      { cause: error },
-    );
-  }
-  if (!isObject(parsed)) {
-    throw new JsonMergeError('must contain a JSON object');
-  }
-  return parsed;
-}
 
 function parseKeyPath(doc: JsonObject, keyPath: string): JSONPath {
   const keys = parsePath(keyPath);
@@ -112,7 +86,7 @@ interface EnsureArrayValuesParams {
   values: readonly string[];
 }
 
-interface EnsureResult {
+export interface EnsureResult {
   content: string;
   added: string[];
   wasString: boolean;
@@ -320,87 +294,4 @@ export function legacyCreatedKeys({
   createdFile,
 }: LegacyCreatedKeysParams): number {
   return createdFile ? parsePath(keyPath).length : 1;
-}
-
-export function isEmptyJsonObject(content: string): boolean {
-  return Object.keys(parseJsonObject(content)).length === 0;
-}
-
-type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
-
-interface CreatedShape {
-  createdKeys?: number;
-  original?: string;
-}
-
-function shapeOf({ createdKeys, original }: CreatedShape): CreatedShape {
-  return {
-    ...(createdKeys === undefined ? {} : { createdKeys }),
-    ...(original === undefined ? {} : { original }),
-  };
-}
-
-interface CreatedShapeParams {
-  earlier: JsonArrayEntry | null;
-  result: EnsureResult;
-}
-
-function createdShape({ earlier, result }: CreatedShapeParams): CreatedShape {
-  if (!earlier) return shapeOf(result);
-  if (earlier.createdKeys === undefined) {
-    return result.createdKeys > 0 ? shapeOf(result) : {};
-  }
-  return shapeOf(result.createdKeys > earlier.createdKeys ? result : earlier);
-}
-
-export function planJsonArray({
-  target,
-  file,
-  previous,
-}: FileActionParams<JsonArrayTarget>): PlannedAction {
-  try {
-    const result = ensureArrayValues({
-      existing: file.existing,
-      keyPath: target.key,
-      values: target.values,
-    });
-    const earlier =
-      file.existing !== null && previous?.kind === 'json-array'
-        ? previous
-        : null;
-    const added = [
-      ...new Set([
-        ...(earlier?.added ?? []).filter((value) =>
-          target.values.includes(value),
-        ),
-        ...result.added,
-      ]),
-    ];
-    return writeAction({
-      target,
-      file,
-      next: result.content,
-      entry: {
-        kind: 'json-array',
-        path: target.path,
-        key: target.key,
-        added,
-        wasString: earlier?.wasString ?? result.wasString,
-        ...createdShape({ earlier, result }),
-        ...((earlier ? earlier.wasEmpty : result.wasEmpty)
-          ? { wasEmpty: true }
-          : {}),
-        ...((earlier ? earlier.blankText : result.blankText) !== undefined
-          ? { blankText: earlier ? earlier.blankText : result.blankText }
-          : {}),
-        createdFile: file.createdFile,
-      },
-      previous,
-    });
-  } catch (error) {
-    if (error instanceof JsonMergeError) {
-      return conflict({ target, previous, reason: error.message });
-    }
-    throw error;
-  }
 }

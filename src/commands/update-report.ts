@@ -42,21 +42,44 @@ function isOutdatedCopy(entry: SkillCopyEntry, source: SkillSource): boolean {
   );
 }
 
-export async function findInstalledCopy(
+function copySignature(entry: SkillCopyEntry): string {
+  const commit = entry.source.type === 'catalog' ? entry.source.commit : '';
+  return `${entry.install.hash}:${commit}`;
+}
+
+export async function findInstalledCopies(
   manifests: readonly Manifest[],
   name: string,
   source: SkillSource,
-): Promise<string | null> {
+): Promise<string[]> {
+  const outdated: string[] = [];
+  const seen = new Set<string>();
   let fallback: string | null = null;
   for (const manifest of manifests) {
     for (const entry of manifest.entries) {
       if (!isSkillCopy(entry, name)) continue;
       if ((await lstatIfExists(entry.path))?.isDirectory() !== true) continue;
-      if (isOutdatedCopy(entry, source)) return entry.path;
-      fallback ??= entry.path;
+      if (isOutdatedCopy(entry, source)) {
+        const key = copySignature(entry);
+        if (!seen.has(key)) {
+          seen.add(key);
+          outdated.push(entry.path);
+        }
+      } else {
+        fallback ??= entry.path;
+      }
     }
   }
-  return fallback;
+  if (outdated.length > 0) return outdated;
+  return fallback === null ? [] : [fallback];
+}
+
+export async function findInstalledCopy(
+  manifests: readonly Manifest[],
+  name: string,
+  source: SkillSource,
+): Promise<string | null> {
+  return (await findInstalledCopies(manifests, name, source))[0] ?? null;
 }
 
 export function formatDiffSummary(report: SkillChangeReport): string {
@@ -82,19 +105,23 @@ export async function collectChangeReports(
   for (const name of names) {
     const source = sources.get(name);
     if (!source) continue;
-    const installed = await findInstalledCopy(manifests, name, source);
-    if (!installed) continue;
-    const diff = await diffSkillTrees({
-      previousDir: installed,
-      nextDir: source.dir,
-    });
-    if (!hasDiff(diff)) continue;
-    const risks = await scanSkillRisks({
-      previousDir: installed,
-      nextDir: source.dir,
-      precomputed: diff,
-    });
-    reports.push({ name, diff, risks });
+    for (const installed of await findInstalledCopies(
+      manifests,
+      name,
+      source,
+    )) {
+      const diff = await diffSkillTrees({
+        previousDir: installed,
+        nextDir: source.dir,
+      });
+      if (!hasDiff(diff)) continue;
+      const risks = await scanSkillRisks({
+        previousDir: installed,
+        nextDir: source.dir,
+        precomputed: diff,
+      });
+      reports.push({ name, diff, risks });
+    }
   }
   return reports;
 }
