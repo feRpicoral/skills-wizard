@@ -2,6 +2,7 @@
   "name": "dashboard-widgets",
   "version": "2.4.1",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
     "lint": "eslint --ext .js --ignore-path .eslintignore src scripts test",

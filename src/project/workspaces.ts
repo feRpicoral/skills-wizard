@@ -52,24 +52,39 @@ function globSegmentToRegExp(segment: string): RegExp {
       regex += '[^/]*';
     } else if (ch === '?') {
       regex += '[^/]';
+    } else if (ch === '[') {
+      const close = segment.indexOf(']', i + 1);
+      if (close > i + 1) {
+        const rawInner = segment.slice(i + 1, close);
+        const negated = rawInner.startsWith('!') || rawInner.startsWith('^');
+        const body = (negated ? rawInner.slice(1) : rawInner).replace(
+          /\\/g,
+          '\\\\',
+        );
+        regex += `[${negated ? '^' : ''}${body}]`;
+        i = close;
+      } else {
+        regex += '\\[';
+      }
     } else {
       regex += RegExp.escape(ch);
     }
   }
   regex += '$';
-  return new RegExp(regex);
+  try {
+    return new RegExp(regex);
+  } catch {
+    return new RegExp(`^${RegExp.escape(segment)}$`);
+  }
 }
 
 function matchesWorkspacePattern(relPath: string, pattern: string): boolean {
-  if (relPath === pattern || relPath.startsWith(`${pattern}/`)) {
-    return true;
-  }
   const pathSegments = relPath.split('/').filter(Boolean);
   const patternSegments = pattern.split('/').filter(Boolean);
 
   function matchAt(pIdx: number, sIdx: number): boolean {
     if (pIdx === patternSegments.length) {
-      return sIdx === pathSegments.length;
+      return true;
     }
     const pat = patternSegments[pIdx]!;
     if (pat === '**') {
@@ -90,6 +105,11 @@ function matchesWorkspacePattern(relPath: string, pattern: string): boolean {
   return matchAt(0, 0);
 }
 
+/**
+ * Reads and parses `${relPkgDir}/package.json` inside `projectDir` (staying
+ * within `root`), returning normalized workspace metadata or `null` when no
+ * valid `package.json` exists.
+ */
 export async function readWorkspacePackage(
   projectDir: string,
   relPkgDir: string,
@@ -201,6 +221,11 @@ export interface DiscoverWorkspacesParams {
   hasNx: boolean;
 }
 
+/**
+ * Discovers workspace packages inside `projectDir` matching `patterns` (or
+ * default Nx `apps/*`, `packages/*`, `libs/*` globs when `hasNx` is true),
+ * honoring `!` exclusion patterns and symlink boundary checks against `root`.
+ */
 export async function discoverWorkspaces({
   projectDir,
   root: givenRoot,

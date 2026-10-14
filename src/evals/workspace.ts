@@ -3,7 +3,7 @@ import { dirname, join, posix } from 'node:path';
 
 import type { Environment, Paths } from '../env.ts';
 import { EvalError } from '../errors.ts';
-import { copySkillTree } from '../skills/tree.ts';
+import { copySkillTree } from '../skills/tree-replace.ts';
 import { type ToolId, TOOLS } from '../tools/registry.ts';
 import type { EvalCase } from './cases.ts';
 import {

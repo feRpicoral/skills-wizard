@@ -943,3 +943,21 @@ test('a legacy setup copy is removable once a sync records the setup flag', asyn
   assert.equal(statuses(plan)[canonical], 'remove');
   await assert.rejects(lstat(canonical), { code: 'ENOENT' });
 });
+
+test('applyPlan does not record a conflicted skill in manifest.skills on a fresh install', async (t) => {
+  const paths = await tempPaths(t);
+  const root = await tempDir(t);
+  const notes = await localSkill({ root, name: 'notes' });
+  const lint = await localSkill({ root, name: 'lint' });
+  await writeFiles(join(paths.skillsDir, 'notes'), {
+    'SKILL.md': 'unmanaged\n',
+  });
+
+  const { outcome } = await installGlobal(paths, {
+    tools: ['codex'],
+    skills: [notes, lint],
+  });
+
+  assert.equal(outcome.skipped.length > 0, true);
+  assert.deepEqual((await manifestOf(paths))?.skills, ['lint']);
+});

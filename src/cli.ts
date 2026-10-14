@@ -64,8 +64,8 @@ Options:
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --preset <id>         Project preset: ${PRESET_IDS.join(', ')}, none
-  --style <mode>        Project instructions style: lean (default with a system-wide install)
-                        or self-contained
+  --style <mode>        Project instructions style: lean (default with a system-wide install),
+                        self-contained, or strict (alias for self-contained)
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -184,28 +184,20 @@ function dispatchCommand({
 async function main(argv: string[]): Promise<number> {
   const parsed = parseCommand(argv);
   const print = (line: string) => process.stdout.write(`${line}\n`);
-  if (parsed.kind === 'help') {
-    print(HELP);
-    return 0;
-  }
-  if (parsed.kind === 'version') {
-    print(await version());
-    return 0;
-  }
+  if (parsed.kind === 'help') return (print(HELP), 0);
+  if (parsed.kind === 'version') return (print(await version()), 0);
 
   const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (parsed.kind === 'default') {
-    if (terminal) {
-      return runMenu(
-        createContext({
-          repoRoot: REPO_ROOT,
-          cwd: process.cwd(),
-          interactive: true,
-        }),
-      );
-    }
-    print(HELP);
-    return 0;
+    return terminal
+      ? runMenu(
+          createContext({
+            repoRoot: REPO_ROOT,
+            cwd: process.cwd(),
+            interactive: true,
+          }),
+        )
+      : (print(HELP), 0);
   }
 
   const ctx = createContext({

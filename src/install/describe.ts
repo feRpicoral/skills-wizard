@@ -24,9 +24,9 @@ interface DisplayPathParams {
 }
 
 export function displayPath({ path, home }: DisplayPathParams): string {
-  return path === home || isInside({ dir: home, path })
-    ? `~${path.slice(home.length)}`
-    : path;
+  const rel = relative(home, path);
+  if (rel === '') return '~';
+  return isInside({ dir: home, path }) ? `~/${rel}` : path;
 }
 
 interface PlanPathParams {
