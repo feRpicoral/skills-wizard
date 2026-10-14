@@ -1,2 +1,5 @@
-*
-!AGENTS.md
+node_modules/
+coverage/
+.yarn/
+.DS_Store
+*.log
