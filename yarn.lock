@@ -1683,7 +1683,7 @@ __metadata:
     yaml: "npm:^2.9.1"
     zod: "npm:^4.6.7"
   bin:
-    skills-wizard: ./dist/cli.js
+    skills-wizard: dist/cli.js
   languageName: unknown
   linkType: soft
 
