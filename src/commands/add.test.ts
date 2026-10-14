@@ -9,7 +9,7 @@ import type { Context } from '../context.ts';
 import { CatalogError, EvalError, UsageError } from '../errors.ts';
 import { lstatIfExists } from '../install/fs.ts';
 import { loadCatalog } from '../skills/catalog.ts';
-import { AWESOME_INDEX_FILE } from '../skills/discover.ts';
+import { AWESOME_INDEX_FILE, searchCandidates } from '../skills/discover.ts';
 import { ensureSource } from '../skills/sources.ts';
 import { globalManifestPath, readManifest } from '../state/manifest.ts';
 import {
@@ -382,7 +382,7 @@ test('runAdd with --source all filters skills marked offensive or mismatched cat
         path: 'skills/red-team-exploit',
         category: 'offensive',
         name: 'red-team-exploit',
-        description: 'Offensive security testing skill',
+        description: 'Pentest toolkit',
         risk: 'offensive',
       },
       {
@@ -436,7 +436,18 @@ test('runAdd with --source all filters skills marked offensive or mismatched cat
     yes: false,
     dryRun: true,
   });
+  const awesomeCacheAfterDryRun = await lstatIfExists(
+    join(ctx.paths.sourcesDir, 'sickn33', 'agentic-awesome-skills'),
+  );
   ctx.discovery = { skillsShUrl: `http://127.0.0.1:${port}` };
+  const allCandidatesWithoutCategory = await searchCandidates({
+    cache: { root: ctx.paths.sourcesDir, ...ctx.sources },
+    catalog: await loadCatalog(join(repoRoot, 'catalog.yaml')),
+    query: 'security',
+    source: 'all',
+    includeOffensive: false,
+    skillsShUrl: `http://127.0.0.1:${port}`,
+  });
   const allCode = await runAdd(ctx, {
     target: 'security',
     source: 'all',
@@ -448,6 +459,11 @@ test('runAdd with --source all filters skills marked offensive or mismatched cat
 
   assert.equal(allCode, 0);
   assert.equal(awesomeDryRunCode, 0);
+  assert.equal(awesomeCacheAfterDryRun, null);
+  assert.deepEqual(
+    allCandidatesWithoutCategory.map((item) => item.name),
+    ['unindexed-skill', 'safe-defender'],
+  );
   assert.ok(catalog.skills.some((entry) => entry.name === 'safe-defender'));
   assert.ok(!catalog.skills.some((entry) => entry.name === 'red-team-exploit'));
   assert.ok(!catalog.skills.some((entry) => entry.name === 'unindexed-skill'));

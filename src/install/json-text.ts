@@ -11,9 +11,37 @@ import {
 } from 'jsonc-parser';
 
 import { JsonMergeError } from '../errors.ts';
-import { lineEnding } from './lines.ts';
+import { isBlank, lineEnding, withoutBom } from './lines.ts';
+
+export type JsonObject = Record<string, unknown>;
 
 const DEFAULT_INDENT = '  ';
+
+export function isObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function parseJsonObject(content: string | null): JsonObject {
+  if (content === null || isBlank(content)) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(withoutBom(content));
+  } catch (error) {
+    throw new JsonMergeError(
+      'not plain JSON (comments or syntax errors); edit it by hand',
+      { cause: error },
+    );
+  }
+  if (!isObject(parsed)) {
+    throw new JsonMergeError('must contain a JSON object');
+  }
+  return parsed;
+}
+
+export function isEmptyJsonObject(content: string): boolean {
+  return Object.keys(parseJsonObject(content)).length === 0;
+}
 
 function formattingOptions(text: string): FormattingOptions {
   const { indent, type } = detectIndent(text);
@@ -55,12 +83,15 @@ function inlineJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function nearestObject(root: Node, keys: JSONPath): Node {
+function nearestObject(
+  root: Node,
+  keys: JSONPath,
+): { ancestor: Node; depth: number } {
   for (let depth = keys.length - 1; depth > 0; depth -= 1) {
     const ancestor = findNodeAtLocation(root, keys.slice(0, depth));
-    if (ancestor) return ancestor;
+    if (ancestor) return { ancestor, depth };
   }
-  return root;
+  return { ancestor: root, depth: 0 };
 }
 
 interface SetJsonValueParams {
@@ -76,7 +107,8 @@ export function setJsonValue({
 }: SetJsonValueParams): string {
   const root = rootObject(text);
   const node = findNodeAtLocation(root, keys);
-  const parent = node?.parent?.parent ?? nearestObject(root, keys);
+  const nearest = nearestObject(root, keys);
+  const parent = node?.parent?.parent ?? nearest.ancestor;
   const [first] = parent.children ?? [];
   const inline =
     (node !== undefined &&
@@ -89,9 +121,22 @@ export function setJsonValue({
   const [edit] = modify(text, keys, value, {});
   if (!edit) return text;
   if (inline) {
-    const content = node
-      ? inlineJson(value)
-      : edit.content.replace(/^,/, ', ').replace(/":(?=\S)/g, '": ');
+    if (node) {
+      return applyEdits(text, [
+        {
+          offset: node.offset,
+          length: node.length,
+          content: inlineJson(value),
+        },
+      ]);
+    }
+    const insertedKey = String(keys[nearest.depth]);
+    const insertedValue = keys
+      .slice(nearest.depth + 1)
+      .reduceRight<unknown>((inner, key) => ({ [String(key)]: inner }), value);
+    const prefix = edit.content.startsWith(',') ? ', ' : '';
+    const suffix = edit.content.endsWith(',') ? ', ' : '';
+    const content = `${prefix}${JSON.stringify(insertedKey)}: ${inlineJson(insertedValue)}${suffix}`;
     return applyEdits(text, [{ ...edit, content }]);
   }
   const next = applyEdits(text, [edit]);
@@ -105,52 +150,35 @@ export function setJsonValue({
   return applyEdits(next, format(next, range, formattingOptions(text)));
 }
 
-interface RemoveChildParams {
-  text: string;
-  container: Node;
-  child: Node;
-}
-
-function removeChild({ text, container, child }: RemoveChildParams): string {
-  const siblings = container.children ?? [];
-  const index = siblings.indexOf(child);
-  const previous = siblings[index - 1];
-  const next = siblings[index + 1];
-  const end = child.offset + child.length;
-  if (previous) {
-    const start = previous.offset + previous.length;
-    return applyEdits(text, [
-      { offset: start, length: end - start, content: '' },
-    ]);
-  }
-  if (next) {
-    return applyEdits(text, [
-      {
-        offset: child.offset,
-        length: next.offset - child.offset,
-        content: '',
-      },
-    ]);
-  }
-  return applyEdits(text, [
-    {
-      offset: container.offset + 1,
-      length: container.length - 2,
-      content: '',
-    },
-  ]);
-}
-
 interface JsonLocationParams {
   text: string;
   keys: JSONPath;
 }
 
 export function removeJsonProperty({ text, keys }: JsonLocationParams): string {
-  const property = findNodeAtLocation(rootObject(text), keys)?.parent;
+  const root = rootObject(text);
+  const property = findNodeAtLocation(root, keys)?.parent;
   const container = property?.parent;
-  if (!property || !container) return text;
-  return removeChild({ text, container, child: property });
+  const [edit] = modify(text, keys, undefined, {});
+  if (!property || !container || !edit) return text;
+  if ((container.children?.length ?? 0) === 1) {
+    return applyEdits(text, [
+      {
+        ...edit,
+        length: container.offset + container.length - 1 - edit.offset,
+      },
+    ]);
+  }
+  if (container.children?.[0] === property) {
+    return applyEdits(text, [
+      {
+        ...edit,
+        offset: property.offset,
+        length: edit.offset + edit.length - property.offset,
+      },
+    ]);
+  }
+  return applyEdits(text, [edit]);
 }
 
 interface ArrayElementsParams extends JsonLocationParams {
@@ -166,28 +194,28 @@ export function appendArrayElements({
   if (array?.type !== 'array') {
     throw new JsonMergeError('expected a list to append to');
   }
-  const items = values.map((value) => JSON.stringify(value));
+  if (values.length === 0) return text;
   const [first] = array.children ?? [];
-  const last = array.children?.at(-1);
-  if (!first || !last) {
+  if (!first) {
     return applyEdits(text, [
       {
-        offset: array.offset + 1,
-        length: array.length - 2,
-        content: items.join(', '),
+        offset: array.offset,
+        length: array.length,
+        content: inlineJson(values),
       },
     ]);
   }
+  const [edit] = modify(text, [...keys, -1], values[0], {
+    isArrayInsertion: true,
+  });
+  if (!edit) return text;
   const separator = text.slice(array.offset, first.offset).includes('\n')
     ? `,${lineEnding(text || null)}${lineIndent(text, first.offset)}`
     : ', ';
-  return applyEdits(text, [
-    {
-      offset: last.offset + last.length,
-      length: 0,
-      content: items.map((item) => `${separator}${item}`).join(''),
-    },
-  ]);
+  const content = values
+    .map((value) => `${separator}${JSON.stringify(value)}`)
+    .join('');
+  return applyEdits(text, [{ ...edit, content }]);
 }
 
 export function removeArrayElements({
@@ -199,11 +227,19 @@ export function removeArrayElements({
   for (const value of values) {
     for (;;) {
       const array = findNodeAtLocation(rootObject(result), keys);
-      const child = array?.children?.find(
+      const children = array?.children ?? [];
+      const index = children.findIndex(
         (item) => item.type === 'string' && item.value === value,
       );
+      const child = children[index];
       if (!array || !child) break;
-      result = removeChild({ text: result, container: array, child });
+      const [edit] = modify(result, [...keys, index], undefined, {});
+      if (!edit) break;
+      const fixedEdit =
+        children.length > 1 && index === children.length - 1
+          ? { ...edit, length: child.offset + child.length - edit.offset }
+          : edit;
+      result = applyEdits(result, [fixedEdit]);
     }
   }
   return result;
@@ -223,12 +259,9 @@ interface ReplaceRawParams extends JsonLocationParams {
 
 export function replaceRawJson({ text, keys, raw }: ReplaceRawParams): string {
   const node = findNodeAtLocation(rootObject(text), keys);
-  if (!node) return text;
-  return applyEdits(text, [
-    {
-      offset: node.offset,
-      length: node.length,
-      content: raw,
-    },
-  ]);
+  return node
+    ? applyEdits(text, [
+        { offset: node.offset, length: node.length, content: raw },
+      ])
+    : text;
 }

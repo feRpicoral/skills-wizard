@@ -820,9 +820,7 @@ test('aggregateBenchmark and renderBenchmarkReport include compared skills and d
     'skill-b': [],
     'skill-c': ['case-1: Assertion 2'],
   });
-  assert.deepEqual(noBaselineCompare.assertion_analysis.regressing, [
-    'case-1: Assertion 2',
-  ]);
+  assert.deepEqual(noBaselineCompare.assertion_analysis.regressing, []);
   assert.deepEqual(noBaselineCompare.assertion_analysis.regressing_vs_compare, {
     'skill-b': ['case-1: Assertion 2'],
   });

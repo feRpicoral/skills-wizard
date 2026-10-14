@@ -6,12 +6,28 @@ import {
   type ParseSummaryParams,
   parseTriggerBenchmarkSummary,
 } from './artifacts.ts';
-import type { EvalCase, TriggerQuery, TriggerSplit } from './cases.ts';
 import {
-  formatAssertionLabel,
-  type GradingReport,
-  type TimingReport,
-} from './grade.ts';
+  aggregateCaseAssertions,
+  type AssertionAggregate,
+  type AssertionAnalysis,
+  type AssertionClassification,
+  buildAssertionAnalysis,
+  type CaseBenchmarkSummary,
+  classifyAssertion,
+  type DeltaSummary,
+  type EvalRunRecord,
+  type StatSummary,
+  type VariantAggregate,
+} from './assertion-analysis.ts';
+import type { EvalCase } from './cases.ts';
+import {
+  aggregateTriggerRuns,
+  type AggregateTriggerRunsParams,
+  type TriggerBenchmarkSummary,
+  type TriggerMetrics,
+  type TriggerQueryAggregate,
+  type TriggerQueryRunResult,
+} from './trigger-aggregate.ts';
 import {
   compareSkillVariant,
   type EvalRunnerName,
@@ -20,99 +36,30 @@ import {
 } from './workspace.ts';
 
 export {
+  aggregateCaseAssertions,
+  aggregateTriggerRuns,
+  type AggregateTriggerRunsParams,
+  type AssertionAggregate,
+  type AssertionAnalysis,
+  type AssertionClassification,
+  buildAssertionAnalysis,
+  type CaseBenchmarkSummary,
+  classifyAssertion,
+  type DeltaSummary,
   EVAL_SCHEMA_VERSION,
+  type EvalRunRecord,
   loadBenchmarkFromIteration,
   loadTriggerSummary,
   parseBenchmarkSummary,
   type ParseSummaryParams,
   parseTriggerBenchmarkSummary,
+  type StatSummary,
+  type TriggerBenchmarkSummary,
+  type TriggerMetrics,
+  type TriggerQueryAggregate,
+  type TriggerQueryRunResult,
+  type VariantAggregate,
 };
-
-export interface StatSummary {
-  mean: number;
-  stddev: number;
-  min: number;
-  max: number;
-}
-
-export interface VariantAggregate {
-  /** Number of runs aggregated, failed runs included. */
-  runs: number;
-  /** Runs where the agent timed out or failed; they count as failures. */
-  failed_runs: number;
-  /** Runs whose token usage was reported and is included in `tokens`. */
-  usage_reported_runs: number;
-  pass_rate: StatSummary;
-  time_seconds: StatSummary;
-  /** `null` when no run reported token usage. */
-  tokens: StatSummary | null;
-}
-
-export interface DeltaSummary {
-  /** Signed difference of mean pass rates as a fraction, e.g. "+0.33". */
-  pass_rate: string;
-  /** Signed difference of mean durations in seconds, e.g. "+12.40". */
-  time_seconds: string;
-  /** Signed difference of mean token counts, or "n/a" without usage. */
-  tokens: string;
-}
-
-export type AssertionClassification =
-  | 'differentiating'
-  | 'non-discriminating'
-  | 'regressing'
-  | 'failing'
-  | 'flaky'
-  | 'no-baseline';
-
-export interface AssertionAggregate {
-  text: string;
-  kind: string;
-  with_skill_pass_rate: number;
-  baseline_pass_rate?: number;
-  old_skill_pass_rate?: number;
-  compare_pass_rates?: Record<string, number>;
-  /**
-   * Compared with `without_skill`, or with `old_skill` when the eval ran no
-   * baseline; `no-baseline` when there is neither.
-   */
-  classification: AssertionClassification;
-  /** Compared with `old_skill`; present only with `--compare`. */
-  old_skill_classification?: AssertionClassification;
-  /** Compared with each competing skill; present only with `--compare <skill>`. */
-  compare_classifications?: Record<string, AssertionClassification>;
-}
-
-export interface AssertionAnalysis {
-  pass_only_with_skill: string[];
-  pass_in_both: string[];
-  fail_in_both: string[];
-  flaky: string[];
-  /** Assertions that pass less often with the skill than without it. */
-  regressing: string[];
-  /** Assertions that pass less often with the skill than with `old_skill`. */
-  regressing_vs_old: string[];
-  /** Assertions that pass less often with the skill than with each compared skill. */
-  regressing_vs_compare?: Record<string, string[]>;
-}
-
-export interface EvalRunRecord {
-  case_id: string;
-  prompt: string;
-  variant: EvalVariant;
-  run_index: number;
-  grading: GradingReport;
-  timing: TimingReport;
-}
-
-export interface CaseBenchmarkSummary {
-  case_id: string;
-  prompt: string;
-  expected_output: string;
-  variants: Partial<Record<EvalVariant, VariantAggregate>>;
-  assertions: AssertionAggregate[];
-  runs: EvalRunRecord[];
-}
 
 export type BaselineStatus = 'clean' | 'possibly contaminated' | 'skipped';
 
@@ -151,65 +98,6 @@ export interface BenchmarkSummary {
   cases: CaseBenchmarkSummary[];
   non_discriminating_assertions: string[];
   assertion_analysis: AssertionAnalysis;
-}
-
-export interface TriggerQueryRunResult {
-  query: string;
-  should_trigger: boolean;
-  triggered: boolean;
-  duration_ms: number;
-  /** Why the run failed; failed runs are left out of the trigger rate. */
-  error?: string;
-}
-
-export interface TriggerQueryAggregate {
-  query: string;
-  should_trigger: boolean;
-  trigger_count: number;
-  /** Runs recorded for the query, failed runs included. */
-  runs: number;
-  errored_runs: number;
-  /** Share of successful runs that triggered; `null` when every run failed. */
-  trigger_rate: number | null;
-  passed: boolean;
-}
-
-/**
- * Ratios are `null` when their denominator is zero. Queries whose runs all
- * failed are counted in `errored_queries` and left out of every other count.
- */
-export interface TriggerMetrics {
-  total_queries: number;
-  errored_queries: number;
-  positive_queries: number;
-  negative_queries: number;
-  true_positives: number;
-  false_positives: number;
-  true_negatives: number;
-  false_negatives: number;
-  recall: number | null;
-  precision: number | null;
-  specificity: number | null;
-  false_positive_rate: number | null;
-  accuracy: number | null;
-}
-
-export interface TriggerBenchmarkSummary {
-  schema_version: typeof EVAL_SCHEMA_VERSION;
-  metadata: {
-    skill_name: string;
-    skill_path: string;
-    runner: EvalRunnerName;
-    split: TriggerSplit;
-    runs_per_query: number;
-    threshold: number;
-    timestamp: string;
-    /** True when another copy of the skill may be loaded instead of the staged one. */
-    possibly_contaminated: boolean;
-    warnings: string[];
-  };
-  metrics: TriggerMetrics;
-  queries: TriggerQueryAggregate[];
 }
 
 /** Statistics are stored unrounded; rounding happens only when rendering. */
@@ -299,114 +187,6 @@ export function computeVariantDelta({
   };
 }
 
-interface ClassifyAssertionParams {
-  withSkillRate: number;
-  referenceRate?: number;
-}
-
-function isPartialRate(rate: number | undefined): boolean {
-  return rate !== undefined && rate > 0 && rate < 1;
-}
-
-export function classifyAssertion({
-  withSkillRate,
-  referenceRate,
-}: ClassifyAssertionParams): AssertionClassification {
-  if (referenceRate === undefined) {
-    return 'no-baseline';
-  }
-  if (isPartialRate(withSkillRate) || isPartialRate(referenceRate)) {
-    return 'flaky';
-  }
-  if (withSkillRate === 1 && referenceRate === 1) {
-    return 'non-discriminating';
-  }
-  if (withSkillRate > referenceRate) {
-    return 'differentiating';
-  }
-  if (withSkillRate < referenceRate) {
-    return 'regressing';
-  }
-  return 'failing';
-}
-
-interface AggregateCaseAssertionsParams {
-  evalCase: EvalCase;
-  caseRuns: readonly EvalRunRecord[];
-  compareSkillNames: readonly string[];
-}
-
-function aggregateCaseAssertions({
-  evalCase,
-  caseRuns,
-  compareSkillNames,
-}: AggregateCaseAssertionsParams): AssertionAggregate[] {
-  const withRuns = caseRuns.filter((run) => run.variant === 'with_skill');
-  const withoutRuns = caseRuns.filter((run) => run.variant === 'without_skill');
-  const oldRuns = caseRuns.filter((run) => run.variant === 'old_skill');
-
-  return evalCase.assertions.map((assertion, assertionIndex) => {
-    const label = formatAssertionLabel(assertion);
-    const kind = typeof assertion === 'string' ? 'string' : assertion.type;
-
-    const rateFor = (runs: readonly EvalRunRecord[]): number | undefined => {
-      if (runs.length === 0) return undefined;
-      const passedCount = runs.filter(
-        (run) => run.grading.expectations[assertionIndex]?.passed === true,
-      ).length;
-      return passedCount / runs.length;
-    };
-
-    const withRate = rateFor(withRuns) ?? 0;
-    const withoutRate = rateFor(withoutRuns);
-    const oldRate = rateFor(oldRuns);
-    const comparePassRates: Record<string, number> = {};
-    const compareClassifications: Record<string, AssertionClassification> = {};
-    for (const name of compareSkillNames) {
-      const rate = rateFor(
-        caseRuns.filter((run) => run.variant === compareSkillVariant(name)),
-      );
-      if (rate !== undefined) {
-        comparePassRates[name] = rate;
-        compareClassifications[name] = classifyAssertion({
-          withSkillRate: withRate,
-          referenceRate: rate,
-        });
-      }
-    }
-    const firstCompareRate =
-      compareSkillNames[0] !== undefined
-        ? comparePassRates[compareSkillNames[0]]
-        : undefined;
-
-    return {
-      text: label,
-      kind,
-      with_skill_pass_rate: withRate,
-      ...(withoutRate !== undefined ? { baseline_pass_rate: withoutRate } : {}),
-      ...(oldRate !== undefined ? { old_skill_pass_rate: oldRate } : {}),
-      ...(Object.keys(comparePassRates).length > 0
-        ? { compare_pass_rates: comparePassRates }
-        : {}),
-      classification: classifyAssertion({
-        withSkillRate: withRate,
-        referenceRate: withoutRate ?? oldRate ?? firstCompareRate,
-      }),
-      ...(oldRate !== undefined
-        ? {
-            old_skill_classification: classifyAssertion({
-              withSkillRate: withRate,
-              referenceRate: oldRate,
-            }),
-          }
-        : {}),
-      ...(Object.keys(compareClassifications).length > 0
-        ? { compare_classifications: compareClassifications }
-        : {}),
-    };
-  });
-}
-
 interface SummarizeCaseParams {
   evalCase: EvalCase;
   runs: readonly EvalRunRecord[];
@@ -439,71 +219,6 @@ function summarizeCase({
       compareSkillNames,
     }),
     runs: caseRuns,
-  };
-}
-
-export function buildAssertionAnalysis(
-  caseSummaries: readonly CaseBenchmarkSummary[],
-  compareSkillNames: readonly string[],
-): {
-  nonDiscriminating: string[];
-  analysis: AssertionAnalysis;
-} {
-  const nonDiscriminating: string[] = [];
-  const passOnlyWithSkill: string[] = [];
-  const passInBoth: string[] = [];
-  const failInBoth: string[] = [];
-  const flaky: string[] = [];
-  const regressing: string[] = [];
-  const regressingVsOld: string[] = [];
-  const regressingVsCompare: Record<string, string[]> = Object.fromEntries(
-    compareSkillNames.map((name) => [name, []]),
-  );
-
-  for (const caseSummary of caseSummaries) {
-    for (const assertion of caseSummary.assertions) {
-      const entry = `${caseSummary.case_id}: ${assertion.text}`;
-      if (assertion.classification === 'non-discriminating') {
-        nonDiscriminating.push(entry);
-        passInBoth.push(entry);
-      } else if (assertion.classification === 'differentiating') {
-        passOnlyWithSkill.push(entry);
-      } else if (assertion.classification === 'failing') {
-        failInBoth.push(entry);
-      } else if (assertion.classification === 'flaky') {
-        flaky.push(entry);
-      }
-      if (
-        (assertion.baseline_pass_rate !== undefined ||
-          assertion.old_skill_pass_rate === undefined) &&
-        assertion.classification === 'regressing'
-      ) {
-        regressing.push(entry);
-      }
-      if (assertion.old_skill_classification === 'regressing') {
-        regressingVsOld.push(entry);
-      }
-      for (const name of compareSkillNames) {
-        if (assertion.compare_classifications?.[name] === 'regressing') {
-          regressingVsCompare[name]?.push(entry);
-        }
-      }
-    }
-  }
-
-  return {
-    nonDiscriminating,
-    analysis: {
-      pass_only_with_skill: passOnlyWithSkill,
-      pass_in_both: passInBoth,
-      fail_in_both: failInBoth,
-      flaky,
-      regressing,
-      regressing_vs_old: regressingVsOld,
-      ...(compareSkillNames.length > 0
-        ? { regressing_vs_compare: regressingVsCompare }
-        : {}),
-    },
   };
 }
 
@@ -657,116 +372,5 @@ export function aggregateBenchmark({
     cases: caseSummaries,
     non_discriminating_assertions: nonDiscriminating,
     assertion_analysis: analysis,
-  };
-}
-
-export interface AggregateTriggerRunsParams {
-  skillName: string;
-  skillPath: string;
-  runner: EvalRunnerName;
-  split: TriggerSplit;
-  runsPerQuery: number;
-  threshold: number;
-  queries: readonly TriggerQuery[];
-  results: readonly TriggerQueryRunResult[];
-  possiblyContaminated?: boolean;
-  warnings?: readonly string[];
-  timestamp?: string;
-}
-
-interface RatioParams {
-  numerator: number;
-  denominator: number;
-}
-
-function ratio({ numerator, denominator }: RatioParams): number | null {
-  return denominator === 0 ? null : numerator / denominator;
-}
-
-/**
- * Aggregates per-query trigger runs into confusion-matrix counts (`TP`, `FP`,
- * `TN`, `FN`) and classification metrics (`recall`, `precision`, `specificity`,
- * `false_positive_rate`, `accuracy`). Queries whose runs all errored are
- * excluded from metric denominators and counted in `errored_queries`.
- */
-export function aggregateTriggerRuns({
-  skillName,
-  skillPath,
-  runner,
-  split,
-  runsPerQuery,
-  threshold,
-  queries,
-  results,
-  possiblyContaminated = false,
-  warnings = [],
-  timestamp = new Date().toISOString(),
-}: AggregateTriggerRunsParams): TriggerBenchmarkSummary {
-  const queryAggregates: TriggerQueryAggregate[] = queries.map((item) => {
-    const qRuns = results.filter((res) => res.query === item.query);
-    const okRuns = qRuns.filter((res) => !res.error);
-    const triggerCount = okRuns.filter((res) => res.triggered).length;
-    const triggerRate =
-      okRuns.length === 0 ? null : triggerCount / okRuns.length;
-    const passed =
-      triggerRate !== null &&
-      (item.should_trigger
-        ? triggerRate >= threshold
-        : triggerRate < threshold);
-    return {
-      query: item.query,
-      should_trigger: item.should_trigger,
-      trigger_count: triggerCount,
-      runs: qRuns.length,
-      errored_runs: qRuns.length - okRuns.length,
-      trigger_rate: triggerRate,
-      passed,
-    };
-  });
-
-  const evaluated = queryAggregates.filter((q) => q.trigger_rate !== null);
-  const positives = evaluated.filter((q) => q.should_trigger);
-  const negatives = evaluated.filter((q) => !q.should_trigger);
-
-  const tp = positives.filter((q) => q.passed).length;
-  const fn = positives.length - tp;
-  const tn = negatives.filter((q) => q.passed).length;
-  const fp = negatives.length - tn;
-
-  return {
-    schema_version: EVAL_SCHEMA_VERSION,
-    metadata: {
-      skill_name: skillName,
-      skill_path: skillPath,
-      runner,
-      split,
-      runs_per_query: runsPerQuery,
-      threshold,
-      timestamp,
-      possibly_contaminated: possiblyContaminated,
-      warnings: [...warnings],
-    },
-    metrics: {
-      total_queries: queryAggregates.length,
-      errored_queries: queryAggregates.length - evaluated.length,
-      positive_queries: positives.length,
-      negative_queries: negatives.length,
-      true_positives: tp,
-      false_positives: fp,
-      true_negatives: tn,
-      false_negatives: fn,
-      recall: ratio({ numerator: tp, denominator: positives.length }),
-      precision: ratio({ numerator: tp, denominator: tp + fp }),
-      specificity: ratio({ numerator: tn, denominator: negatives.length }),
-      false_positive_rate: ratio({
-        numerator: fp,
-        denominator: negatives.length,
-      }),
-      accuracy: ratio({
-        numerator: tp + tn,
-        denominator: evaluated.length,
-      }),
-    },
-    queries: queryAggregates,
   };
 }

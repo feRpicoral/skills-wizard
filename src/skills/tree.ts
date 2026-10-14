@@ -3,14 +3,6 @@ import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
 import { lstatIfExists } from '../install/fs.ts';
-import {
-  copySkillTree,
-  removeTree,
-  replaceWithCopy,
-  replaceWithLink,
-} from './tree-replace.ts';
-
-export { copySkillTree, removeTree, replaceWithCopy, replaceWithLink };
 
 const GENERATED: ReadonlySet<string> = new Set([
   '.DS_Store',

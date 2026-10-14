@@ -12,14 +12,12 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { tempDir, writeFiles } from '../test-support/fixtures.ts';
+import { escapingLinks, hashInstalledCopy, hashTree } from './tree.ts';
 import {
   copySkillTree,
-  escapingLinks,
-  hashInstalledCopy,
-  hashTree,
   replaceWithCopy,
   replaceWithLink,
-} from './tree.ts';
+} from './tree-replace.ts';
 
 async function listFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { recursive: true, withFileTypes: true });

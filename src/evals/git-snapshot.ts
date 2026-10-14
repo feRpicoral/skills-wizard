@@ -8,6 +8,7 @@ import { EvalError } from '../errors.ts';
 import {
   EXECUTABLE_MODE,
   parseLsTreeOutput,
+  readGitBlobBuffer,
   SYMLINK_MODE,
 } from '../skills/git-tree.ts';
 import { failureDetail } from '../skills/process.ts';
@@ -156,18 +157,13 @@ export async function readBlob({
   env,
 }: ReadBlobParams): Promise<Buffer> {
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['cat-file', 'blob', entry.objectHash],
-      {
-        cwd: repoRoot,
-        env: gitEnvironment(env),
-        encoding: 'buffer',
-        maxBuffer: GIT_MAX_BUFFER,
-        timeout: GIT_TIMEOUT_MS,
-      },
-    );
-    return stdout;
+    return await readGitBlobBuffer({
+      cwd: repoRoot,
+      objectHash: entry.objectHash,
+      env,
+      maxBuffer: GIT_MAX_BUFFER,
+      timeout: GIT_TIMEOUT_MS,
+    });
   } catch (error) {
     throw new EvalError(
       `Failed to read "${entry.relPath}" at ref "${ref}": ${failureDetail(error)}`,
