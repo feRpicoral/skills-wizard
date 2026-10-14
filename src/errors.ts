@@ -35,10 +35,26 @@ export class CatalogError extends AgentsConfigError {}
 
 export class SourceError extends AgentsConfigError {}
 
-export class SetupError extends AgentsConfigError {}
+export class SetupError extends AgentsConfigError {
+  readonly signal?: NodeJS.Signals;
 
-export function isSystemError(error: unknown): error is Error {
+  constructor(
+    message: string,
+    options?: ErrorOptions & { signal?: NodeJS.Signals },
+  ) {
+    super(message, options);
+    if (options?.signal !== undefined) {
+      this.signal = options.signal;
+    }
+  }
+}
+
+export function isSystemError(error: unknown): error is NodeJS.ErrnoException {
   return (
-    error instanceof Error && 'code' in error && typeof error.code === 'string'
+    error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    'errno' in error &&
+    typeof error.errno === 'number'
   );
 }

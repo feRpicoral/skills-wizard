@@ -8,6 +8,7 @@ import { createUpstream, isolatedGitEnv } from '../test-support/git.ts';
 import { resolveSkillSources } from './install.ts';
 import { loadSkillLibrary } from './library.ts';
 import type { SourceCache } from './sources.ts';
+import { hashTree } from './tree.ts';
 
 const CATALOG = [
   'categories:',
@@ -57,9 +58,10 @@ test('resolves catalog skills from the cache with their provenance', async (t) =
     fetch: true,
   });
 
+  const alphaDir = join(cache.root, 'owner', 'skills', 'skills', 'alpha');
   assert.deepEqual(problems, new Map());
   assert.deepEqual(sources.get('alpha'), {
-    dir: join(cache.root, 'owner', 'skills', 'skills', 'alpha'),
+    dir: alphaDir,
     record: {
       type: 'catalog',
       repo: 'owner/skills',
@@ -68,6 +70,7 @@ test('resolves catalog skills from the cache with their provenance', async (t) =
     },
     linkable: false,
     setup: 'echo ready',
+    hash: await hashTree(alphaDir),
   });
 });
 
@@ -81,10 +84,12 @@ test('resolves first-party skills from the repository without fetching', async (
     fetch: true,
   });
 
+  const notesDir = join(root, 'skills', 'notes');
   assert.deepEqual(sources.get('notes'), {
-    dir: join(root, 'skills', 'notes'),
+    dir: notesDir,
     record: { type: 'local', path: 'skills/notes' },
     linkable: true,
+    hash: await hashTree(notesDir),
   });
 });
 

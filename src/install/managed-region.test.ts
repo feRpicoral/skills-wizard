@@ -154,3 +154,17 @@ test('removeRegion keeps a byte order mark when the region starts the file', () 
 
   assert.equal(content, '\uFEFF# Team\n');
 });
+
+test('upsertRegion strips trailing CRLF line endings from body', () => {
+  const content = upsertRegion({
+    existing: null,
+    body: 'rules\r\n\r\n',
+  });
+
+  assert.equal(content, `${BEGIN}\nrules\n${END}\n`);
+});
+
+test('excludeMarkers rejects ids containing line breaks', () => {
+  assert.throws(() => excludeMarkers('app\n!*'), ManagedRegionError);
+  assert.throws(() => excludeMarkers('app\r!*'), ManagedRegionError);
+});

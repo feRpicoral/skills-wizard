@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ensureLine, removeLine } from './import-line.ts';
+import { ensureLine, hasLine, removeLine } from './import-line.ts';
 
 test('ensureLine creates a file with just the line', () => {
   assert.equal(
@@ -69,4 +69,11 @@ test('removeLine keeps a byte order mark at the start of the file', () => {
   });
 
   assert.equal(content, '\uFEFF# Claude\n');
+});
+
+test('hasLine and removeLine do not match indented lines', () => {
+  const existing = '  @AGENTS.md\n\n# Claude\n';
+
+  assert.equal(hasLine({ content: existing, line: '@AGENTS.md' }), false);
+  assert.equal(removeLine({ existing, line: '@AGENTS.md' }), existing);
 });

@@ -13,7 +13,7 @@ import { runMenu } from './commands/menu.ts';
 import { runSkill } from './commands/skill.ts';
 import { runSync } from './commands/sync.ts';
 import { runUpdate } from './commands/update.ts';
-import { createContext } from './context.ts';
+import { type Context, createContext } from './context.ts';
 import {
   AgentsConfigError,
   CancelledError,
@@ -22,6 +22,8 @@ import {
 } from './errors.ts';
 import { SKILL_MODES, type SkillMode } from './skills/install.ts';
 import { isToolId, TOOL_IDS, type ToolId } from './tools/registry.ts';
+
+export { isSystemError };
 
 const REPO_ROOT = join(import.meta.dirname, '..');
 
@@ -171,7 +173,24 @@ async function version(): Promise<string> {
   return packageJson.version;
 }
 
-async function main(argv: string[]): Promise<number> {
+type ParsedCommand =
+  | { kind: 'help' }
+  | { kind: 'version' }
+  | { kind: 'default' }
+  | {
+      kind: 'command';
+      command: Command;
+      positionals: string[];
+      values: ReturnType<
+        typeof parseArgs<{ options: typeof OPTIONS }>
+      >['values'];
+      scope?: Scope;
+      yes: boolean;
+      dryRun: boolean;
+      projectDir?: string;
+    };
+
+function parseCommand(argv: string[]): ParsedCommand {
   let parsed;
   try {
     parsed = parseArgs({
@@ -188,20 +207,12 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const { values, positionals } = parsed;
-  const print = (line: string) => process.stdout.write(`${line}\n`);
-  if (values.help) {
-    print(HELP);
-    return 0;
-  }
-  if (values.version) {
-    print(await version());
-    return 0;
-  }
+  if (values.help) return { kind: 'help' };
+  if (values.version) return { kind: 'version' };
   if (values.global && values.project !== undefined) {
     throw new UsageError('Use either --global or --project, not both.');
   }
 
-  const terminal = process.stdin.isTTY && process.stdout.isTTY;
   const command = positionals[0];
   if (command === undefined || command === 'help') {
     if (positionals.length > 1) {
@@ -216,18 +227,9 @@ async function main(argv: string[]): Promise<number> {
           `${flags(provided)} must follow a command such as init`,
         );
       }
-      if (terminal) {
-        return runMenu(
-          createContext({
-            repoRoot: REPO_ROOT,
-            cwd: process.cwd(),
-            interactive: true,
-          }),
-        );
-      }
+      return { kind: 'default' };
     }
-    print(HELP);
-    return 0;
+    return { kind: 'help' };
   }
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
@@ -239,22 +241,36 @@ async function main(argv: string[]): Promise<number> {
   }
   rejectOptions(command, Object.keys(values));
 
-  const ctx = createContext({
-    repoRoot: REPO_ROOT,
-    cwd: process.cwd(),
-    interactive: terminal,
-  });
   const scope: Scope | undefined =
     values.project !== undefined
       ? 'project'
       : values.global
         ? 'global'
         : undefined;
-  const yes = values.yes ?? false;
-  const dryRun = values['dry-run'] ?? false;
-  const projectDir =
-    values.project !== undefined ? { projectDir: values.project } : {};
+  return {
+    kind: 'command',
+    command,
+    positionals,
+    values,
+    ...(scope ? { scope } : {}),
+    yes: values.yes ?? false,
+    dryRun: values['dry-run'] ?? false,
+    ...(values.project !== undefined ? { projectDir: values.project } : {}),
+  };
+}
 
+interface DispatchCommandParams {
+  ctx: Context;
+  terminal: boolean;
+  parsed: Extract<ParsedCommand, { kind: 'command' }>;
+}
+
+function dispatchCommand({
+  ctx,
+  terminal,
+  parsed: { command, positionals, values, scope, yes, dryRun, projectDir },
+}: DispatchCommandParams): Promise<number> {
+  const projectOption = projectDir !== undefined ? { projectDir } : {};
   switch (command) {
     case 'init': {
       if (terminal && !yes) clack.intro('agents-config');
@@ -267,7 +283,7 @@ async function main(argv: string[]): Promise<number> {
         yes,
         dryRun,
         ...(scope ? { scope } : {}),
-        ...projectDir,
+        ...projectOption,
         ...(tools ? { tools } : {}),
         ...(blocks ? { blocks } : {}),
         ...(skills ? { skills } : {}),
@@ -283,7 +299,7 @@ async function main(argv: string[]): Promise<number> {
         scope: scope ?? 'global',
         yes,
         dryRun,
-        ...projectDir,
+        ...projectOption,
       });
     case 'update':
       if (terminal && !yes) clack.intro('agents-config');
@@ -301,7 +317,7 @@ async function main(argv: string[]): Promise<number> {
       });
     }
     case 'doctor':
-      return runDoctor(ctx, { scope: scope ?? 'global', ...projectDir });
+      return runDoctor(ctx, { scope: scope ?? 'global', ...projectOption });
     case 'skill':
       return runSkill(ctx, {
         subcommand: positionals[1],
@@ -311,21 +327,58 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-try {
-  process.exitCode = await main(process.argv.slice(2));
-} catch (error) {
-  if (error instanceof CancelledError) {
-    clack.cancel(error.message);
-    process.exitCode = 1;
-  } else if (error instanceof UsageError) {
-    process.stderr.write(
-      `${styleText('red', error.message)}\nRun agents-config --help for usage.\n`,
-    );
-    process.exitCode = 2;
-  } else if (error instanceof AgentsConfigError || isSystemError(error)) {
-    process.stderr.write(`${styleText('red', error.message)}\n`);
-    process.exitCode = 1;
-  } else {
-    throw error;
+async function main(argv: string[]): Promise<number> {
+  const parsed = parseCommand(argv);
+  const print = (line: string) => process.stdout.write(`${line}\n`);
+  if (parsed.kind === 'help') {
+    print(HELP);
+    return 0;
+  }
+  if (parsed.kind === 'version') {
+    print(await version());
+    return 0;
+  }
+
+  const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (parsed.kind === 'default') {
+    if (terminal) {
+      return runMenu(
+        createContext({
+          repoRoot: REPO_ROOT,
+          cwd: process.cwd(),
+          interactive: true,
+        }),
+      );
+    }
+    print(HELP);
+    return 0;
+  }
+
+  const ctx = createContext({
+    repoRoot: REPO_ROOT,
+    cwd: process.cwd(),
+    interactive: terminal,
+  });
+  return dispatchCommand({ ctx, terminal, parsed });
+}
+
+if (import.meta.main) {
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    if (error instanceof CancelledError) {
+      clack.cancel(error.message);
+      process.exitCode = 1;
+    } else if (error instanceof UsageError) {
+      process.stderr.write(
+        `${styleText('red', error.message)}\nRun agents-config --help for usage.\n`,
+      );
+      process.exitCode = 2;
+    } else if (error instanceof AgentsConfigError || isSystemError(error)) {
+      process.stderr.write(`${styleText('red', error.message)}\n`);
+      process.exitCode = 1;
+    } else {
+      throw error;
+    }
   }
 }

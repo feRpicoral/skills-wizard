@@ -29,6 +29,7 @@ test('resolvePaths honors tool home overrides', () => {
     geminiHome: '/home/me/.gemini',
     copilotHome: '/copilot',
     localBin: '/home/me/.local/bin',
+    applicationsDir: '/Applications',
   });
 });
 
@@ -36,6 +37,17 @@ test('resolvePaths keeps the source cache in ~/.cache by default', () => {
   const paths = resolvePaths({ HOME: '/home/me', XDG_CACHE_HOME: '' });
 
   assert.equal(paths.sourcesDir, '/home/me/.cache/agents-config/sources');
+});
+
+test('resolvePaths normalizes trailing slashes on HOME and tool overrides', () => {
+  const paths = resolvePaths({
+    HOME: '/home/me///',
+    CODEX_HOME: '/codex/',
+  });
+
+  assert.equal(paths.home, '/home/me');
+  assert.equal(paths.codexHome, '/codex');
+  assert.equal(paths.stateDir, '/home/me/.agents/agents-config');
 });
 
 test('resolvePaths treats empty values as unset', () => {

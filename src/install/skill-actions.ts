@@ -28,6 +28,15 @@ interface InstalledStateOptions {
   sourceHasSetup?: boolean;
 }
 
+/**
+ * Classifies the on-disk state of a skill destination (`missing`, `owned`,
+ * `changed`, or `unmanaged`) relative to its prior manifest entry.
+ *
+ * When `prior.install.setup` is omitted on a legacy manifest entry,
+ * `sourceHasSetup` determines whether setup-generated directories (such as
+ * `node_modules`) are ignored during tree hashing; during removal (`sourceHasSetup`
+ * omitted), setup output is not assumed so user-added files are never deleted.
+ */
 export async function installedState(
   path: string,
   prior: SkillEntry | null,
@@ -219,7 +228,7 @@ export async function planSkill({
       ? { mode: 'link', target: source.dir }
       : {
           mode: 'copy',
-          hash: await hashTree(source.dir),
+          hash: source.hash ?? (await hashTree(source.dir)),
           setup: source.setup !== undefined,
         };
   const entry: ManifestEntry = {
