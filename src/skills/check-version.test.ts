@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -155,4 +156,78 @@ test('check-version.mjs handles npm aliases, uncomparable ranges (declared), and
   assert.match(upperEslint.message, /outside the range/);
   assert.equal(upperPrettier.result['staleInstall'], true);
   assert.match(upperPrettier.message, /outside the range/);
+});
+
+test('check-version.mjs scripts are byte-for-byte identical and handle git ceiling, union/tilde/url ranges, and prereleases', async (t) => {
+  const [eslintSource, prettierSource] = await Promise.all([
+    readFile(eslintScript, 'utf8'),
+    readFile(prettierScript, 'utf8'),
+  ]);
+  assert.equal(eslintSource, prettierSource);
+
+  const outer = await tempDir(t);
+  await mkdir(join(outer, '.git'));
+  await writeFiles(outer, {
+    'node_modules/eslint/package.json': JSON.stringify({
+      name: 'eslint',
+      version: '8.57.0',
+    }),
+    'subproject/package.json': JSON.stringify({
+      name: 'subproject',
+    }),
+    'union-pkg/package.json': JSON.stringify({
+      name: 'union-pkg',
+      devDependencies: {
+        eslint: '^9.0.0 || ^10.0.0',
+      },
+    }),
+    'union-pkg/node_modules/eslint/package.json': JSON.stringify({
+      name: 'eslint',
+      version: '10.12.0',
+    }),
+    'tilde-major/package.json': JSON.stringify({
+      name: 'tilde-major',
+      devDependencies: {
+        eslint: '~10',
+      },
+    }),
+    'tilde-major/node_modules/eslint/package.json': JSON.stringify({
+      name: 'eslint',
+      version: '10.12.0',
+    }),
+    'prerelease-pkg/package.json': JSON.stringify({
+      name: 'prerelease-pkg',
+      devDependencies: {
+        eslint: '^10.12.0-beta.1',
+      },
+    }),
+    'prerelease-pkg/node_modules/eslint/package.json': JSON.stringify({
+      name: 'eslint',
+      version: '10.12.0-beta.1',
+    }),
+    'url-pkg/package.json': JSON.stringify({
+      name: 'url-pkg',
+      devDependencies: {
+        eslint: 'https://github.com/eslint/eslint/tarball/v9.0.0',
+      },
+    }),
+  });
+
+  const [subproject, unionPkg, tildeMajor, prereleasePkg, urlPkg] =
+    await Promise.all([
+      runCheckVersion(eslintScript, join(outer, 'subproject')),
+      runCheckVersion(eslintScript, join(outer, 'union-pkg')),
+      runCheckVersion(eslintScript, join(outer, 'tilde-major')),
+      runCheckVersion(eslintScript, join(outer, 'prerelease-pkg')),
+      runCheckVersion(eslintScript, join(outer, 'url-pkg')),
+    ]);
+
+  assert.equal(subproject.result['status'], 'missing');
+  assert.equal(unionPkg.result['status'], 'match');
+  assert.equal(unionPkg.result['staleInstall'], false);
+  assert.equal(tildeMajor.result['status'], 'match');
+  assert.equal(tildeMajor.result['staleInstall'], false);
+  assert.equal(prereleasePkg.result['status'], 'older');
+  assert.equal(prereleasePkg.result['staleInstall'], false);
+  assert.equal(urlPkg.result['status'], 'declared');
 });

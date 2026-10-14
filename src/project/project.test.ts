@@ -522,3 +522,72 @@ test('buildProjectSeed renders consistent commands for yarn, npm, pnpm, uv, Poet
   assert.equal(poetrySeed.includes('uv sync'), false);
   assert.equal(formatCodeSpan('`leading`'), '`` `leading` ``');
 });
+
+test('detectProject and buildProjectSeed handle workspace glob prefixes/exclusions, polyglot repos, and pyproject comments/escapes', async (t) => {
+  const root = await tempDir(t);
+  await writeFiles(root, {
+    'globs/package.json': JSON.stringify({
+      name: 'glob-monorepo',
+      workspaces: ['apps/web-*', 'packages/*/*', '!packages/internal/*'],
+    }),
+    'globs/apps/web-store/package.json': JSON.stringify({
+      name: '@glob/web-store',
+      dependencies: { next: '15.0.0' },
+    }),
+    'globs/apps/api/package.json': JSON.stringify({
+      name: '@glob/api',
+      dependencies: { '@nestjs/core': '11.0.0' },
+    }),
+    'globs/packages/ui/button/package.json': JSON.stringify({
+      name: '@glob/button',
+    }),
+    'globs/packages/internal/secret/package.json': JSON.stringify({
+      name: '@glob/secret',
+    }),
+    'polyglot/package.json': JSON.stringify({
+      name: 'polyglot-repo',
+      scripts: { build: 'tsc' },
+    }),
+    'polyglot/pyproject.toml': [
+      '[project] # inline comment on header',
+      'name = "polyglot-py"',
+      'description = """',
+      'Multi-line description mentioning ruff and pytest without configuring them.',
+      '"""',
+      '# [tool.ruff]',
+      '# ruff = true',
+      '',
+      '[tool.uv]',
+      'dev-dependencies = ["pytest>=8.0"]',
+      '',
+    ].join('\n'),
+  });
+
+  const [globs, polyglot] = await Promise.all([
+    detectProject(join(root, 'globs')),
+    detectProject(join(root, 'polyglot')),
+  ]);
+
+  assert.deepEqual(
+    globs.workspaces.map((ws) => ws.relativePath),
+    ['apps/web-store', 'packages/ui/button'],
+  );
+  assert.equal(globs.detectedBlocks.includes('stack/nextjs'), true);
+  assert.equal(globs.detectedBlocks.includes('stack/tailwind-shadcn'), false);
+  assert.equal(globs.detectedBlocks.includes('stack/nestjs'), false);
+
+  assert.equal(polyglot.packageManager, 'uv');
+  assert.equal(polyglot.detectedBlocks.includes('stack/python-uv'), true);
+  assert.equal(polyglot.pythonTools?.hasRuff, false);
+  assert.equal(polyglot.pythonTools?.hasPytest, true);
+
+  const polyglotSeed = buildProjectSeed(polyglot);
+  assert.equal(polyglotSeed.includes('- Install: `yarn install`'), true);
+  assert.equal(polyglotSeed.includes('- `yarn build`: `tsc`'), true);
+  assert.equal(
+    polyglotSeed.includes('- Install dependencies: `uv sync`'),
+    true,
+  );
+  assert.equal(polyglotSeed.includes('- Run tests: `uv run pytest`'), true);
+  assert.equal(polyglotSeed.includes('ruff check'), false);
+});

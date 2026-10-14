@@ -332,3 +332,16 @@ test('removing values keeps a list the user changed after the install', () => {
     '{"context": {"fileName": [ "GEMINI.md", "MINE.md" ]}}',
   );
 });
+
+test('removeArrayValues removes all duplicate occurrences of added values', () => {
+  const removed = removeArrayValues({
+    existing:
+      '{\n  "context": {\n    "fileName": ["AGENTS.md", "GEMINI.md", "AGENTS.md"]\n  }\n}\n',
+    keyPath: KEY,
+    values: ['AGENTS.md', 'GEMINI.md'],
+    restoreString: false,
+    createdKeys: 0,
+  });
+
+  assert.deepEqual(JSON.parse(removed), { context: { fileName: [] } });
+});

@@ -1,5 +1,7 @@
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
+
+import { z } from 'zod';
 
 import { EnvironmentError } from './errors.ts';
 
@@ -14,6 +16,7 @@ export interface Paths {
   geminiHome: string;
   copilotHome: string;
   localBin: string;
+  applicationsDir: string;
 }
 
 export interface AgyConfig {
@@ -31,7 +34,7 @@ function directory(env: Environment, name: string): string | undefined {
       `${name} must be an absolute path, got "${value}"`,
     );
   }
-  return value;
+  return resolve(value);
 }
 
 export function resolvePaths(env: Environment = process.env): Paths {
@@ -50,6 +53,7 @@ export function resolvePaths(env: Environment = process.env): Paths {
     geminiHome: join(home, '.gemini'),
     copilotHome: directory(env, 'COPILOT_HOME') ?? join(home, '.copilot'),
     localBin: join(home, '.local', 'bin'),
+    applicationsDir: '/Applications',
   };
 }
 
@@ -68,27 +72,19 @@ export function resolveAgyBin(
   return value;
 }
 
+const stringArraySchema = z.array(z.string());
+
 export function resolveAgyExtraArgs(env: Environment = process.env): string[] {
   const rawExtra = env.AGY_EXTRA_ARGS?.trim();
   if (!rawExtra) return [];
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(rawExtra);
+    return stringArraySchema.parse(JSON.parse(rawExtra));
   } catch (error) {
     throw new EnvironmentError(
       'AGY_EXTRA_ARGS must be a JSON array of strings',
       { cause: error },
     );
   }
-  if (
-    !Array.isArray(parsed) ||
-    !parsed.every((item): item is string => typeof item === 'string')
-  ) {
-    throw new EnvironmentError(
-      'AGY_EXTRA_ARGS must be a JSON array of strings',
-    );
-  }
-  return parsed;
 }
 
 export function resolveAgyConfig(env: Environment = process.env): AgyConfig {

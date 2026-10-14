@@ -14,6 +14,7 @@ import {
   type SourceCache,
   sourceCommit,
 } from './sources.ts';
+import { hashTree } from './tree.ts';
 import { validateSkill } from './validate.ts';
 
 export const SKILL_MODES = ['copy', 'link'] as const;
@@ -26,6 +27,7 @@ export interface SkillSource {
   record: SkillSourceRecord;
   linkable: boolean;
   setup?: string;
+  hash?: string;
 }
 
 export interface SkillResolution {
@@ -45,7 +47,8 @@ async function checkedSource(
   if (report.errors.length > 0) {
     resolution.problems.set(name, report.errors.join('; '));
   } else {
-    resolution.sources.set(name, source);
+    const hash = source.hash ?? (await hashTree(source.dir));
+    resolution.sources.set(name, { ...source, hash });
   }
 }
 
