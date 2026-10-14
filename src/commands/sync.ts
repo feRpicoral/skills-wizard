@@ -8,8 +8,8 @@ import {
   confirmAndApply,
   loadLibrary,
   type Location,
-  notify,
   notifyLeftGit,
+  notifyReconciledBlocks,
   readLocationManifest,
   type ReconciledManifest,
   reconcileManifest,
@@ -51,44 +51,6 @@ async function resolveVariables({
     `Using looked-up values for new variables: ${missingVariables.map((name) => `${name}=${foundVariables[name] ?? ''}`).join(', ')}`,
   );
   return foundVariables;
-}
-
-interface NotifyReconciledBlocksParams {
-  ctx: Context;
-  prompting: boolean;
-  scope: Scope;
-  reconciled: ReconciledManifest;
-}
-
-function notifyReconciledBlocks({
-  ctx,
-  prompting,
-  scope,
-  reconciled: { unknownBlocks, outOfScopeBlocks, addedBlocks },
-}: NotifyReconciledBlocksParams): void {
-  if (unknownBlocks.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Blocks no longer in the library were dropped: ${unknownBlocks.join(', ')}`,
-      level: 'warn',
-    });
-  }
-  if (outOfScopeBlocks.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScopeBlocks.join(', ')}`,
-      level: 'warn',
-    });
-  }
-  if (addedBlocks.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Added required blocks: ${addedBlocks.join(', ')}`,
-    });
-  }
 }
 
 interface SyncOptions {
