@@ -17,6 +17,11 @@ export interface AgySettings {
   extraArgs: () => string[];
 }
 
+export interface DiscoverySettings {
+  skillsShUrl?: string | (() => string);
+  fetch?: typeof globalThis.fetch;
+}
+
 export interface Context {
   paths: Paths;
   repoRoot: string;
@@ -24,6 +29,7 @@ export interface Context {
   searchPath: string[];
   interactive: boolean;
   sources: SourceSettings;
+  discovery?: DiscoverySettings;
   agy?: AgySettings;
   print: (line?: string) => void;
 }
@@ -32,31 +38,44 @@ interface CreateContextParams {
   repoRoot: string;
   cwd: string;
   interactive: boolean;
+  paths?: Paths;
+  searchPath?: string[];
+  sources?: Partial<SourceSettings>;
+  discovery?: Partial<DiscoverySettings>;
+  print?: (line?: string) => void;
 }
 
 export function createContext({
   repoRoot,
   cwd,
   interactive,
+  paths = resolvePaths(),
+  searchPath = resolveSearchPath(),
+  sources,
+  discovery,
+  print = (line = '') => {
+    process.stdout.write(`${line}\n`);
+  },
 }: CreateContextParams): Context {
   return {
-    paths: resolvePaths(),
+    paths,
     repoRoot,
     cwd,
-    searchPath: resolveSearchPath(),
+    searchPath,
     interactive,
     sources: {
-      url: githubUrl,
-      env: gitEnvironment(),
-      now: () => new Date(),
-      skillsShUrl: () => resolveSkillsShUrl(),
+      url: sources?.url ?? githubUrl,
+      env: sources?.env ?? gitEnvironment(),
+      now: sources?.now ?? (() => new Date()),
+    },
+    discovery: {
+      skillsShUrl: discovery?.skillsShUrl ?? (() => resolveSkillsShUrl()),
+      ...(discovery?.fetch !== undefined ? { fetch: discovery.fetch } : {}),
     },
     agy: {
       bin: () => resolveAgyBin(),
       extraArgs: () => resolveAgyExtraArgs(),
     },
-    print: (line = '') => {
-      process.stdout.write(`${line}\n`);
-    },
+    print,
   };
 }

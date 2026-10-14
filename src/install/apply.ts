@@ -61,17 +61,30 @@ async function execute(action: PlannedAction): Promise<void> {
 async function setUp(
   action: PlannedAction,
   failures: SetupFailure[],
-): Promise<void> {
-  if (action.change.type !== 'copy-tree' || !action.change.setup) return;
+): Promise<NodeJS.Signals | undefined> {
+  if (action.change.type !== 'copy-tree' || !action.change.setup) {
+    return undefined;
+  }
   try {
-    await runSetup({ dir: action.path, command: action.change.setup });
+    await runSetup({
+      dir: action.path,
+      command: action.change.setup,
+      deferSignal: true,
+    });
+    return undefined;
   } catch (error) {
     if (!(error instanceof SetupError)) throw error;
     failures.push({ path: action.path, message: error.message });
+    return error.signal;
   }
 }
 
-async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
+interface RecordManifestParams {
+  plan: Plan;
+  applied: ReadonlySet<PlannedAction>;
+}
+
+async function recordManifest({ plan, applied }: RecordManifestParams) {
   const entries = plan.actions.flatMap((action) => {
     const entry = applied.has(action) ? action.entry : action.previous;
     return entry ? [entry] : [];
@@ -81,11 +94,20 @@ async function recordManifest(plan: Plan, applied: Set<PlannedAction>) {
     return;
   }
 
-  const recordedSkills = new Set(
+  const installedSkills = new Set(
     entries.flatMap((entry) => (entry.kind === 'skill' ? [entry.name] : [])),
   );
-  const skills = plan.manifest.skills.filter((name) =>
-    recordedSkills.has(name),
+  const unappliedSkills = new Set(
+    plan.actions.flatMap((action) =>
+      action.skill !== undefined &&
+      !applied.has(action) &&
+      !installedSkills.has(action.skill)
+        ? [action.skill]
+        : [],
+    ),
+  );
+  const skills = plan.manifest.skills.filter(
+    (name) => !unappliedSkills.has(name),
   );
   const manifest = { ...plan.manifest, skills, entries };
   const existing = await readTextIfExists(plan.manifestPath);
@@ -102,10 +124,15 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+interface ExecuteAllResult {
+  failure?: ApplyError;
+  signal?: NodeJS.Signals;
+}
+
 async function executeAll(
   plan: Plan,
   outcome: ApplyOutcome,
-): Promise<ApplyError | undefined> {
+): Promise<ExecuteAllResult> {
   for (const action of plan.actions) {
     if (action.status === 'conflict') {
       outcome.skipped.push(action);
@@ -114,25 +141,43 @@ async function executeAll(
     try {
       await execute(action);
     } catch (error) {
-      return new ApplyError(
-        `Could not update ${action.path}: ${message(error)}`,
-        { cause: error },
-      );
+      return {
+        failure: new ApplyError(
+          `Could not update ${action.path}: ${message(error)}`,
+          { cause: error },
+        ),
+      };
     }
     outcome.applied.push(action);
-    await setUp(action, outcome.setupFailures);
+    const signal = await setUp(action, outcome.setupFailures);
+    if (signal !== undefined) {
+      return { signal };
+    }
   }
-  return undefined;
+  return {};
 }
 
+/**
+ * Executes a computed {@link Plan} against the filesystem and persists the
+ * resulting manifest state.
+ *
+ * Actions with `status === 'conflict'` are skipped and retain their `previous`
+ * manifest entry. If a filesystem write fails mid-plan, `applyPlan` still
+ * attempts to record the manifest for all actions applied so far before
+ * rethrowing {@link ApplyError}; if recording the manifest itself fails, the
+ * thrown {@link ApplyError} lists any modified paths that could not be recorded.
+ */
 export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   const outcome: ApplyOutcome = { applied: [], skipped: [], setupFailures: [] };
   const { applied } = outcome;
 
-  const failure = await executeAll(plan, outcome);
+  const { failure, signal } = await executeAll(plan, outcome);
 
   try {
-    await recordManifest(plan, new Set(applied));
+    await recordManifest({
+      plan,
+      applied: new Set(applied),
+    });
   } catch (error) {
     const unrecorded = applied
       .filter((action) => action.change.type !== 'none')
@@ -150,6 +195,9 @@ export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
       ].join('; '),
       { cause: error },
     );
+  }
+  if (signal !== undefined) {
+    process.kill(process.pid, signal);
   }
   if (failure !== undefined) throw failure;
 

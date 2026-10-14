@@ -1,6 +1,7 @@
-import { relative, sep } from 'node:path';
+import { relative } from 'node:path';
 import { styleText } from 'node:util';
 
+import { isInside } from './fs.ts';
 import type { ActionStatus, ManifestStatus, Plan } from './plan.ts';
 
 type Format = Parameters<typeof styleText>[0];
@@ -23,7 +24,7 @@ interface DisplayPathParams {
 }
 
 export function displayPath({ path, home }: DisplayPathParams): string {
-  return path === home || path.startsWith(`${home}${sep}`)
+  return path === home || isInside({ dir: home, path })
     ? `~${path.slice(home.length)}`
     : path;
 }
@@ -35,7 +36,7 @@ interface PlanPathParams {
 }
 
 export function planPath({ plan, path, home }: PlanPathParams): string {
-  return plan.projectDir && path.startsWith(`${plan.projectDir}${sep}`)
+  return plan.projectDir && isInside({ dir: plan.projectDir, path })
     ? relative(plan.projectDir, path)
     : displayPath({ path, home });
 }
