@@ -62,6 +62,7 @@ function hasMetaLatest(
   meta: z.infer<typeof registryMetaSchema> | undefined,
 ): boolean {
   if (!meta) return false;
+
   for (const entry of Object.values(meta)) {
     if (
       typeof entry === 'object' &&
@@ -72,13 +73,16 @@ function hasMetaLatest(
       return true;
     }
   }
+
   return false;
 }
 
 function extractInnerServer(rawItem: unknown): ExtractedRegistryServer | null {
   const wrapperResult = registryItemWrapperSchema.safeParse(rawItem);
+
   if (wrapperResult.success && wrapperResult.data.server !== undefined) {
     const { server, isLatest, _meta } = wrapperResult.data;
+
     return {
       inner: server,
       isLatest:
@@ -88,14 +92,26 @@ function extractInnerServer(rawItem: unknown): ExtractedRegistryServer | null {
         hasMetaLatest(server._meta),
     };
   }
+
   const directResult = registryServerWithMetaSchema.safeParse(rawItem);
   if (!directResult.success) return null;
+
   return {
     inner: directResult.data,
     isLatest:
       directResult.data.isLatest === true ||
       hasMetaLatest(directResult.data._meta),
   };
+}
+
+function resolveBaseUrl(
+  baseUrl: BuildRegistrySearchUrlParams['baseUrl'],
+  official: boolean,
+): string {
+  if (typeof baseUrl === 'function') return baseUrl({ official });
+  if (typeof baseUrl === 'string' && baseUrl.trim()) return baseUrl.trim();
+
+  return resolveMcpRegistryUrl({ official, env: {} });
 }
 
 interface BuildRegistrySearchUrlParams {
@@ -111,25 +127,24 @@ function buildRegistrySearchUrl({
   query,
   limit,
 }: BuildRegistrySearchUrlParams): string {
-  const raw =
-    typeof baseUrl === 'function'
-      ? baseUrl({ official })
-      : typeof baseUrl === 'string' && baseUrl.trim()
-        ? baseUrl.trim()
-        : resolveMcpRegistryUrl({ official, env: {} });
+  const raw = resolveBaseUrl(baseUrl, official);
   const trimmed = raw.replace(/\/+$/, '');
   const upstreamLimit = Math.min(
     Math.max(limit * 3, MIN_UPSTREAM_LIMIT),
     MAX_UPSTREAM_LIMIT,
   );
+
   try {
     const url = new URL(trimmed);
+
     if (url.pathname === '' || url.pathname === '/') {
       url.pathname = '/v0.1/servers';
     }
+
     url.searchParams.set('search', query);
     url.searchParams.set('version', 'latest');
     url.searchParams.set('limit', String(upstreamLimit));
+
     return url.toString();
   } catch {
     const params = new URLSearchParams({
@@ -137,6 +152,7 @@ function buildRegistrySearchUrl({
       version: 'latest',
       limit: String(upstreamLimit),
     });
+
     return `${trimmed}?${params.toString()}`;
   }
 }
@@ -170,6 +186,7 @@ export async function searchMcpRegistry({
       { cause: error },
     );
   }
+
   if (!response.ok) {
     throw new McpError(
       `MCP registry search returned HTTP ${response.status} (${endpoint})`,
@@ -188,11 +205,13 @@ export async function searchMcpRegistry({
     });
   } catch (error) {
     if (error instanceof McpError) throw error;
+
     throw new McpError(
       `MCP registry response failed (${endpoint}): ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }
+
   let rawJson: unknown;
   try {
     rawJson = JSON.parse(text);
@@ -203,6 +222,7 @@ export async function searchMcpRegistry({
   }
 
   const envelope = registryEnvelopeSchema.safeParse(rawJson);
+
   if (!envelope.success) {
     throw new McpError(
       `Unexpected MCP registry response: ${z.prettifyError(envelope.error)}`,
@@ -210,9 +230,11 @@ export async function searchMcpRegistry({
   }
 
   const groupedByFullName = new Map<string, ExtractedRegistryServer[]>();
+
   for (const rawItem of envelope.data.servers) {
     const extracted = extractInnerServer(rawItem);
     if (!extracted) continue;
+
     const existing = groupedByFullName.get(extracted.inner.name) ?? [];
     existing.push(extracted);
     groupedByFullName.set(extracted.inner.name, existing);
@@ -220,9 +242,11 @@ export async function searchMcpRegistry({
 
   const usedNames = new Set<string>();
   const candidates: McpSearchCandidate[] = [];
+
   for (const [fullName, versions] of groupedByFullName) {
     const baseName = deriveShortServerName(fullName);
     if (!baseName) continue;
+
     const shortName = disambiguateShortServerName({
       registryName: fullName,
       baseName,
@@ -234,6 +258,7 @@ export async function searchMcpRegistry({
       (a, b) => Number(b.isLatest) - Number(a.isLatest),
     );
     let matched: McpSearchCandidate | null = null;
+
     for (const entry of ordered) {
       try {
         matched = toCandidate({ inner: entry.inner, shortName });
@@ -242,9 +267,12 @@ export async function searchMcpRegistry({
       }
       if (matched) break;
     }
+
     if (!matched) continue;
+
     usedNames.add(matched.server.name);
     candidates.push(matched);
+
     if (candidates.length >= limit) break;
   }
 

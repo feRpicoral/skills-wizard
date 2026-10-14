@@ -38,6 +38,7 @@ function loadBundledPresetsById(): Promise<
   cachedPresetsById ??= loadPresets(presetsPath(REPO_ROOT)).then(
     (presets) => new Map(presets.map((preset) => [preset.id, preset])),
   );
+
   return cachedPresetsById;
 }
 
@@ -116,16 +117,19 @@ function isViteSsrFramework(deps: ReadonlySet<string>): boolean {
   if (deps.has('@react-router/dev') || deps.has('@tanstack/react-start')) {
     return true;
   }
+
   return [...deps].some((dep) => dep.startsWith('@remix-run/'));
 }
 
 function detectNodePresets(deps: ReadonlySet<string>): Set<PresetId> {
   const presets = new Set<PresetId>();
+
   if (deps.has('expo')) presets.add('expo-app');
   if (deps.has('next')) presets.add('nextjs-app');
   if (deps.has('@nestjs/core') || deps.has('@nestjs/common')) {
     presets.add('nestjs-api');
   }
+
   if (
     deps.has('vite') &&
     (deps.has('react') || deps.has('@vitejs/plugin-react')) &&
@@ -133,6 +137,7 @@ function detectNodePresets(deps: ReadonlySet<string>): Set<PresetId> {
   ) {
     presets.add('vite-spa');
   }
+
   return presets;
 }
 
@@ -143,10 +148,13 @@ function choosePreset(params: {
   rootDeps: ReadonlySet<string>;
 }): PresetId | undefined {
   const { hasNx, hasPackageJson, hasPyproject, rootDeps } = params;
+
   if (hasNx || rootDeps.has('nx') || rootDeps.has('@nx/workspace')) {
     return 'nx-monorepo';
   }
+
   const nodePresets = detectNodePresets(rootDeps);
+
   for (const candidate of [
     'expo-app',
     'nextjs-app',
@@ -155,9 +163,11 @@ function choosePreset(params: {
   ] as const) {
     if (nodePresets.has(candidate)) return candidate;
   }
+
   if (hasPyproject && !hasPackageJson) return 'python-service';
   if (hasPackageJson) return 'node-tool';
   if (hasPyproject) return 'python-service';
+
   return undefined;
 }
 
@@ -179,8 +189,10 @@ function collectWorkspaceFrameworkSelections(
     'vite-spa',
   ] as const) {
     if (!nodePresets.has(presetId)) continue;
+
     const preset = presetsById.get(presetId);
     if (!preset) continue;
+
     for (const blockId of preset.blocks) {
       if (
         !baseBlocks.has(blockId) &&
@@ -189,6 +201,7 @@ function collectWorkspaceFrameworkSelections(
         blocks.add(blockId);
       }
     }
+
     for (const skillName of preset.skills) {
       if (!baseSkills.has(skillName)) skills.add(skillName);
     }
@@ -219,9 +232,11 @@ function collectCrossCuttingSelections(params: {
     skills,
     mcpServers,
   } = params;
+
   if (hasNx || allDeps.has('nx') || allDeps.has('@nx/workspace')) {
     mcpServers.add('nx');
   }
+
   const hasPrisma =
     hasPrismaFiles || allDeps.has('prisma') || allDeps.has('@prisma/client');
   if (hasPrisma) {
@@ -235,6 +250,7 @@ function collectCrossCuttingSelections(params: {
       skills.add(s);
     }
   }
+
   const hasSupabase =
     hasSupabaseFiles ||
     allDeps.has('@supabase/supabase-js') ||
@@ -244,15 +260,18 @@ function collectCrossCuttingSelections(params: {
       blocks.add('stack/supabase-prisma');
       skills.add('supabase-prisma');
     }
+
     skills.add('supabase');
     skills.add('supabase-postgres-best-practices');
     mcpServers.add('supabase');
   }
+
   if (hasSentry) mcpServers.add('sentry');
   if (allDeps.has('@tanstack/react-query')) {
     blocks.add('stack/tanstack-query');
     skills.add('tanstack-query-expert');
   }
+
   if (
     hasComponentsJson ||
     allDeps.has('tailwindcss') ||
@@ -262,9 +281,11 @@ function collectCrossCuttingSelections(params: {
     blocks.add('stack/tailwind-shadcn');
     skills.add('tailwind-patterns');
   }
+
   const hasAiSdk =
     allDeps.has('ai') || [...allDeps].some((dep) => dep.startsWith('@ai-sdk/'));
   const hasAnthropicSdk = allDeps.has('@anthropic-ai/sdk');
+
   if (
     hasAiSdk ||
     hasAnthropicSdk ||
@@ -273,11 +294,13 @@ function collectCrossCuttingSelections(params: {
   ) {
     blocks.add('stack/llm-apps');
   }
+
   if (hasAiSdk) skills.add('ai-sdk');
   if (hasAnthropicSdk) skills.add('claude-api');
   if (allDeps.has('@playwright/test') || allDeps.has('playwright')) {
     skills.add('playwright-cli');
   }
+
   if (isUvProject) blocks.add('stack/python-uv');
 }
 
@@ -308,6 +331,7 @@ function collectAdditiveSelections(params: {
       skills,
     );
   }
+
   collectCrossCuttingSelections({
     ...params,
     blocks,
@@ -346,6 +370,7 @@ async function probeProjectMarkers(
         ),
       ],
     });
+
   const [hasPrismaFiles, hasSupabaseFiles, hasComponentsJson, hasSentryFiles] =
     await Promise.all([
       probe(['prisma/schema.prisma', 'prisma.config.ts']),
@@ -353,6 +378,7 @@ async function probeProjectMarkers(
       probe(['components.json']),
       probe(SENTRY_ROOT_CANDIDATES),
     ]);
+
   return {
     hasPrismaFiles,
     hasSupabaseFiles,
@@ -371,6 +397,7 @@ export async function detectProject(
   projectDir: string,
 ): Promise<ProjectDetection> {
   const root = (await safeRealLocation(projectDir)) ?? projectDir;
+
   const [
     pkgSource,
     pyprojectSource,
@@ -451,12 +478,13 @@ export async function detectProject(
     hasUvLock ||
     packageManager === 'uv' ||
     (pyproject !== null && !isPoetryProject);
-  const pythonPackageManager: 'uv' | 'poetry' | undefined =
-    pyproject !== null
-      ? isPoetryProject && !pyproject.hasUvSection && !hasUvLock
-        ? 'poetry'
-        : 'uv'
-      : undefined;
+  let pythonPackageManager: 'uv' | 'poetry' | undefined;
+  if (pyproject !== null) {
+    const isPoetryOnly =
+      isPoetryProject && !pyproject.hasUvSection && !hasUvLock;
+    pythonPackageManager = isPoetryOnly ? 'poetry' : 'uv';
+  }
+
   const additive = collectAdditiveSelections({
     hasNx,
     hasWorkspacePackages:

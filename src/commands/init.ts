@@ -66,6 +66,7 @@ export interface InitOptions {
 
 function isOnSearchPath(ctx: Context, dir: string): boolean {
   const wanted = resolve(dir);
+
   return ctx.searchPath.some((entry) => resolve(ctx.cwd, entry) === wanted);
 }
 
@@ -86,15 +87,19 @@ function checkScopeOptions(
       '--link-command only applies to system-wide installs.',
     );
   }
+
   if (scope === 'project' && skillMode !== undefined) {
     throw new UsageError('--skill-mode only applies to system-wide installs.');
   }
+
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
   }
+
   if (scope === 'global' && preset !== undefined) {
     throw new UsageError('--preset only applies to project installs.');
   }
+
   if (scope === 'global' && style !== undefined) {
     throw new UsageError('--style only applies to project installs.');
   }
@@ -114,8 +119,10 @@ async function readGlobalManifestForProject(
         message: `Skipping corrupt system-wide manifest when detecting default project style: ${error.message}`,
         level: 'warn',
       });
+
       return null;
     }
+
     throw error;
   }
 }
@@ -176,6 +183,7 @@ async function resolveProjectPresetContext({
     globalManifest !== null &&
     tools.length > 0 &&
     tools.every((tool) => globalManifest.tools.includes(tool));
+
   if (reconciled?.unknownPreset !== undefined) {
     notify({
       ctx,
@@ -184,6 +192,7 @@ async function resolveProjectPresetContext({
       level: 'warn',
     });
   }
+
   const previousPreset = reconciled?.preset;
   const { preset, style } = await resolveProjectPresetAndStyle({
     scope,
@@ -267,7 +276,9 @@ export async function runInit(
 ): Promise<number> {
   const prompting = ctx.interactive && !confirmOptions.yes;
   const scope = requestedScope ?? (prompting ? await promptScope() : undefined);
+
   if (!scope) throw new UsageError('Pass --global or --project <dir>.');
+
   checkScopeOptions(scope, {
     linkCommand: requestedLinkCommand,
     skillMode: requestedSkillMode,
@@ -383,7 +394,9 @@ export async function runInit(
   });
 
   const installing = tools.length > 0 ? skills : [];
+
   if (scope === 'global') await warnLockedSkills(ctx, prompting, installing);
+
   const skillSources = await fetchSkills({
     ctx,
     prompting,
@@ -413,6 +426,7 @@ export async function runInit(
     skillSources,
     mcpCatalog,
   });
+
   if (keepLocal) {
     await warnTrackedFiles({
       ctx,
@@ -423,6 +437,7 @@ export async function runInit(
   }
 
   const result = await confirmAndApply(ctx, plan, confirmOptions);
+
   if (
     result.applied &&
     linkCommand &&
@@ -435,5 +450,6 @@ export async function runInit(
       level: 'warn',
     });
   }
+
   return result.code;
 }

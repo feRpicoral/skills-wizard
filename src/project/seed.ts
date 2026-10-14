@@ -42,29 +42,40 @@ function orderedScriptEntries(
     ([name]) => !LIFECYCLE_SCRIPTS.has(name),
   );
   const rank = new Map(SCRIPT_ORDER.map((name, index) => [name, index]));
+
   return entries.sort(([left], [right]) => {
     const leftRank = rank.get(left);
     const rightRank = rank.get(right);
+
     if (leftRank !== undefined && rightRank !== undefined) {
       return leftRank - rightRank;
     }
+
     if (leftRank !== undefined) return -1;
+
     if (rightRank !== undefined) return 1;
+
     return left.localeCompare(right);
   });
 }
 
 function runPrefix(pm: ProjectDetection['packageManager']): string {
   if (pm === 'npm') return 'npm run';
+
   if (pm === 'pnpm') return 'pnpm';
+
   if (pm === 'bun') return 'bun run';
+
   return 'yarn';
 }
 
 function execPrefix(pm: ProjectDetection['packageManager']): string {
   if (pm === 'npm') return 'npx';
+
   if (pm === 'pnpm') return 'pnpm exec';
+
   if (pm === 'bun') return 'bunx';
+
   return 'yarn';
 }
 
@@ -76,10 +87,13 @@ function execPrefix(pm: ProjectDetection['packageManager']): string {
 export function formatCodeSpan(raw: string): string {
   const collapsed = raw.replace(/\s*\r?\n\s*/g, ' ').trim();
   const runs = collapsed.match(/`+/g);
+
   if (!runs) return `\`${collapsed}\``;
+
   const maxRun = Math.max(...runs.map((run) => run.length));
   const fence = '`'.repeat(maxRun + 1);
   const needsPadding = collapsed.startsWith('`') || collapsed.endsWith('`');
+
   return needsPadding
     ? `${fence} ${collapsed} ${fence}`
     : `${fence}${collapsed}${fence}`;
@@ -90,6 +104,7 @@ function buildNodeCommands(detection: ProjectDetection): string[] {
   const scripts = orderedScriptEntries(detection.scripts);
   const hasNodeSignals =
     scripts.length > 0 || detection.nvmrc !== undefined || detection.hasNx;
+
   if (!hasNodeSignals) return lines;
 
   const pm =
@@ -98,6 +113,7 @@ function buildNodeCommands(detection: ProjectDetection): string[] {
     detection.packageManager !== 'poetry'
       ? detection.packageManager
       : 'yarn';
+
   if (detection.nvmrc !== undefined) {
     const setupCmd =
       pm === 'yarn'
@@ -109,6 +125,7 @@ function buildNodeCommands(detection: ProjectDetection): string[] {
   }
 
   const prefix = runPrefix(pm);
+
   for (const [name, command] of scripts) {
     lines.push(
       `- ${formatCodeSpan(`${prefix} ${name}`)}: ${formatCodeSpan(command)}`,
@@ -144,19 +161,23 @@ function buildPythonToolLines(
       `- Lint and format: \`${runnerPrefix} ruff check && ${runnerPrefix} ruff format --check\``,
     );
   }
+
   if (tools?.hasPyright && !tools.hasMypy) {
     lines.push(`- Typecheck: \`${runnerPrefix} pyright\``);
   } else if (fallback || tools?.hasMypy) {
     lines.push(`- Typecheck: \`${runnerPrefix} mypy --strict\``);
   }
+
   if (fallback || tools?.hasPytest) {
     lines.push(`- Run tests: \`${runnerPrefix} pytest\``);
   }
+
   return lines;
 }
 
 function buildPythonCommands(detection: ProjectDetection): string[] {
   if (!detection.hasPyproject) return [];
+
   if (
     detection.packageManager === 'poetry' ||
     detection.pythonPackageManager === 'poetry'
@@ -166,6 +187,7 @@ function buildPythonCommands(detection: ProjectDetection): string[] {
       ...buildPythonToolLines('poetry run', detection.pythonTools, false),
     ];
   }
+
   return [
     '- Install dependencies: `uv sync`',
     ...buildPythonToolLines('uv run', detection.pythonTools, true),
@@ -197,6 +219,7 @@ export function buildProjectSeed(detection: ProjectDetection): string {
   }
 
   const commandLines = buildCommandsLines(detection);
+
   if (commandLines.length > 0) {
     sections.push(['## Commands', '', ...commandLines].join('\n'));
   }

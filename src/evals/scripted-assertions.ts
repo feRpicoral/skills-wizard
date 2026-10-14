@@ -15,6 +15,7 @@ export function formatAssertionLabel(assertion: EvalAssertion): string {
   if (typeof assertion === 'string') {
     return assertion;
   }
+
   switch (assertion.type) {
     case 'file_exists':
       return `file_exists: ${assertion.path}`;
@@ -70,6 +71,7 @@ export async function runShellCommand({
       killGraceMs: KILL_GRACE_MS,
       drainMs: OUTPUT_DRAIN_MS,
     });
+
     return {
       exitCode: result.exitCode,
       stdout: result.stdout,
@@ -129,12 +131,15 @@ async function readWorkspaceFile({
 }: ReadWorkspaceFileParams): Promise<WorkspaceFileRead> {
   const fullPath = join(workdir, path);
   const info = await statIfExists(fullPath);
+
   if (info === null) {
     return { problem: `File "${path}" does not exist in workspace.` };
   }
+
   if (!info.isFile()) {
     return { problem: `"${path}" in workspace is not a regular file.` };
   }
+
   return { content: await readFile(fullPath, 'utf8') };
 }
 
@@ -148,6 +153,7 @@ async function evaluateScriptedAssertionUnchecked({
   if (assertion.type === 'file_exists') {
     const fullPath = join(workdir, assertion.path);
     const info = await lstatIfExists(fullPath);
+
     if (info !== null) {
       return {
         text,
@@ -156,6 +162,7 @@ async function evaluateScriptedAssertionUnchecked({
         evidence: `Found "${assertion.path}" in workspace.`,
       };
     }
+
     return {
       text,
       kind: 'file_exists',
@@ -167,6 +174,7 @@ async function evaluateScriptedAssertionUnchecked({
   if (assertion.type === 'file_absent') {
     const fullPath = join(workdir, assertion.path);
     const info = await lstatIfExists(fullPath);
+
     if (info === null) {
       return {
         text,
@@ -175,6 +183,7 @@ async function evaluateScriptedAssertionUnchecked({
         evidence: `Confirmed "${assertion.path}" is absent from workspace.`,
       };
     }
+
     return {
       text,
       kind: 'file_absent',
@@ -188,13 +197,17 @@ async function evaluateScriptedAssertionUnchecked({
       workdir,
       path: assertion.path,
     });
+
     if (content === undefined) {
       return { text, kind: 'regex', passed: false, evidence: problem };
     }
+
     const regex = new RegExp(assertion.pattern, assertion.flags);
     const match = regex.exec(content);
+
     if (match) {
       const snippet = match[0].slice(0, 160).replaceAll('\n', '\\n');
+
       return {
         text,
         kind: 'regex',
@@ -202,6 +215,7 @@ async function evaluateScriptedAssertionUnchecked({
         evidence: `Matched /${assertion.pattern}/${assertion.flags ?? ''} in "${assertion.path}": "${snippet}"`,
       };
     }
+
     return {
       text,
       kind: 'regex',
@@ -215,9 +229,11 @@ async function evaluateScriptedAssertionUnchecked({
       workdir,
       path: assertion.path,
     });
+
     if (content === undefined) {
       return { text, kind: 'json_valid', passed: false, evidence: problem };
     }
+
     try {
       JSON.parse(content);
       return {

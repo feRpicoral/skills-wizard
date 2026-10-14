@@ -44,6 +44,7 @@ async function checkedSource(
     strict: false,
     expectedName: name,
   });
+
   if (report.errors.length > 0) {
     resolution.problems.set(name, report.errors.join('; '));
   } else {
@@ -69,9 +70,11 @@ async function resolveRepository({
 }: ResolveRepositoryParams): Promise<void> {
   const [first] = entries;
   if (!first) return;
+
   const { repo, ref } = first;
   let root: string | null;
   let commit = '';
+
   try {
     root = fetch
       ? await ensureSource(cache, {
@@ -83,9 +86,11 @@ async function resolveRepository({
     if (root) commit = await sourceCommit(cache, repo);
   } catch (error) {
     if (!(error instanceof SourceError)) throw error;
+
     for (const entry of entries) {
       resolution.problems.set(entry.name, error.message);
     }
+
     return;
   }
 
@@ -97,6 +102,7 @@ async function resolveRepository({
       );
       continue;
     }
+
     await checkedSource(
       entry.name,
       {
@@ -134,8 +140,10 @@ export async function resolveSkillSources({
     problems: new Map(),
   };
   const repositories = new Map<string, CatalogEntry[]>();
+
   for (const name of names) {
     const skill = findSkill(library, name);
+
     if (skill?.origin.type === 'local') {
       await checkedSource(
         name,
@@ -154,6 +162,7 @@ export async function resolveSkillSources({
       ]);
     }
   }
+
   for (const entries of repositories.values()) {
     await resolveRepository({
       library,
@@ -163,5 +172,6 @@ export async function resolveSkillSources({
       resolution,
     });
   }
+
   return resolution;
 }

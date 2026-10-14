@@ -19,6 +19,7 @@ export async function safeRealLocation(path: string): Promise<string | null> {
     return await realLocation(path);
   } catch (error) {
     if (isSystemError(error)) return null;
+
     throw error;
   }
 }
@@ -30,14 +31,18 @@ export async function resolveProjectFile({
 }: BoundaryPathParams): Promise<string | null> {
   const root = givenRoot ?? (await safeRealLocation(projectDir)) ?? projectDir;
   const location = await safeRealLocation(join(root, relativePath));
+
   if (location === null || !isInside({ dir: root, path: location })) {
     return null;
   }
+
   try {
     if (!(await statIfExists(location))?.isFile()) return null;
+
     return location;
   } catch (error) {
     if (isSystemError(error)) return null;
+
     throw error;
   }
 }
@@ -54,10 +59,12 @@ export async function readProjectFile(
 ): Promise<string | null> {
   const location = await resolveProjectFile(params);
   if (location === null) return null;
+
   try {
     return await readTextIfExists(location);
   } catch (error) {
     if (isSystemError(error)) return null;
+
     throw error;
   }
 }
@@ -80,11 +87,14 @@ export async function hasAnyRelativeFile({
   root: givenRoot,
 }: HasAnyRelativeFileParams): Promise<boolean> {
   if (candidates.length === 0) return false;
+
   const root = givenRoot ?? (await safeRealLocation(projectDir)) ?? projectDir;
+
   for (const relativePath of candidates) {
     if (await hasProjectFile({ projectDir, relativePath, root })) {
       return true;
     }
   }
+
   return false;
 }

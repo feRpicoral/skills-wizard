@@ -16,25 +16,34 @@ interface VariableDefinition {
   lookup?: (lookupEnv?: VariableLookupEnv) => Promise<string | undefined>;
 }
 
+function lookupProcessEnv(
+  lookupEnv: VariableLookupEnv | undefined,
+): NodeJS.ProcessEnv | undefined {
+  if (
+    lookupEnv?.home === undefined &&
+    lookupEnv?.searchPath === undefined &&
+    lookupEnv?.env === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...process.env,
+    ...(lookupEnv.home !== undefined ? { HOME: lookupEnv.home } : {}),
+    ...(lookupEnv.searchPath !== undefined
+      ? { PATH: lookupEnv.searchPath.join(delimiter) }
+      : {}),
+    ...lookupEnv.env,
+  };
+}
+
 export async function commandOutput(
   command: string,
   args: string[],
   lookupEnv?: VariableLookupEnv,
 ): Promise<string | undefined> {
   try {
-    const env =
-      lookupEnv?.home !== undefined ||
-      lookupEnv?.searchPath !== undefined ||
-      lookupEnv?.env !== undefined
-        ? {
-            ...process.env,
-            ...(lookupEnv.home !== undefined ? { HOME: lookupEnv.home } : {}),
-            ...(lookupEnv.searchPath !== undefined
-              ? { PATH: lookupEnv.searchPath.join(delimiter) }
-              : {}),
-            ...lookupEnv.env,
-          }
-        : undefined;
+    const env = lookupProcessEnv(lookupEnv);
 
     const { stdout } = await run(command, args, {
       timeout: LOOKUP_TIMEOUT_MS,
@@ -77,12 +86,16 @@ export async function lookupVariables(
   const entries = await Promise.all(
     names.map(async (name) => {
       if (values[name]?.trim()) return null;
+
       const found = await VARIABLES[name]?.lookup?.(lookupEnv);
+
       return found ? ([name, found] as const) : null;
     }),
   );
+
   for (const entry of entries) {
     if (entry) values[entry[0]] = entry[1];
   }
+
   return values;
 }

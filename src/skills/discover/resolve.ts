@@ -57,8 +57,10 @@ export function resolveEffectiveRef({
       `Conflicting refs: URL specifies "${urlRef}" but --ref specifies "${requestedRef}"`,
     );
   }
+
   const explicitRef = requestedRef ?? urlRef;
   const existing = catalog.skills.find((entry) => entry.repo === repo);
+
   if (existing !== undefined) {
     if (
       existing.ref === undefined &&
@@ -67,13 +69,16 @@ export function resolveEffectiveRef({
     ) {
       return undefined;
     }
+
     if (explicitRef !== undefined && explicitRef !== existing.ref) {
       throw new CatalogError(
         `Every skill from ${repo} in catalog.yaml must use the same ref (${existing.ref ?? 'default branch'})`,
       );
     }
+
     return existing.ref;
   }
+
   return explicitRef;
 }
 
@@ -95,11 +100,14 @@ async function withCheckoutSnapshot<T>({
 }> {
   const checkoutSnapshot =
     initialSnapshot ?? (await snapshotSourceCheckout(cache, repo));
+
   try {
     const result = await action();
+
     return { result, checkoutSnapshot };
   } catch (error) {
     await restoreSourceCheckout(cache, checkoutSnapshot);
+
     throw error;
   }
 }
@@ -148,20 +156,20 @@ async function resolveGithubPathTargetSkill({
   const resolvedUrl = await resolveGithubPathTarget({
     cache,
     repo: parsed.repo,
-    ...(parsed.ref ? { ref: parsed.ref } : {}),
+    ref: parsed.ref || undefined,
     path: parsed.path,
-    ...(parsed.rawSegments ? { rawSegments: parsed.rawSegments } : {}),
-    ...(explicitRef ? { explicitRef } : {}),
+    rawSegments: parsed.rawSegments || undefined,
+    explicitRef: explicitRef || undefined,
   });
+
   const ref = resolveEffectiveRef({
     catalog,
     repo: parsed.repo,
-    ...(requestedRef ? { requestedRef } : {}),
-    ...(resolvedUrl.ref ? { urlRef: resolvedUrl.ref } : {}),
-    ...(resolvedUrl.isDefaultBranch !== undefined
-      ? { urlIsDefaultBranch: resolvedUrl.isDefaultBranch }
-      : {}),
+    requestedRef: requestedRef || undefined,
+    urlRef: resolvedUrl.ref || undefined,
+    urlIsDefaultBranch: resolvedUrl.isDefaultBranch,
   });
+
   const { result: inspected, checkoutSnapshot } = await withCheckoutSnapshot({
     cache,
     repo: parsed.repo,
@@ -170,11 +178,12 @@ async function resolveGithubPathTargetSkill({
         cache,
         repo: parsed.repo,
         path: resolvedUrl.path,
-        ...(ref ? { ref } : {}),
-        ...(requestedCategory ? { category: requestedCategory } : {}),
+        ref: ref || undefined,
+        category: requestedCategory || undefined,
         existingPaths: repositoryPaths(catalog, parsed.repo),
       }),
   });
+
   return { inspected, checkoutSnapshot };
 }
 
@@ -194,9 +203,10 @@ async function resolveRepoSkillTarget({
   const ref = resolveEffectiveRef({
     catalog,
     repo: parsed.repo,
-    ...(requestedRef ? { requestedRef } : {}),
+    requestedRef: requestedRef || undefined,
   });
   const existingPaths = repositoryPaths(catalog, parsed.repo);
+
   const { result: inspected, checkoutSnapshot } = await withCheckoutSnapshot({
     cache,
     repo: parsed.repo,
@@ -204,26 +214,29 @@ async function resolveRepoSkillTarget({
       const [located] = await locateSkillsInRepo({
         cache,
         repo: parsed.repo,
-        ...(ref ? { ref } : {}),
+        ref: ref || undefined,
         expectedSkillName: parsed.skillName,
         existingPaths,
       });
+
       if (!located) {
         throw new SourceError(
           `Skill "${parsed.skillName}" was not found in ${parsed.repo}`,
         );
       }
+
       return inspectDiscoveredSkill({
         cache,
         repo: parsed.repo,
         path: located.path,
-        ...(ref ? { ref } : {}),
+        ref: ref || undefined,
         expectedName: parsed.skillName,
-        ...(requestedCategory ? { category: requestedCategory } : {}),
+        category: requestedCategory || undefined,
         existingPaths,
       });
     },
   });
+
   return { inspected, checkoutSnapshot };
 }
 
@@ -250,9 +263,10 @@ async function resolveRepoTarget({
   const ref = resolveEffectiveRef({
     catalog,
     repo: parsed.repo,
-    ...(requestedRef ? { requestedRef } : {}),
+    requestedRef: requestedRef || undefined,
   });
   const existingPaths = repositoryPaths(catalog, parsed.repo);
+
   const { result: inspected, checkoutSnapshot } = await withCheckoutSnapshot({
     cache,
     repo: parsed.repo,
@@ -260,10 +274,11 @@ async function resolveRepoTarget({
       const locations = await locateSkillsInRepo({
         cache,
         repo: parsed.repo,
-        ...(ref ? { ref } : {}),
+        ref: ref || undefined,
         existingPaths,
       });
       let chosen = locations[0];
+
       if (locations.length > 1) {
         if (!prompting) {
           throw new UsageError(
@@ -275,20 +290,23 @@ async function resolveRepoTarget({
           locations,
         });
       }
+
       if (!chosen) {
         throw new SourceError(`No valid SKILL.md found in ${parsed.repo}`);
       }
+
       return inspectDiscoveredSkill({
         cache,
         repo: parsed.repo,
         path: chosen.path,
-        ...(ref ? { ref } : {}),
+        ref: ref || undefined,
         expectedName: chosen.name,
-        ...(requestedCategory ? { category: requestedCategory } : {}),
+        category: requestedCategory || undefined,
         existingPaths,
       });
     },
   });
+
   return { inspected, checkoutSnapshot };
 }
 
@@ -339,9 +357,11 @@ async function resolveQueryTarget({
       fetchFn,
       onWarn,
     });
+
     if (candidates.length === 0) {
       throw new UsageError(`No skills found matching "${query}"`);
     }
+
     const normalizedQuery = query.trim().toLowerCase();
     chosenCandidate =
       prompting && candidates.length > 1
@@ -352,6 +372,7 @@ async function resolveQueryTarget({
     if (awesomeSnapshot) {
       await restoreSourceCheckout(cache, awesomeSnapshot);
     }
+
     throw error;
   }
 
@@ -367,12 +388,14 @@ async function resolveQueryTarget({
   const existingPaths = repositoryPaths(catalog, chosenCandidate.repo);
   const initialSnapshot =
     chosenCandidate.repo === AWESOME_SKILLS_REPO ? awesomeSnapshot : undefined;
+
   const { result: inspected, checkoutSnapshot } = await withCheckoutSnapshot({
     cache,
     repo: chosenCandidate.repo,
     initialSnapshot,
     action: async () => {
       let resolvedPath = chosenCandidate.path;
+
       if (resolvedPath === undefined) {
         const [located] = await locateSkillsInRepo({
           cache,
@@ -386,9 +409,12 @@ async function resolveQueryTarget({
             `Skill "${chosenCandidate.name}" was not found in ${chosenCandidate.repo}`,
           );
         }
+
         resolvedPath = located.path;
       }
+
       const effectiveCategory = requestedCategory ?? chosenCandidate.category;
+
       return inspectDiscoveredSkill({
         cache,
         repo: chosenCandidate.repo,
@@ -400,6 +426,7 @@ async function resolveQueryTarget({
       });
     },
   });
+
   return { inspected, checkoutSnapshot };
 }
 

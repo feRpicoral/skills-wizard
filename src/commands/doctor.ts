@@ -34,8 +34,10 @@ function printFindings(
   for (const finding of findings) {
     ctx.print(`${LEVEL_LABEL[finding.level]}  ${finding.message}`);
   }
+
   const problems = findings.filter((finding) => finding.level !== 'note');
   const errors = problems.filter((finding) => finding.level === 'error');
+
   return { problems, errors };
 }
 
@@ -46,6 +48,7 @@ function printDoctorReport(ctx: Context, findings: readonly Finding[]): number {
       ? 'No problems found.'
       : `${problems.length} problem${problems.length === 1 ? '' : 's'} found.`,
   );
+
   return errors.length > 0 ? 1 : 0;
 }
 
@@ -69,18 +72,22 @@ export async function runDoctor(
     location,
   });
   const home = ctx.paths.home;
+
   if (!manifest) {
     ctx.print(
       `No ${scope === 'global' ? 'system-wide' : 'project'} install recorded at ${displayPath({ path: location.manifestPath, home })}.`,
     );
+
     if (scope === 'global') {
       const { problems } = printFindings(ctx, await skillFindings(ctx, null));
+
       if (problems.length > 0) {
         ctx.print(
           `${problems.length} problem${problems.length === 1 ? '' : 's'} found.`,
         );
       }
     }
+
     return 0;
   }
 

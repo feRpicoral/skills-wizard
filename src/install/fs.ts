@@ -41,6 +41,7 @@ function errorCode(error: unknown): string | undefined {
 
 function isMissing(error: unknown): boolean {
   const code = errorCode(error);
+
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
@@ -88,12 +89,14 @@ export async function readDirIfExists(path: string): Promise<Dirent[] | null> {
 export async function readSymlink(path: string): Promise<string | null> {
   const stats = await lstatIfExists(path);
   if (!stats?.isSymbolicLink()) return null;
+
   return readlink(path);
 }
 
 export async function resolveIfSymlink(path: string): Promise<string | null> {
   const stats = await lstatIfExists(path);
   if (!stats?.isSymbolicLink()) return null;
+
   try {
     return await realpath(path);
   } catch (error) {
@@ -125,14 +128,17 @@ export function isInside({ dir, path }: InsideCheckParams): boolean {
 export async function realLocation(path: string): Promise<string | null> {
   const missing: string[] = [];
   let current = path;
+
   for (;;) {
     try {
       return join(await realpath(current), ...missing);
     } catch (error) {
       if (!isMissing(error)) throw error;
       if ((await lstatIfExists(current))?.isSymbolicLink()) return null;
+
       const parent = dirname(current);
       if (parent === current) return path;
+
       missing.unshift(basename(current));
       current = parent;
     }
@@ -161,6 +167,7 @@ export async function writeTextAtomic({
   }
 
   await mkdir(dirname(path), { recursive: true });
+
   const mode = existing ? existing.mode & 0o777 : undefined;
   await writeFileAtomic(path, content, mode === undefined ? {} : { mode });
 }
@@ -203,10 +210,12 @@ async function linksTo({
 }: SymlinkMatchParams): Promise<boolean> {
   const target = await readSymlink(link);
   if (target === null) return false;
+
   const [linked, expected] = await Promise.all([
     realLocation(resolve(dirname(link), target)),
     realLocation(destination),
   ]);
+
   return linked !== null && linked === expected;
 }
 
@@ -225,10 +234,12 @@ export async function sameFile({
   ) {
     return true;
   }
+
   const [real, otherReal] = await Promise.all([
     realLocation(path),
     realLocation(other),
   ]);
+
   return real !== null && real === otherReal;
 }
 
@@ -257,22 +268,28 @@ export async function* walkDirectories({
   followSymlinks = false,
 }: WalkDirectoriesParams): AsyncGenerator<WalkDirectoryEntry> {
   const visited = new Set<string>();
+
   if (followSymlinks) {
     const rootReal = await realLocation(root).catch(() => null);
     if (rootReal) visited.add(rootReal);
   }
+
   const pending: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+
   while (pending.length > 0) {
     const next = pending.shift();
     if (!next) break;
+
     let entries;
     try {
       entries = await readDirIfExists(next.dir);
     } catch {
       continue;
     }
+
     for (const entry of entries ?? []) {
       if (skipNames?.has(entry.name)) continue;
+
       const entryPath = join(next.dir, entry.name);
       const isDir =
         entry.isDirectory() ||
@@ -280,13 +297,16 @@ export async function* walkDirectories({
           entry.isSymbolicLink() &&
           (await isDirectory(entryPath)));
       if (!isDir) continue;
+
       if (followSymlinks) {
         const real = await realLocation(entryPath).catch(() => null);
         if (!real || visited.has(real)) continue;
         visited.add(real);
       }
+
       const depth = next.depth + 1;
       yield { path: entryPath, name: entry.name, depth };
+
       if (depth <= maxDepth) {
         pending.push({ dir: entryPath, depth });
       }

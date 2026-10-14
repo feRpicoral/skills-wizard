@@ -137,6 +137,7 @@ async function planTargetActions({
 
   let claudeMcpServers: ReadonlySet<string> | null = null;
   let claudeMcpConflicted = false;
+
   for (const rawTarget of targets) {
     let target = rawTarget;
     const key = keyOf(target);
@@ -155,16 +156,20 @@ async function planTargetActions({
         values: candidateValues,
         allowedServers: claudeMcpServers,
       });
+
       if (claudeMcpConflicted) {
         plannedKeys.add(key);
       }
+
       if (values.length === 0) {
         continue;
       }
+
       target = { ...target, values };
     }
 
     plannedKeys.add(key);
+
     if (
       target.kind === 'symlink' &&
       target.skill !== undefined &&
@@ -201,9 +206,11 @@ async function planTargetActions({
           sharedMcp,
         }),
     });
+
     if (target.kind === 'skill' && action.status === 'conflict') {
       blockedSkills.add(target.name);
     }
+
     if (
       target.kind === 'mcp-json' &&
       (target.mcpClient === 'claude-code' ||
@@ -273,6 +280,7 @@ async function planRemovalActions({
           laterEntries: ordered.slice(index + 1),
           conflictedMcpByReal,
         });
+
         return planRemoval({
           entry,
           staged,
@@ -282,6 +290,7 @@ async function planRemovalActions({
         });
       },
     });
+
     await stageAction({ staged, action });
     actions.push(action);
   }
@@ -305,12 +314,14 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
   const { scope, selection, library, paths, previous, manifestPath, project } =
     input;
   const boundary = scope === 'project' ? project?.dir : undefined;
+
   await checkManifestPath({
     manifestPath,
     boundary,
   });
 
   const folders = skillFolders({ scope, paths, project });
+
   if (previous && folders) {
     checkSkillEntries({
       file: manifestPath,
@@ -319,7 +330,9 @@ export async function buildPlan(input: PlanInput): Promise<Plan> {
       scope,
     });
   }
+
   const mcpPaths = mcpConfigPaths(input);
+
   if (previous && mcpPaths) {
     checkMcpEntries({
       file: manifestPath,

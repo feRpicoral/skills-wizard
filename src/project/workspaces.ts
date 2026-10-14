@@ -23,10 +23,13 @@ const MAX_WORKSPACE_DEPTH = 5;
 function parseWorkspacePattern(raw: string): ParsedWorkspacePattern | null {
   let trimmed = raw.trim();
   const negated = trimmed.startsWith('!');
+
   if (negated) {
     trimmed = trimmed.slice(1).trim();
   }
+
   trimmed = trimmed.replace(/^\.\/+/, '').replace(/\/+$/, '');
+
   if (
     !trimmed ||
     trimmed.startsWith('!') ||
@@ -35,6 +38,7 @@ function parseWorkspacePattern(raw: string): ParsedWorkspacePattern | null {
   ) {
     return null;
   }
+
   return { pattern: trimmed, negated };
 }
 
@@ -46,14 +50,17 @@ function hasGlobChars(segment: string): boolean {
 
 function globSegmentToRegExp(segment: string): RegExp {
   let regex = '^';
+
   for (let i = 0; i < segment.length; i += 1) {
     const ch = segment[i]!;
+
     if (ch === '*') {
       regex += '[^/]*';
     } else if (ch === '?') {
       regex += '[^/]';
     } else if (ch === '[') {
       const close = segment.indexOf(']', i + 1);
+
       if (close > i + 1) {
         const rawInner = segment.slice(i + 1, close);
         const negated = rawInner.startsWith('!') || rawInner.startsWith('^');
@@ -70,7 +77,9 @@ function globSegmentToRegExp(segment: string): RegExp {
       regex += RegExp.escape(ch);
     }
   }
+
   regex += '$';
+
   try {
     return new RegExp(regex);
   } catch {
@@ -86,15 +95,21 @@ function matchesWorkspacePattern(relPath: string, pattern: string): boolean {
     if (pIdx === patternSegments.length) {
       return true;
     }
+
     const pat = patternSegments[pIdx]!;
+
     if (pat === '**') {
       if (pIdx === patternSegments.length - 1) return true;
+
       for (let next = sIdx; next <= pathSegments.length; next += 1) {
         if (matchAt(pIdx + 1, next)) return true;
       }
+
       return false;
     }
+
     if (sIdx >= pathSegments.length) return false;
+
     const seg = pathSegments[sIdx]!;
     const segMatches = hasGlobChars(pat)
       ? globSegmentToRegExp(pat).test(seg)
@@ -120,12 +135,15 @@ export async function readWorkspacePackage(
     relativePath: `${relPkgDir}/package.json`,
     root,
   });
+
   if (pkgJsonSource === null) return null;
 
   const parsed = parsePackageJson(pkgJsonSource);
+
   if (!parsed) return null;
 
   const fallbackName = basename(relPkgDir);
+
   return {
     relativePath: relPkgDir,
     name: parsed.name ?? fallbackName,
@@ -149,17 +167,23 @@ async function listSubdirectories(
 ): Promise<string[]> {
   const targetPath = relDir ? join(root, relDir) : root;
   const dirLocation = await safeRealLocation(targetPath);
+
   if (dirLocation === null || !isInside({ dir: root, path: dirLocation })) {
     return [];
   }
+
   let entries;
+
   try {
     entries = await readDirIfExists(dirLocation);
   } catch (error) {
     if (isSystemError(error)) return [];
+
     throw error;
   }
+
   if (!entries) return [];
+
   return [...entries]
     .filter(
       (entry) =>
@@ -178,39 +202,47 @@ async function expandPatternSegments(
   depth: number,
 ): Promise<void> {
   if (depth > MAX_WORKSPACE_DEPTH) return;
+
   if (segIdx >= ctx.segments.length) {
     if (currentRel) ctx.candidates.push(currentRel);
     return;
   }
 
   const segment = ctx.segments[segIdx]!;
+
   if (segment === '**') {
     await expandPatternSegments(ctx, currentRel, segIdx + 1, depth);
     const children = await listSubdirectories(ctx.root, currentRel);
+
     for (const child of children) {
       const nextRel = currentRel ? `${currentRel}/${child}` : child;
       await expandPatternSegments(ctx, nextRel, segIdx, depth + 1);
     }
+
     return;
   }
 
   if (!hasGlobChars(segment)) {
     const nextRel = currentRel ? `${currentRel}/${segment}` : segment;
     const dirLocation = await safeRealLocation(join(ctx.root, nextRel));
+
     if (
       dirLocation === null ||
       !isInside({ dir: ctx.root, path: dirLocation })
     ) {
       return;
     }
+
     await expandPatternSegments(ctx, nextRel, segIdx + 1, depth + 1);
     return;
   }
 
   const matcher = globSegmentToRegExp(segment);
   const children = await listSubdirectories(ctx.root, currentRel);
+
   for (const child of children) {
     if (!matcher.test(child)) continue;
+
     const nextRel = currentRel ? `${currentRel}/${child}` : child;
     await expandPatternSegments(ctx, nextRel, segIdx + 1, depth + 1);
   }
@@ -240,6 +272,7 @@ export async function discoverWorkspaces({
       : hasNx
         ? ['apps/*', 'packages/*', 'libs/*']
         : [];
+
   if (effectivePatterns.length === 0) return [];
 
   const root = givenRoot ?? (await safeRealLocation(projectDir)) ?? projectDir;
@@ -263,10 +296,13 @@ export async function discoverWorkspaces({
 
     for (const relPkgDir of candidates) {
       if (seen.has(relPkgDir)) continue;
+
       if (exclusions.some((ex) => matchesWorkspacePattern(relPkgDir, ex))) {
         continue;
       }
+
       const info = await readWorkspacePackage(projectDir, relPkgDir, root);
+
       if (info) {
         seen.add(relPkgDir);
         discovered.push(info);

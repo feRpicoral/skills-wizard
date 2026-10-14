@@ -50,6 +50,7 @@ const frontmatterSchema = z
     const invalidDefaults = meta.defaults.filter(
       (scope) => !meta.scopes.includes(scope),
     );
+
     if (invalidDefaults.length > 0) {
       ctx.addIssue({
         code: 'custom',
@@ -72,7 +73,9 @@ export async function loadBlockLibrary(
   if (ids.size !== index.order.length) {
     throw new BlockLibraryError(`${indexFile}: duplicate entries in order`);
   }
+
   const unlisted = files.filter((id) => !ids.has(id));
+
   if (unlisted.length > 0) {
     throw new BlockLibraryError(
       `${indexFile}: blocks missing from order: ${unlisted.join(', ')}`,
@@ -84,27 +87,35 @@ export async function loadBlockLibrary(
       loadBlock({ blocksDir, id, groups: index.groups }),
     ),
   );
+
   checkRequirements(blocks, blocksDir);
+
   return { headers: index.headers, groups: index.groups, blocks };
 }
 
 function checkRequirements(blocks: readonly Block[], blocksDir: string) {
   const position = new Map(blocks.map((block, index) => [block.id, index]));
+
   for (const [index, block] of blocks.entries()) {
     const file = join(blocksDir, `${block.id}.md`);
+
     for (const required of block.requires) {
       const requiredPosition = position.get(required);
+
       if (requiredPosition === undefined) {
         throw new BlockLibraryError(`${file}: requires unknown block ${required}`);
       }
+
       if (requiredPosition > index) {
         throw new BlockLibraryError(
           `${file}: ${required} must come before it in the order`,
         );
       }
+
       const missingScopes = block.scopes.filter(
         (scope) => !blocks[requiredPosition]?.scopes.includes(scope),
       );
+
       if (missingScopes.length > 0) {
         throw new BlockLibraryError(
           `${file}: ${required} is not available for ${missingScopes.join(', ')} scope`,
@@ -121,15 +132,19 @@ interface ParseIndexParams {
 
 function parseIndex({ source, file }: ParseIndexParams) {
   let data: unknown;
+
   try {
     data = parse(source);
   } catch (error) {
     throw new BlockLibraryError(`${file}: invalid YAML`, { cause: error });
   }
+
   const result = indexSchema.safeParse(data);
+
   if (!result.success) {
     throw new BlockLibraryError(`${file}: ${z.prettifyError(result.error)}`);
   }
+
   return result.data;
 }
 
@@ -138,6 +153,7 @@ async function listMarkdownFiles(blocksDir: string): Promise<string[]> {
     recursive: true,
     withFileTypes: true,
   });
+
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
     .map((entry) =>
@@ -165,6 +181,7 @@ function validateBlockPlaceholders({
     (name) => name !== undefined && !declaredVariables.includes(name),
   );
   const unused = declaredVariables.filter((name) => !used.includes(name));
+
   if (undeclared.length > 0 || unused.length > 0) {
     throw new BlockLibraryError(
       `${file}: variables must match placeholders (undeclared: ${undeclared.join(', ') || 'none'}, unused: ${unused.join(', ') || 'none'})`,
@@ -185,6 +202,7 @@ async function loadBlock({
 }: LoadBlockParams): Promise<Block> {
   const file = join(blocksDir, `${id}.md`);
   let source: string;
+
   try {
     source = await readFile(file, 'utf8');
   } catch (error) {
@@ -195,22 +213,26 @@ async function loadBlock({
 
   const { data, body } = parseFrontmatter({ source, file });
   const result = frontmatterSchema.safeParse(data);
+
   if (!result.success) {
     throw new BlockLibraryError(`${file}: ${z.prettifyError(result.error)}`);
   }
 
   const meta = result.data;
   const directory = id.split('/')[0];
+
   if (meta.group !== directory) {
     throw new BlockLibraryError(
       `${file}: group "${meta.group}" does not match directory "${directory}"`,
     );
   }
+
   if (!(meta.group in groups)) {
     throw new BlockLibraryError(`${file}: unknown group "${meta.group}"`);
   }
 
   const content = body.trimEnd();
+
   validateBlockPlaceholders({
     file,
     body: content,

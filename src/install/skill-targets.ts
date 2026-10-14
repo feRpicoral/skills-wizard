@@ -22,10 +22,12 @@ function backupPath({ input, name, path }: SkillPathParams): {
   backup?: string;
 } {
   if (!input.adopt?.names.has(name)) return {};
+
   const { home } = input.paths;
   const inside = isInside({ dir: home, path })
     ? relative(home, path)
     : path.slice(1);
+
   return { backup: join(input.adopt.backupDir, inside) };
 }
 
@@ -42,10 +44,12 @@ function skillTarget({
 }: SkillPathParams): SkillTarget | null {
   const source = input.skillSources?.get(name) ?? null;
   if (!source && !hasSkillEntry(input, path)) return null;
+
   const linked =
     input.scope === 'global' &&
     input.selection.skillMode === 'link' &&
     source?.linkable === true;
+
   return {
     kind: 'skill',
     path,
@@ -59,16 +63,20 @@ function skillTarget({
 
 export function globalSkillTargets(input: PlanInput): Target[] {
   const linkDirs = new Map<string, string[]>();
+
   for (const tool of orderedTools(input.selection.tools)) {
     const dir = tool.global.skills?.(input.paths);
     if (dir) linkDirs.set(dir, [...(linkDirs.get(dir) ?? []), tool.label]);
   }
+
   return input.selection.skills.flatMap((name): Target[] => {
     const path = join(input.paths.skillsDir, name);
     const skill = skillTarget({ input, name, path });
     if (!skill) return [];
+
     const links = [...linkDirs].map(([dir, labels]): Target => {
       const link = join(dir, name);
+
       return {
         kind: 'symlink',
         path: link,
@@ -78,6 +86,7 @@ export function globalSkillTargets(input: PlanInput): Target[] {
         ...backupPath({ input, name, path: link }),
       };
     });
+
     return [skill, ...links];
   });
 }
@@ -91,12 +100,15 @@ export function projectSkillTargets(
       ? [{ dir: join(project.dir, tool.project.skills), label: tool.label }]
       : [],
   );
+
   return input.selection.skills.flatMap((name): Target[] => {
     const path = join(project.dir, PROJECT_SKILLS_DIR, name);
     const skill = skillTarget({ input, name, path });
     if (!skill) return [];
+
     const links = linkDirs.map(({ dir, label }): Target => {
       const link = join(dir, name);
+
       return {
         kind: 'symlink',
         path: link,
@@ -105,6 +117,7 @@ export function projectSkillTargets(
         skill: name,
       };
     });
+
     return [skill, ...links];
   });
 }
@@ -115,13 +128,16 @@ export function skillFolders({
   project,
 }: Pick<PlanInput, 'scope' | 'paths' | 'project'>): SkillFolders | null {
   const tools = Object.values(TOOLS);
+
   if (scope === 'global') {
     return {
       copies: paths.skillsDir,
       links: tools.flatMap((tool) => tool.global.skills?.(paths) ?? []),
     };
   }
+
   if (!project) return null;
+
   return {
     copies: join(project.dir, PROJECT_SKILLS_DIR),
     links: tools.flatMap((tool) =>

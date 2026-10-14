@@ -108,9 +108,11 @@ async function runAndGradeTask(params: {
     label,
     onLog,
   } = params;
+
   const startedAt = Date.now();
   let taskResult: RunnerTaskResult | undefined;
   let launchError: string | undefined;
+
   try {
     taskResult = await runner.runTask({
       prompt: job.evalCase.prompt,
@@ -204,6 +206,7 @@ async function executeEvalJob(
     onLog,
     onContamination,
   } = params;
+
   const label = `[${job.evalCase.id}] ${job.variant} run ${job.runIndex}/${runs}`;
   const runDir = join(
     iterationDir,
@@ -212,6 +215,7 @@ async function executeEvalJob(
     `run-${job.runIndex}`,
   );
   await mkdir(runDir, { recursive: true });
+
   const comparedName = parseCompareSkillVariant(job.variant);
   const compareSkill =
     comparedName !== undefined
@@ -278,37 +282,46 @@ async function prepareEvalSuiteContext(params: RunSkillEvalParams): Promise<{
     caseIds,
     env,
   } = params;
+
   if (compareRef !== undefined && (compareSkills?.length ?? 0) > 0) {
     throw new EvalError(
       'Cannot combine compareRef and compareSkills in the same evaluation',
     );
   }
+
   const suite = await loadEvalSuite(skillDir);
   const singleId = caseId ? [caseId] : [];
   const requestedIds = [...singleId, ...(caseIds ?? [])];
+
   for (const id of requestedIds) {
     if (!suite.evals.some((item) => item.id === id)) {
       throw new EvalError(`Eval case "${id}" was not found in ${skillName}`);
     }
   }
+
   const selectedCases =
     requestedIds.length > 0
       ? suite.evals.filter((item) => requestedIds.includes(item.id))
       : suite.evals;
+
   if (selectedCases.length === 0) {
     throw new EvalError(`No eval cases found in ${skillName}`);
   }
+
   const primaryEscaping = await escapingLinks(skillDir);
+
   if (primaryEscaping.length > 0) {
     throw new EvalError(
       `Skill "${skillName}" has links that point outside the skill folder: ${primaryEscaping.map((link) => `${link.path} -> ${link.target}`).join(', ')}`,
     );
   }
+
   const compareSkillsByName = await validateComparedSkillSpecs(
     skillName,
     compareSkills,
   );
   const compareSkillNames = [...compareSkillsByName.keys()];
+
   validateEvalSuiteFileDestinations({
     cases: selectedCases,
     skillName,
@@ -318,17 +331,21 @@ async function prepareEvalSuiteContext(params: RunSkillEvalParams): Promise<{
   const variants: EvalVariant[] = ['with_skill'];
   if (baseline) variants.push('without_skill');
   if (compareRef) variants.push('old_skill');
+
   for (const name of compareSkillNames) {
     variants.push(compareSkillVariant(name));
   }
 
   await runner.preflight?.();
+
   let repoRoot: string | undefined;
+
   if (compareRef !== undefined) {
     assertSafeGitRef(compareRef);
     repoRoot = await resolveSkillRepository({ skillDir, env });
     await verifySkillAtRef({ repoRoot, skillDir, ref: compareRef, env });
   }
+
   return {
     selectedCases,
     compareSkillsByName,
@@ -376,13 +393,17 @@ export async function runSkillEval(
   } = await prepareEvalSuiteContext(params);
 
   const tempDirs: string[] = [];
+
   try {
     await prepareComparedSkillSetups(compareSkillsByName, tempDirs);
+
     const iterationDir = await allocateIterationDir({
       evalsRootDir,
       skillName,
     });
+
     const jobs: EvalJob[] = [];
+
     for (const evalCase of selectedCases) {
       for (const variant of variants) {
         for (let runIndex = 1; runIndex <= runs; runIndex += 1) {
@@ -394,6 +415,7 @@ export async function runSkillEval(
     const warnings = new Set<string>();
     let possiblyContaminated = false;
     let withSkillContaminated = false;
+
     const records = await runWithConcurrency({
       items: jobs,
       concurrency: parallel,
@@ -421,6 +443,7 @@ export async function runSkillEval(
             ) {
               possiblyContaminated = true;
             }
+
             if (
               (flags.variant === 'with_skill' ||
                 flags.variant === 'old_skill') &&
@@ -428,6 +451,7 @@ export async function runSkillEval(
             ) {
               withSkillContaminated = true;
             }
+
             if (flags.warning && !warnings.has(flags.warning)) {
               warnings.add(flags.warning);
               onLog?.(`warning: ${flags.warning}`);
@@ -451,11 +475,13 @@ export async function runSkillEval(
       warnings: [...warnings],
     });
     const reportMarkdown = renderBenchmarkReport(benchmark);
+
     await writeFile(
       join(iterationDir, 'benchmark.json'),
       `${JSON.stringify(benchmark, null, 2)}\n`,
     );
     await writeFile(join(iterationDir, 'report.md'), reportMarkdown);
+
     return { iterationDir, benchmark, reportMarkdown };
   } finally {
     await Promise.all(
@@ -476,22 +502,33 @@ export interface RegenerateSkillReportResult {
   reportMarkdown: string;
 }
 
+async function resolveReportIterationDir({
+  evalsRootDir,
+  skillName,
+  iterationDir,
+}: RegenerateSkillReportParams): Promise<string> {
+  if (iterationDir !== undefined) return iterationDir;
+  if (skillName) return findLatestIterationDir({ evalsRootDir, skillName });
+
+  throw new EvalError(
+    'Either skillName or iterationDir is required to regenerate a report',
+  );
+}
+
 export async function regenerateSkillReport({
   evalsRootDir,
   skillName,
   iterationDir,
 }: RegenerateSkillReportParams): Promise<RegenerateSkillReportResult> {
-  const targetDir =
-    iterationDir ??
-    (skillName
-      ? await findLatestIterationDir({ evalsRootDir, skillName })
-      : (() => {
-          throw new EvalError(
-            'Either skillName or iterationDir is required to regenerate a report',
-          );
-        })());
+  const targetDir = await resolveReportIterationDir({
+    evalsRootDir,
+    skillName,
+    iterationDir,
+  });
   const benchmark = await loadBenchmarkFromIteration(targetDir);
   const reportMarkdown = renderBenchmarkReport(benchmark);
+
   await writeFile(join(targetDir, 'report.md'), reportMarkdown);
+
   return { iterationDir: targetDir, benchmark, reportMarkdown };
 }

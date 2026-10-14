@@ -121,6 +121,7 @@ async function version(): Promise<string> {
   const packageJson = JSON.parse(
     await readFile(join(REPO_ROOT, 'package.json'), 'utf8'),
   ) as { version: string };
+
   return packageJson.version;
 }
 
@@ -145,9 +146,11 @@ function dispatchCommand({
   },
 }: DispatchCommandParams): Promise<number> {
   const projectOption = projectDir !== undefined ? { projectDir } : {};
+
   switch (command) {
     case 'init': {
       if (terminal && !yes) clack.intro('agents-config');
+
       const tools = parseTools(values.tools);
       const blocks = parseList(values.blocks);
       const skills = parseList(values.skills);
@@ -155,6 +158,7 @@ function dispatchCommand({
       const skillMode = parseSkillMode(values['skill-mode']);
       const preset = parsePreset(values.preset);
       const style = parseProjectStyle(values.style);
+
       return runInit(ctx, {
         variables: parseVariables(values.var),
         yes,
@@ -176,11 +180,13 @@ function dispatchCommand({
     }
     case 'add': {
       if (terminal && !yes) clack.intro('agents-config');
+
       const tools = parseTools(values.tools);
       const source = parseDiscoverSource(values.source);
       const category = parseCategoryFlag(values.category);
       const ref = parseRefFlag(values.ref);
       const target = positionals.slice(1).join(' ').trim();
+
       return runAdd(ctx, {
         ...(target ? { target } : {}),
         ...(source ? { source } : {}),
@@ -209,9 +215,11 @@ function dispatchCommand({
       return runUpdate(ctx, { yes, dryRun });
     case 'adopt': {
       if (terminal && !yes) clack.intro('agents-config');
+
       const tools = parseTools(values.tools);
       const fromFlag = parseList(values.skills) ?? [];
       const names = [...positionals.slice(1), ...fromFlag];
+
       return runAdopt(ctx, {
         names,
         ...(tools ? { tools } : {}),
@@ -228,6 +236,7 @@ function dispatchCommand({
       );
     case 'mcp': {
       const subcommand = parseMcpSubcommand(positionals[1]);
+
       if (
         terminal &&
         !yes &&
@@ -236,11 +245,13 @@ function dispatchCommand({
       ) {
         clack.intro('agents-config');
       }
+
       const tools = parseTools(values.tools);
       const limit = parsePositiveInt({
         value: values.limit,
         flagName: 'limit',
       });
+
       return runMcp(ctx, {
         subcommand,
         args: positionals.slice(2),
@@ -260,10 +271,12 @@ function dispatchCommand({
 async function main(argv: string[]): Promise<number> {
   const parsed = parseCommand(argv);
   const print = (line: string) => process.stdout.write(`${line}\n`);
+
   if (parsed.kind === 'help') return (print(HELP), 0);
   if (parsed.kind === 'version') return (print(await version()), 0);
 
   const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
   if (parsed.kind === 'default') {
     return terminal
       ? runMenu(
@@ -281,6 +294,7 @@ async function main(argv: string[]): Promise<number> {
     cwd: process.cwd(),
     interactive: terminal,
   });
+
   return dispatchCommand({ ctx, terminal, parsed });
 }
 

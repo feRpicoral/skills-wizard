@@ -25,6 +25,7 @@ export function composeManifestMetadata({
   const variables = Object.fromEntries(
     requiredVariables(blocks).flatMap((name) => {
       const value = selection.variables[name];
+
       return value === undefined ? [] : [[name, value]];
     }),
   );
@@ -71,6 +72,7 @@ export function resolveManifestEntries({
 } {
   const entries = actions.flatMap((action) => {
     const entry = isApplied(action) ? action.entry : action.previous;
+
     return entry ? [entry] : [];
   });
   const installedSkills = new Set(
@@ -100,6 +102,7 @@ export function resolveManifestEntries({
     ...manifest.mcp.filter((name) => recordedMcp.has(name)),
     ...[...recordedMcp].filter((name) => !manifest.mcp.includes(name)),
   ];
+
   return {
     manifest: { ...manifest, skills, mcp },
     entries,
@@ -122,9 +125,12 @@ export async function resolveManifestStatus({
   const existing = await readTextIfExists(manifestPath);
   const content = serializeManifest({ ...manifest, entries }, projectDir);
   const empty = entries.length === 0 && manifest.tools.length === 0;
+
   if (empty) {
     return existing === null ? 'unchanged' : 'remove';
   }
+
   if (existing === null) return 'create';
+
   return existing === content ? 'unchanged' : 'update';
 }

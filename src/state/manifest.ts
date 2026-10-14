@@ -175,13 +175,17 @@ function resolveProjectEntry(
   if (isAbsolute(entry.path)) {
     throw new ManifestError(`${file}: entry paths must be relative`);
   }
+
   const path = resolve(dir, entry.path);
+
   if (entry.kind === 'exclude-region') {
     return path === gitExcludePath ? { ...entry, path } : null;
   }
+
   if (!isInside({ dir, path })) {
     throw new ManifestError(`${file}: ${entry.path} is outside the project`);
   }
+
   return { ...entry, path };
 }
 
@@ -217,20 +221,25 @@ export function checkSkillEntries({
   for (const entry of entries) {
     if (entry.kind === 'skill') {
       const expected = join(folders.copies, entry.name);
+
       if (entry.path !== expected) {
         throw new ManifestError(
           `${file}: the ${entry.name} skill must be recorded at ${expected}, not ${entry.path}`,
         );
       }
+
       if (scope === 'project' && entry.install.mode === 'link') {
         throw new ManifestError(
           `${file}: project skills must be installed as copies, not links (${entry.name})`,
         );
       }
     }
+
     if (entry.kind === 'symlink') {
       const inSkillsFolder = folders.links.includes(dirname(entry.path));
+
       if (!inSkillsFolder && scope === 'global') continue;
+
       if (!inSkillsFolder || !isSkillName(basename(entry.path))) {
         throw new ManifestError(
           `${file}: ${entry.path} is not a skill link in a tool skills folder`,
@@ -262,6 +271,7 @@ export function checkMcpEntries({
         `${file}: ${entry.path} is not a tool MCP JSON config file`,
       );
     }
+
     if (entry.kind === 'mcp-toml' && !mcpPaths.toml.includes(entry.path)) {
       throw new ManifestError(
         `${file}: ${entry.path} is not a tool MCP TOML config file`,
@@ -283,6 +293,7 @@ export function serializeManifest(
         })),
       }
     : manifest;
+
   return `${JSON.stringify(stored, null, 2)}\n`;
 }
 
@@ -291,6 +302,7 @@ export async function readManifest(file: string): Promise<Manifest | null> {
   if (stats && !stats.isFile()) {
     throw new ManifestError(`${file} is not a regular file`);
   }
+
   const content = await readTextIfExists(file);
   if (content === null) return null;
 
@@ -300,10 +312,12 @@ export async function readManifest(file: string): Promise<Manifest | null> {
   } catch (error) {
     throw new ManifestError(`${file} is not valid JSON`, { cause: error });
   }
+
   const result = manifestSchema.safeParse(raw);
   if (!result.success) {
     throw new ManifestError(`${file}: ${z.prettifyError(result.error)}`);
   }
+
   return result.data;
 }
 
@@ -318,17 +332,20 @@ export async function readGlobalManifest(
   file: string,
 ): Promise<Manifest | null> {
   const manifest = await readManifest(file);
+
   for (const entry of manifest?.entries ?? []) {
     if (!isAbsolute(entry.path)) {
       throw new ManifestError(
         `${file}: entry paths must be absolute, got ${entry.path}`,
       );
     }
+
     if (entry.kind === 'symlink' && !isAbsolute(entry.target)) {
       throw new ManifestError(
         `${file}: symlink targets must be absolute, got ${entry.target}`,
       );
     }
+
     if (
       entry.kind === 'skill' &&
       entry.install.mode === 'link' &&
@@ -339,6 +356,7 @@ export async function readGlobalManifest(
       );
     }
   }
+
   return manifest;
 }
 
@@ -359,6 +377,7 @@ export async function readProjectManifest(
   if (location !== null && !isInside({ dir, path: location })) {
     throw new ManifestError(`${file} resolves outside the project`);
   }
+
   const manifest = await readManifest(file);
   if (!manifest) return null;
 
@@ -366,9 +385,11 @@ export async function readProjectManifest(
   const entries = manifest.entries.flatMap((entry) => {
     const resolved = resolveProjectEntry(file, entry, { dir, ...rest });
     if (resolved) return [resolved];
+
     ignored.push(entry.path);
     return [];
   });
+
   return { manifest: { ...manifest, entries }, ignored };
 }
 

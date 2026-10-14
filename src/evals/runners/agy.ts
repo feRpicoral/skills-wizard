@@ -77,17 +77,42 @@ interface AgySkillTriggerStepParams {
   skillName: string;
 }
 
+/**
+ * The payload of a `name` event, either nested under `event.name` (with
+ * `event.event === name`) or flat (with `event.type === name`).
+ */
+function agyEventPayload(
+  event: Record<string, unknown>,
+  name: string,
+): Record<string, unknown> | undefined {
+  const nested = event[name];
+  if (event.event === name && isRecordObject(nested)) return nested;
+  if (event.type === name) return event;
+  return undefined;
+}
+
+function agyFilePath(params: Record<string, unknown>): string | undefined {
+  if (typeof params.AbsolutePath === 'string') return params.AbsolutePath;
+  if (typeof params.Path === 'string') return params.Path;
+  return undefined;
+}
+
+function agyDurationMs(payload: Record<string, unknown>): number | undefined {
+  if (typeof payload.duration_ms === 'number') return payload.duration_ms;
+  if (typeof payload.duration_seconds === 'number') {
+    return Math.round(payload.duration_seconds * 1000);
+  }
+  return undefined;
+}
+
 function isAgySkillTriggerStep({
   event,
   skillName,
 }: AgySkillTriggerStepParams): boolean {
-  const stepUpdate =
-    event.event === 'step_update' && isRecordObject(event.step_update)
-      ? event.step_update
-      : event.type === 'step_update'
-        ? event
-        : undefined;
+  const stepUpdate = agyEventPayload(event, 'step_update');
+
   if (!stepUpdate) return false;
+
   const toolName = stepUpdate.tool_name;
   const toolInfo = isRecordObject(stepUpdate.tool_info)
     ? stepUpdate.tool_info
@@ -96,14 +121,10 @@ function isAgySkillTriggerStep({
     toolInfo && isRecordObject(toolInfo.parameters)
       ? toolInfo.parameters
       : undefined;
+
   if (!params) return false;
 
-  const filePath =
-    typeof params.AbsolutePath === 'string'
-      ? params.AbsolutePath
-      : typeof params.Path === 'string'
-        ? params.Path
-        : undefined;
+  const filePath = agyFilePath(params);
 
   if (
     (toolName === 'view_file' || toolName === 'read_file') &&
@@ -111,9 +132,11 @@ function isAgySkillTriggerStep({
   ) {
     return mentionsSkillFile(filePath, skillName);
   }
+
   if (toolName === 'run_command' && typeof params.CommandLine === 'string') {
     return mentionsSkillFile(params.CommandLine, skillName);
   }
+
   return false;
 }
 
@@ -129,12 +152,14 @@ function agyResultError(payload: Record<string, unknown>): string | undefined {
   if (typeof payload.error === 'string' && payload.error.length > 0) {
     return payload.error;
   }
+
   if (
     typeof payload.status === 'string' &&
     AGY_FAILED_STATUSES.has(payload.status)
   ) {
     return `status ${payload.status}`;
   }
+
   return undefined;
 }
 
@@ -156,23 +181,17 @@ export function parseAgyStreamJson({
     if (isAgySkillTriggerStep({ event, skillName })) {
       triggered = true;
     }
-    const resultPayload =
-      event.event === 'result' && isRecordObject(event.result)
-        ? event.result
-        : event.type === 'result'
-          ? event
-          : undefined;
+
+    const resultPayload = agyEventPayload(event, 'result');
+
     if (resultPayload) {
       sawResult = true;
       error = agyResultError(resultPayload);
       if (typeof resultPayload.response === 'string') {
         response = resultPayload.response;
       }
-      if (typeof resultPayload.duration_ms === 'number') {
-        durationMs = resultPayload.duration_ms;
-      } else if (typeof resultPayload.duration_seconds === 'number') {
-        durationMs = Math.round(resultPayload.duration_seconds * 1000);
-      }
+
+      durationMs = agyDurationMs(resultPayload) ?? durationMs;
       usage = normalizeUsage(resultPayload.usage);
       usageReported = isUsageReported(resultPayload.usage);
     }
@@ -201,15 +220,11 @@ export function parseAgyGraderJson({
   fallbackDurationMs = 0,
 }: ParseAgyGraderParams): ParsedGraderOutput {
   const doc = parseJsonDocument(stdout);
-  const durationMs =
-    typeof doc.duration_ms === 'number'
-      ? doc.duration_ms
-      : typeof doc.duration_seconds === 'number'
-        ? Math.round(doc.duration_seconds * 1000)
-        : fallbackDurationMs;
+  const durationMs = agyDurationMs(doc) ?? fallbackDurationMs;
   const usage = normalizeUsage(doc.usage);
 
   const error = agyResultError(doc);
+
   if (error !== undefined) {
     throw new RunnerError(`agy grader failed: ${error}`);
   }

@@ -57,6 +57,7 @@ async function isSparse(cache: SourceCache, dir: string): Promise<boolean> {
     failure: 'Could not read the sparse checkout setting',
     cwd: dir,
   });
+
   return value === 'true';
 }
 
@@ -75,6 +76,7 @@ async function applyPaths({
 }: ApplyPathsParams): Promise<void> {
   const failure = `Could not limit the checkout of ${spec.repo}`;
   const sparse = await isSparse(cache, dir);
+
   if (spec.paths.includes(WHOLE_REPOSITORY)) {
     if (sparse) {
       await git({
@@ -84,12 +86,17 @@ async function applyPaths({
         cwd: dir,
       });
     }
+
     return;
   }
+
   if (!isFreshClone && !sparse) return;
+
   const wanted = [...new Set(spec.paths)].sort();
+
   if (sparse) {
     if (wanted.length === 0) return;
+
     const current = (
       await git({
         cache,
@@ -102,15 +109,19 @@ async function applyPaths({
       .filter(Boolean)
       .sort();
     const merged = [...new Set([...current, ...wanted])].sort();
+
     if (current.join('\n') === merged.join('\n')) return;
+
     await git({
       cache,
       args: ['sparse-checkout', 'set', '--cone', ...merged],
       failure,
       cwd: dir,
     });
+
     return;
   }
+
   // checkSpec rejects paths starting with "-"; sparse-checkout only accepts
   // --end-of-options from git 2.44, so it is not passed here.
   await git({
@@ -127,6 +138,7 @@ async function checkoutRef(
   spec: SourceSpec,
 ): Promise<void> {
   const failure = `Could not fetch ${spec.repo}`;
+
   await git({
     cache,
     args: [
@@ -156,8 +168,10 @@ async function clone(
 ): Promise<void> {
   const staging = `${dir}.agents-config-${process.pid}.tmp`;
   const pinnedCommit = spec.ref !== undefined && isCommitSha(spec.ref);
+
   await rm(staging, { recursive: true, force: true });
   await mkdir(dirname(dir), { recursive: true });
+
   try {
     await git({
       cache,
@@ -176,6 +190,7 @@ async function clone(
       failure: `Could not clone ${spec.repo}`,
     });
     await applyPaths({ cache, dir: staging, spec, isFreshClone: true });
+
     if (pinnedCommit) {
       await checkoutRef(cache, staging, spec);
     } else {
@@ -186,6 +201,7 @@ async function clone(
         cwd: staging,
       });
     }
+
     await writeState(staging, { ref: spec.ref ?? null });
     await rm(dir, { recursive: true, force: true });
     await rename(staging, dir);
@@ -209,17 +225,22 @@ export async function ensureSource(
   spec: SourceSpec,
 ): Promise<string> {
   checkSpec(spec);
+
   const dir = sourceDir(cache, spec.repo);
+
   if (!(await isDirectory(join(dir, '.git')))) {
     await clone(cache, dir, spec);
     return dir;
   }
+
   await applyPaths({ cache, dir, spec });
   const state = await readState(dir);
+
   if (state.ref !== (spec.ref ?? null)) {
     await checkoutRef(cache, dir, spec);
     await writeState(dir, { ref: spec.ref ?? null });
   }
+
   return dir;
 }
 
@@ -237,6 +258,7 @@ export async function cachedSourceRef(
 ): Promise<string | undefined> {
   const dir = await cachedSource(cache, repo);
   if (!dir) return undefined;
+
   const state = await readState(dir);
   return state.ref ?? undefined;
 }
@@ -263,6 +285,7 @@ export async function snapshotSourceCheckout(
   if (!dir) {
     return { repo, existed: false };
   }
+
   const sparse = await isSparse(cache, dir);
   const paths = sparse
     ? (
@@ -279,6 +302,7 @@ export async function snapshotSourceCheckout(
     : [];
   const commit = await sourceCommit(cache, repo);
   const state = await readState(dir);
+
   return { repo, existed: true, sparse, paths, commit, state };
 }
 
@@ -293,11 +317,14 @@ export async function restoreSourceCheckout(
 ): Promise<void> {
   const dir = await cachedSource(cache, snapshot.repo);
   if (!dir) return;
+
   if (!snapshot.existed) {
     await rm(dir, { recursive: true, force: true });
     return;
   }
+
   const failure = `Could not restore checkout of ${snapshot.repo}`;
+
   if (snapshot.sparse === false) {
     if (await isSparse(cache, dir)) {
       await git({
@@ -315,8 +342,10 @@ export async function restoreSourceCheckout(
       cwd: dir,
     });
   }
+
   if (snapshot.commit) {
     const currentCommit = await sourceCommit(cache, snapshot.repo);
+
     if (currentCommit !== snapshot.commit) {
       await git({
         cache,
@@ -326,6 +355,7 @@ export async function restoreSourceCheckout(
       });
     }
   }
+
   if (snapshot.state) {
     await writeState(dir, snapshot.state);
   }
@@ -351,33 +381,42 @@ export async function inspectRemoteRefs(
     args: ['ls-remote', '--symref', END_OF_OPTIONS, cache.url(repo)],
     failure: `Could not list remote refs of ${repo}`,
   });
+
   let headCommit: string | undefined;
   let defaultBranch: string | undefined;
   const refCommits = new Map<string, string>();
+
   for (const line of output.split('\n')) {
     if (!line) continue;
+
     const [first = '', rawName = ''] = line.split('\t');
+
     if (rawName === DEFAULT_REF && first.startsWith('ref: refs/heads/')) {
       defaultBranch = first.slice('ref: refs/heads/'.length);
       continue;
     }
+
     const commit = first;
     if (!isCommitSha(commit) || !rawName) continue;
+
     if (rawName === DEFAULT_REF) {
       headCommit = commit;
       continue;
     }
+
     if (rawName.startsWith('refs/heads/')) {
       refCommits.set(rawName.slice('refs/heads/'.length), commit);
     } else if (rawName.startsWith('refs/tags/')) {
       const tag = rawName.endsWith('^{}')
         ? rawName.slice('refs/tags/'.length, -3)
         : rawName.slice('refs/tags/'.length);
+
       if (!refCommits.has(tag) || rawName.endsWith('^{}')) {
         refCommits.set(tag, commit);
       }
     }
   }
+
   return {
     ...(headCommit ? { headCommit } : {}),
     ...(defaultBranch ? { defaultBranch } : {}),
@@ -395,9 +434,11 @@ export async function updateSource(
   spec: SourceSpec,
 ): Promise<{ previous: string; current: string }> {
   checkSpec(spec);
+
   const dir = sourceDir(cache, spec.repo);
   const previous = await sourceCommit(cache, spec.repo);
   await checkoutRef(cache, dir, spec);
+
   return { previous, current: await sourceCommit(cache, spec.repo) };
 }
 

@@ -65,10 +65,13 @@ export async function locationProblem({
   boundary,
 }: LocationCheckParams): Promise<LocationProblem | undefined> {
   const real = await realLocation(path);
+
   if (real === null) return 'dangling';
+
   if (boundary !== undefined && !isInside({ dir: boundary, path: real })) {
     return 'outside';
   }
+
   return undefined;
 }
 
@@ -114,6 +117,7 @@ export async function guarded({
   } catch (error) {
     const reason = fsErrorReason(error);
     if (reason === undefined) throw error;
+
     return conflict({ target, previous, reason });
   }
 }
@@ -132,10 +136,12 @@ export async function checkManifestPath({
       `${manifestPath} is a symlink; replace it with a regular file`,
     );
   }
+
   const problem = await locationProblem({
     path: manifestPath,
     boundary,
   });
+
   if (problem) {
     throw new ManifestError(
       `${manifestPath} ${LOCATION_PROBLEMS[problem]}; refusing to record the install there`,
@@ -172,6 +178,7 @@ export async function inspectTargetFile({
   const resolved = stats?.isSymbolicLink()
     ? await resolveIfSymlink(target.path)
     : null;
+
   if (
     stats?.isSymbolicLink() &&
     resolved === null &&
@@ -182,6 +189,7 @@ export async function inspectTargetFile({
       action: conflict({ target, previous, reason: danglingTargetReason }),
     };
   }
+
   const writePath = resolved ?? target.path;
   const effectiveBoundary =
     target.kind === 'exclude-region' ? undefined : boundary;
@@ -189,20 +197,25 @@ export async function inspectTargetFile({
     path: writePath,
     boundary: effectiveBoundary,
   });
+
   if (problem) {
     return {
       ok: false,
       action: conflict({ target, previous, reason: leftInPlace(problem) }),
     };
   }
+
   const kindProblem = fileKindProblem(await statIfExists(writePath));
+
   if (kindProblem) {
     return {
       ok: false,
       action: conflict({ target, previous, reason: kindProblem }),
     };
   }
+
   const { current, onDisk } = await readStaged({ staged, path: writePath });
+
   return {
     ok: true,
     writePath,
@@ -232,6 +245,11 @@ interface WriteActionParams {
   previous: ManifestEntry | null;
 }
 
+function writeStatus(existing: string | null, next: string): ActionStatus {
+  if (existing === null) return 'create';
+  return next === existing ? 'unchanged' : 'update';
+}
+
 export function writeAction({
   target,
   file,
@@ -239,12 +257,8 @@ export function writeAction({
   entry,
   previous,
 }: WriteActionParams): PlannedAction {
-  const status =
-    file.existing === null
-      ? 'create'
-      : next === file.existing
-        ? 'unchanged'
-        : 'update';
+  const status = writeStatus(file.existing, next);
+
   return {
     path: target.path,
     ...(file.writePath !== target.path ? { writePath: file.writePath } : {}),
@@ -263,6 +277,7 @@ export function wasCreated(
 ): boolean {
   if (existing === null) return true;
   if (pathCreated) return true;
+
   return previous !== null && 'createdFile' in previous
     ? previous.createdFile
     : false;
@@ -293,7 +308,9 @@ export async function resolveTargetFile({
     boundary,
     danglingTargetReason: 'is a symlink to a missing file',
   });
+
   if (!inspection.ok) return inspection;
+
   return {
     ok: true,
     file: {

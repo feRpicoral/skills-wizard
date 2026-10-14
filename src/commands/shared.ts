@@ -189,6 +189,7 @@ export async function reconcileManifest({
   const unresolvedVariables = missingVariables.filter(
     (name) => !foundVariables[name]?.trim(),
   );
+
   return {
     knownBlocks,
     blocks,
@@ -230,6 +231,7 @@ export function notifyReconciledBlocks({
       level: 'warn',
     });
   }
+
   if (outOfScopeBlocks.length > 0) {
     notify({
       ctx,
@@ -238,6 +240,7 @@ export function notifyReconciledBlocks({
       level: 'warn',
     });
   }
+
   if (addedBlocks.length > 0) {
     notify({
       ctx,
@@ -263,20 +266,24 @@ export async function resolveVariables({
   reconciled: { missingVariables, foundVariables, unresolvedVariables },
 }: ResolveVariablesParams): Promise<Record<string, string>> {
   if (missingVariables.length === 0) return { ...recorded };
+
   if (prompting) {
     return {
       ...recorded,
       ...(await promptVariables(missingVariables, foundVariables)),
     };
   }
+
   if (unresolvedVariables.length > 0) {
     throw new MissingVariablesError(
       `The blocks now use variables with no recorded value: ${unresolvedVariables.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolvedVariables })}`,
     );
   }
+
   ctx.print(
     `Using looked-up values for new variables: ${missingVariables.map((name) => `${name}=${foundVariables[name] ?? ''}`).join(', ')}`,
   );
+
   return foundVariables;
 }
 
@@ -318,6 +325,7 @@ export async function reconcileManifestSelection({
     location,
     lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
   });
+
   if (reconciled.unknownPreset !== undefined) {
     notify({
       ctx,
@@ -326,7 +334,9 @@ export async function reconcileManifestSelection({
       level: 'warn',
     });
   }
+
   notifyReconciledBlocks({ ctx, prompting, scope: location.scope, reconciled });
+
   const variables = await resolveVariables({
     ctx,
     prompting,
@@ -342,21 +352,19 @@ export async function reconcileManifestSelection({
     scope: location.scope,
   });
   const skills = [...new Set([...priorSkills, ...extraSkills])];
-  const mcp =
-    mcpOverride !== undefined
-      ? [...mcpOverride]
-      : mcpCatalog
-        ? dropUnavailableMcpServers({
-            ctx,
-            prompting,
-            catalog: mcpCatalog,
-            names: previous.mcp ?? [],
-            scope: location.scope,
-          })
-        : [...(previous.mcp ?? [])];
+  const mcp = reconcileMcp({
+    ctx,
+    prompting,
+    location,
+    previous,
+    mcpCatalog,
+    mcpOverride,
+  });
+
   if (reconciled.leftGit && location.project) {
     notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
   }
+
   return {
     blocks: reconciled.blocks,
     skills,
@@ -365,6 +373,30 @@ export async function reconcileManifestSelection({
     keepLocal: reconciled.keepLocal,
     ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
   };
+}
+
+/** Picks the MCP servers to keep: the override, the available recorded ones, or all recorded ones. */
+function reconcileMcp({
+  ctx,
+  prompting,
+  location,
+  previous,
+  mcpCatalog,
+  mcpOverride,
+}: Pick<
+  ReconcileManifestSelectionParams,
+  'ctx' | 'prompting' | 'location' | 'previous' | 'mcpCatalog' | 'mcpOverride'
+>): string[] {
+  if (mcpOverride !== undefined) return [...mcpOverride];
+  if (!mcpCatalog) return [...(previous.mcp ?? [])];
+
+  return dropUnavailableMcpServers({
+    ctx,
+    prompting,
+    catalog: mcpCatalog,
+    names: previous.mcp ?? [],
+    scope: location.scope,
+  });
 }
 
 export interface BuildSyncPlanForLocationParams {
@@ -429,6 +461,7 @@ export async function buildSyncPlanForLocation({
     library: skillLibrary,
     names: namesToFetch,
   });
+
   for (const [name, source] of extraSkillSources ?? []) {
     skillSources.set(name, source);
   }

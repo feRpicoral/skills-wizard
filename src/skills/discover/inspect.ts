@@ -68,6 +68,7 @@ interface CandidateSkillFile {
 function isEligibleSkillDirPath(dirPath: string): boolean {
   if (!isRepositoryPath(dirPath)) return false;
   if (dirPath === WHOLE_REPOSITORY) return true;
+
   return dirPath
     .split('/')
     .every((segment) => !IGNORED_REPO_SEGMENTS.has(segment));
@@ -88,6 +89,7 @@ function rankSkillPath({
   } else if (dirPath === WHOLE_REPOSITORY) {
     return 0;
   }
+
   return 2 + dirPath.split('/').length;
 }
 
@@ -107,9 +109,11 @@ function parseSkillMetadata(
   try {
     const { data } = parseFrontmatter({ source: markdown, file: SKILL_FILE });
     const parsed = skillMetadataSchema.safeParse(data);
+
     return parsed.success ? parsed.data : null;
   } catch (error) {
     if (error instanceof FrontmatterError) return null;
+
     throw error;
   }
 }
@@ -127,17 +131,22 @@ async function listCandidateSkillBlobs({
 }: ListCandidateSkillBlobsParams): Promise<CandidateSkillFile[]> {
   const treeFiles = await listRepositoryFiles({ cache, repo });
   const candidates: CandidateSkillFile[] = [];
+
   for (const file of treeFiles) {
     if (file.path !== SKILL_FILE && !file.path.endsWith(`/${SKILL_FILE}`)) {
       continue;
     }
+
     const dirPath =
       file.path === SKILL_FILE
         ? WHOLE_REPOSITORY
         : file.path.slice(0, -(SKILL_FILE.length + 1));
+
     if (!isEligibleSkillDirPath(dirPath)) continue;
+
     candidates.push({ dirPath, blobSha: file.blobSha });
   }
+
   return candidates.sort(
     (a, b) =>
       rankSkillPath({ dirPath: a.dirPath, expectedSkillName }) -
@@ -166,6 +175,7 @@ async function findMatchingSkillInRepo({
   const otherCandidates = candidates.filter(
     (candidate) => posix.basename(candidate.dirPath) !== expectedSkillName,
   );
+
   for (const group of [exactFolderCandidates, otherCandidates]) {
     for (const candidate of group) {
       const content = await readRepositoryBlob({
@@ -175,6 +185,7 @@ async function findMatchingSkillInRepo({
       });
       const meta = parseSkillMetadata(content);
       if (meta?.name !== expectedSkillName) continue;
+
       matches.push({
         name: meta.name,
         path: candidate.dirPath,
@@ -182,14 +193,17 @@ async function findMatchingSkillInRepo({
         ...(meta.license ? { license: meta.license } : {}),
       });
     }
+
     if (matches.length > 0) break;
   }
+
   if (matches.length === 1 && matches[0]) return [matches[0]];
   if (matches.length > 1) {
     throw new SourceError(
       `Skill "${expectedSkillName}" matched multiple paths in ${repo}: ${matches.map((m) => m.path).join(', ')}`,
     );
   }
+
   throw new SourceError(
     `Skill "${expectedSkillName}" was not found in ${repo}`,
   );
@@ -208,6 +222,7 @@ async function listAllSkillsInRepo({
 }: ListAllSkillsInRepoParams): Promise<RepoSkillLocation[]> {
   const locations: RepoSkillLocation[] = [];
   const seenNames = new Map<string, string>();
+
   for (const candidate of candidates) {
     const content = await readRepositoryBlob({
       cache,
@@ -216,12 +231,15 @@ async function listAllSkillsInRepo({
     });
     const meta = parseSkillMetadata(content);
     if (!meta) continue;
+
     const priorPath = seenNames.get(meta.name);
+
     if (priorPath !== undefined) {
       throw new SourceError(
         `${repo} defines skill "${meta.name}" in both ${priorPath} and ${candidate.dirPath}`,
       );
     }
+
     seenNames.set(meta.name, candidate.dirPath);
     locations.push({
       name: meta.name,
@@ -230,9 +248,11 @@ async function listAllSkillsInRepo({
       ...(meta.license ? { license: meta.license } : {}),
     });
   }
+
   if (locations.length === 0) {
     throw new SourceError(`No valid ${SKILL_FILE} found in ${repo}`);
   }
+
   return locations.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -263,16 +283,19 @@ export async function locateSkillsInRepo({
   existingPaths = [],
 }: LocateSkillsInRepoParams): Promise<RepoSkillLocation[]> {
   const effectiveRef = ref ?? (await cachedSourceRef(cache, repo));
+
   await ensureSource(cache, {
     repo,
-    ...(effectiveRef ? { ref: effectiveRef } : {}),
+    ref: effectiveRef || undefined,
     paths: existingPaths,
   });
+
   const candidates = await listCandidateSkillBlobs({
     cache,
     repo,
     expectedSkillName,
   });
+
   if (expectedSkillName !== undefined) {
     return findMatchingSkillInRepo({
       cache,
@@ -281,6 +304,7 @@ export async function locateSkillsInRepo({
       expectedSkillName,
     });
   }
+
   return listAllSkillsInRepo({ cache, repo, candidates });
 }
 
@@ -304,12 +328,15 @@ export async function assertInsideRepository({
   if (!(await isDirectory(skillDir))) {
     throw new SourceError(`${repo} does not contain skill directory "${path}"`);
   }
+
   const skillStat = await lstatIfExists(skillDir);
+
   if (!skillStat?.isDirectory()) {
     throw new SourceError(
       `${repo}: skill path "${path}" must be a directory, not a symlink`,
     );
   }
+
   const [realRoot, realSkill] = await Promise.all([
     realpath(repoRoot),
     realpath(skillDir),
@@ -317,6 +344,7 @@ export async function assertInsideRepository({
   const expectedRealSkill =
     path === WHOLE_REPOSITORY ? realRoot : join(realRoot, ...path.split('/'));
   const rel = relative(realRoot, realSkill);
+
   if (
     rel === '..' ||
     rel.startsWith(`..${sep}`) ||
@@ -359,6 +387,7 @@ export async function inspectDiscoveredSkill({
   if (!isRepositoryPath(path)) {
     throw new SourceError(`${repo}: "${path}" is not a valid repository path`);
   }
+
   const effectiveRef = ref ?? (await cachedSourceRef(cache, repo));
   const wantedPaths = existingPaths.includes(WHOLE_REPOSITORY)
     ? [WHOLE_REPOSITORY]
@@ -367,10 +396,11 @@ export async function inspectDiscoveredSkill({
   let root: string;
   let dir: string;
   let report: SkillReport;
+
   try {
     root = await ensureSource(cache, {
       repo,
-      ...(effectiveRef ? { ref: effectiveRef } : {}),
+      ref: effectiveRef || undefined,
       paths: wantedPaths,
     });
     dir = path === WHOLE_REPOSITORY ? root : join(root, ...path.split('/'));
@@ -378,8 +408,9 @@ export async function inspectDiscoveredSkill({
 
     report = await validateSkill(dir, {
       strict: false,
-      ...(expectedName !== undefined ? { expectedName } : {}),
+      expectedName,
     });
+
     if (report.errors.length > 0 || !report.name) {
       throw new SourceError(
         `Invalid skill in ${repo} (${path}): ${report.errors.join('; ')}`,
@@ -387,6 +418,7 @@ export async function inspectDiscoveredSkill({
     }
   } catch (error) {
     await restoreSourceCheckout(cache, snapshot);
+
     throw error;
   }
 

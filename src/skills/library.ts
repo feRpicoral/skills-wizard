@@ -42,10 +42,13 @@ function firstPartyDir(repoRoot: string): string {
 async function firstPartySkills(repoRoot: string): Promise<SkillDefinition[]> {
   const dir = firstPartyDir(repoRoot);
   const skills: SkillDefinition[] = [];
+
   for (const entry of (await readDirIfExists(dir)) ?? []) {
     if (!entry.isDirectory() || !isSkillName(entry.name)) continue;
+
     const skillDir = join(dir, entry.name);
     if (!(await lstatIfExists(join(skillDir, SKILL_FILE)))) continue;
+
     skills.push({
       name: entry.name,
       group: FIRST_PARTY_GROUP,
@@ -58,6 +61,7 @@ async function firstPartySkills(repoRoot: string): Promise<SkillDefinition[]> {
       },
     });
   }
+
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -81,6 +85,7 @@ export async function loadSkillLibrary(
   const local = await firstPartySkills(repoRoot);
   const listed = new Set(catalog.skills.map((entry) => entry.name));
   const clash = local.find((skill) => listed.has(skill.name));
+
   if (clash) {
     throw new CatalogError(
       `${clash.name} is both a first-party skill and a catalog entry`,

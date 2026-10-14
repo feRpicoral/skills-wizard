@@ -53,6 +53,7 @@ async function locate(path: string): Promise<string> {
     return (await realLocation(path)) ?? path;
   } catch (error) {
     if (fsErrorReason(error) === undefined) throw error;
+
     return path;
   }
 }
@@ -62,21 +63,26 @@ export async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
   const seen = new Set<string>();
   const add = async (root: SkillRoot) => {
     const real = await locate(root.dir);
+
     if (seen.has(real)) return;
+
     seen.add(real);
     roots.push(root);
   };
 
   await add({ dir: paths.skillsDir, kind: 'canonical' });
+
   for (const id of TOOL_IDS) {
     const dir = TOOLS[id].global.skills?.(paths);
     if (dir) await add({ dir, kind: 'tool' });
   }
+
   for (const id of TOOL_IDS) {
     for (const dir of TOOLS[id].global.extraSkills?.(paths) ?? []) {
       await add({ dir, kind: 'external' });
     }
   }
+
   await add({ dir: join(paths.codexHome, 'skills'), kind: 'external' });
 
   for (const pluginsDir of [
@@ -90,14 +96,17 @@ export async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
       if (fsErrorReason(error) === undefined) throw error;
       plugins = null;
     }
+
     for (const entry of plugins ?? []) {
       if (entry.name.startsWith('.')) continue;
+
       await add({
         dir: join(pluginsDir, entry.name, 'skills'),
         kind: 'plugin',
       });
     }
   }
+
   return roots;
 }
 
@@ -113,17 +122,22 @@ async function readDeclaredName(
     skipped.push(entryPath);
     return null;
   }
+
   if (content === null) {
     skipped.push(entryPath);
     return null;
   }
+
   try {
     const { data } = parseFrontmatter({ source: content, file: SKILL_FILE });
     if (!isRecord(data) || typeof data.name !== 'string') return null;
+
     const name = data.name.trim();
+
     return name || null;
   } catch (error) {
     if (error instanceof FrontmatterError) return null;
+
     throw error;
   }
 }
@@ -140,14 +154,18 @@ async function scanRoot(
     skipped.push(root.dir);
     return [];
   }
+
   if (!children) return [];
+
   children.sort((a, b) => a.name.localeCompare(b.name));
 
   const entries: RawEntry[] = [];
   for (const child of children) {
     if (child.name.startsWith('.')) continue;
+
     const path = join(root.dir, child.name);
     let stats;
+
     try {
       stats = await lstatIfExists(path);
     } catch (error) {
@@ -155,6 +173,7 @@ async function scanRoot(
       skipped.push(path);
       continue;
     }
+
     if (!stats || (!stats.isDirectory() && !stats.isSymbolicLink())) continue;
 
     const name = await readDeclaredName(path, skipped);
@@ -168,6 +187,7 @@ async function scanRoot(
       real: await locate(path),
     });
   }
+
   return entries;
 }
 
@@ -210,11 +230,13 @@ export async function scanInstalledSkills(
   for (const entry of rawEntries) {
     const known = byLocation.get(entry.real);
     const knownRoots = known ? rootsOf.get(known) : undefined;
+
     if (known && knownRoots && !knownRoots.has(entry.root)) {
       known.locations.push(entry.path);
       knownRoots.add(entry.root);
       continue;
     }
+
     const skill: DiscoveredSkill = {
       name: entry.name,
       folder: entry.folder,
@@ -223,15 +245,18 @@ export async function scanInstalledSkills(
       managed: ownedPaths.has(entry.path) && ownedSkills.has(entry.name),
       readOnly: readOnly.has(entry.real),
     };
+
     if (!known) byLocation.set(entry.real, skill);
     rootsOf.set(skill, new Set([entry.root]));
     skills.push(skill);
   }
 
   const byName = new Map<string, string[]>();
+
   for (const skill of skills) {
     byName.set(skill.name, [...(byName.get(skill.name) ?? []), skill.path]);
   }
+
   const collisions: SkillCollision[] = [...byName.entries()]
     .filter(([, locations]) => locations.length > 1)
     .map(([name, locations]) => ({ name, paths: locations }))
