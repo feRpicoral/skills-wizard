@@ -1,36 +1,26 @@
-Source: the user's repositories quotahit, desvia, relay, cite and sonar (.prettierrc, .prettierignore, package.json, .husky, commitlint and CI files read 2026-10-12). Not part of the Prettier docs: these are the user's preferences, not Prettier requirements.
+Not part of the Prettier docs: this is the skill's opinionated default for new setups, not a Prettier requirement. Compatibility facts were checked against the npm registry and each package's GitHub repository on 2026-10-14.
 
-# House style (Prettier, lint-staged, Husky)
+# Default setup (Prettier, lint-staged, Husky)
 
 Use this for new setups. In an existing repo, match what is there.
 
-## What all five repos share
+## Defaults
 
-- Prettier 3 with a project config file and a `.prettierignore`.
-- ESLint runs Prettier through `eslint-plugin-prettier/recommended` (see the eslint-configuration skill).
-- `arrowParens` stays at its default `"always"` (relay and cite spell it out, the others omit it).
-- Husky 9, lint-staged and commitlint with `@commitlint/config-conventional`; the hooks run `yarn lint-staged` and `yarn commitlint --edit "$1"`.
-- Yarn 4 (`packageManager` field) with `nodeLinker: node-modules`.
+| Topic                  | Default for a new setup                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Config file            | `.prettierrc` with only the options that differ from Prettier's defaults                                      |
+| Quotes                 | `singleQuote: true`                                                                                           |
+| `printWidth`           | Prettier's default (80)                                                                                       |
+| ESLint integration     | `eslint-plugin-prettier/recommended` (see the eslint-configuration skill)                                     |
+| Tailwind class sorting | `prettier-plugin-tailwindcss` whenever Tailwind CSS is present                                                |
+| lint-staged JS glob    | `*.{ts,tsx,js,jsx,cjs,mjs}`                                                                                   |
+| Husky install script   | `postinstall` with Yarn, because Yarn 2+ does not run `prepare` (Husky docs); `prepare` with npm, pnpm or bun |
+| Scripts                | Both `format` and `format:check`                                                                              |
+| Commit messages        | commitlint with `@commitlint/config-conventional`, 100-character header, body line length off                 |
 
-## Where the repos differ
-
-| Topic                  | What the repos do                                                                                                                                                                         | Default for a new setup                                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Quotes                 | `singleQuote: true` (desvia, quotahit); double quotes (sonar, relay, cite)                                                                                                                | Single quotes                                                                                                 |
-| `printWidth`           | Default 80 (desvia, quotahit); 100 (sonar, relay, cite)                                                                                                                                   | Default                                                                                                       |
-| Defaults spelled out   | Only non-defaults (desvia, quotahit); `semi`, `singleQuote: false`, `trailingComma: "all"`, `tabWidth`, `useTabs`, `arrowParens` listed at default values (relay, cite; sonar lists some) | Only non-defaults                                                                                             |
-| Config file            | `.prettierrc` (desvia, quotahit); `.prettierrc.json` (sonar, relay, cite)                                                                                                                 | `.prettierrc`                                                                                                 |
-| Tailwind class sorting | `prettier-plugin-tailwindcss` (sonar, relay, cite); quotahit uses Tailwind 4 without it                                                                                                   | Add the plugin whenever Tailwind is present (user preference for new setups)                                  |
-| lint-staged JS glob    | `*.{ts,tsx,js,jsx,cjs,mjs}` (desvia, quotahit); same without `cjs` (sonar, relay, cite)                                                                                                   | Include `cjs`                                                                                                 |
-| Husky install script   | `"postinstall": "husky"` (desvia, quotahit); `"prepare": "husky"` (sonar, relay, cite)                                                                                                    | `postinstall` with Yarn, because Yarn 2+ does not run `prepare` (Husky docs); `prepare` with npm, pnpm or bun |
-| `format:check` script  | Present (sonar, relay, cite); only `format` (quotahit)                                                                                                                                    | Add both                                                                                                      |
-| commitlint rules       | 100-character header, body line length off (quotahit, desvia, cite); header-only commits (relay); defaults (sonar)                                                                        | quotahit and desvia                                                                                           |
-
-If the target repo already made one of these choices, keep it. Otherwise use the default column and tell the user that it follows the newest repos (desvia, quotahit).
+If the target repo already made a different choice (double quotes, `printWidth: 100`, `.prettierrc.json`, defaults spelled out), keep it.
 
 ## .prettierrc
-
-New setup (desvia, quotahit):
 
 ```json
 {
@@ -38,7 +28,7 @@ New setup (desvia, quotahit):
 }
 ```
 
-New setup with Tailwind CSS:
+With Tailwind CSS:
 
 ```json
 {
@@ -48,49 +38,31 @@ New setup with Tailwind CSS:
 }
 ```
 
-- The plugin entry matches sonar, relay and cite (`"plugins": ["prettier-plugin-tailwindcss"]`). Keep it last if other plugins are added.
-- `tailwindStylesheet` is not in the house repos. The plugin README says Tailwind CSS v4 projects must point it at the CSS entry file (relative to the Prettier config), so add it with the repo's real path and tell the user it is new. Tailwind v3 projects use `tailwindConfig` only when `tailwind.config.js` is not next to the Prettier config.
-
-For reference, relay and cite (Tailwind, older style):
-
-```json
-{
-  "semi": true,
-  "singleQuote": false,
-  "trailingComma": "all",
-  "printWidth": 100,
-  "tabWidth": 2,
-  "useTabs": false,
-  "arrowParens": "always",
-  "plugins": ["prettier-plugin-tailwindcss"]
-}
-```
+- Keep `prettier-plugin-tailwindcss` last if other plugins are added.
+- Tailwind CSS v4 projects must point `tailwindStylesheet` at the CSS entry file, relative to the Prettier config (plugin README); use the repo's real path. Tailwind v3 projects use `tailwindConfig` only when `tailwind.config.js` is not next to the Prettier config.
 
 ## .prettierignore
 
-Next.js (quotahit):
+Next.js:
 
 ```text
 .next
-node_modules
 .yarn
 coverage
 generated
 ```
 
-Nx monorepo (desvia):
+Nx monorepo:
 
 ```text
-# Add files here to ignore them from prettier formatting
 /dist
 /coverage
 /.nx/cache
 /.nx/workspace-data
-.nx/self-healing
 **/generated
 ```
 
-Additions seen in the other repos: `out`, `build`, `dist`, `.vercel`, `playwright-report`, `test-results`, `prisma/migrations` (relay), `public` (sonar, cite), and lockfiles (`yarn.lock`, `*.lock`, `package-lock.json`, `pnpm-lock.yaml`). Prettier already skips `node_modules` and anything in `.gitignore` when run from the root, so those entries are harmless but optional.
+Add other build or report output the repo produces (`out`, `build`, `.vercel`, `playwright-report`, `test-results`, `prisma/migrations`, `public`) and lockfiles. Prettier already skips `node_modules` and anything in `.gitignore` when run from the root, so those entries are optional.
 
 ## package.json scripts
 
@@ -106,8 +78,8 @@ Additions seen in the other repos: `out`, `build`, `dist`, `.vercel`, `playwrigh
 }
 ```
 
-- `lint`, `lint:fix`, `format` and `postinstall` come from quotahit (which chains `husky && prisma generate ...` in `postinstall`); `format:check` from sonar, relay and cite.
-- CI in quotahit and relay runs `yarn install --immutable` and then `yarn lint`; JS and TS formatting is enforced there through `prettier/prettier`. JSON, Markdown, CSS and YAML are only formatted by the pre-commit hook. For a new setup, also run `yarn format:check` in CI, which the Prettier docs recommend.
+- Use `"prepare": "husky"` instead of `postinstall` with npm, pnpm or bun. A package published to npm with Yarn also needs `"prepack": "pinst --disable"` and `"postpack": "pinst --enable"` so installing it does not run Husky (Husky docs).
+- Run `format:check` in CI, which the Prettier docs recommend; `prettier/prettier` in `eslint .` covers only the files ESLint lints.
 
 ## lint-staged
 
@@ -120,7 +92,7 @@ Additions seen in the other repos: `out`, `build`, `dist`, `.vercel`, `playwrigh
 }
 ```
 
-The block is identical in all five repos except that sonar, relay and cite omit `cjs`. ESLint runs before Prettier, as the Prettier docs require.
+ESLint runs before Prettier, as the Prettier docs require.
 
 ## Husky hooks
 
@@ -141,7 +113,7 @@ With npm, pnpm or bun, use that package manager's runner in place of `yarn` (the
 ## commitlint
 
 ```js
-// commitlint.config.mjs (quotahit; desvia is the same with body-max-line-length: [0])
+// commitlint.config.mjs
 const commitlintConfig = {
   extends: ['@commitlint/config-conventional'],
   rules: {
@@ -153,18 +125,14 @@ const commitlintConfig = {
 export default commitlintConfig;
 ```
 
-relay is stricter (lower-case subject, no trailing period, 72-character header, empty body and footer). sonar uses the conventional config unchanged. cite uses the quotahit rules in a CommonJS `commitlint.config.js`.
+## Compatibility with the latest versions
 
-## Dev dependencies and versions in use
+Install the latest stable release of each package (no alpha, beta, rc, canary or nightly tags) as long as it fits the `peerDependencies` and `engines` of the rest of the toolchain. When it does not, use the newest stable release that does. Check with `npm view <package> dist-tags peerDependencies engines` before installing, because these facts change with every release, and tell the user when you held a package back and why. As of the date above:
 
-| Package                                              | Range in the repos                       |
-| ---------------------------------------------------- | ---------------------------------------- |
-| `prettier`                                           | `^3.8.1` (desvia) to `^3.8.4` (quotahit) |
-| `prettier-plugin-tailwindcss`                        | `^0.6.9` (relay), `^0.8.0` (cite, sonar) |
-| `eslint-plugin-prettier`                             | `^5.2.1` to `^5.5.6`                     |
-| `eslint-config-prettier`                             | `^9.1.0` (relay), `^10.x` elsewhere      |
-| `husky`                                              | `^9.1.7`                                 |
-| `lint-staged`                                        | `^17.0.4` to `^17.0.7`                   |
-| `@commitlint/cli`, `@commitlint/config-conventional` | `^21.0.1` to `^21.0.2`                   |
-
-The repos use caret ranges with a committed `yarn.lock` and `yarn install --immutable` in CI, which keeps versions consistent as long as everyone installs from the lockfile. The Prettier docs recommend an exact version instead; in a house repo keep the caret and the lockfile, and mention the docs' advice when version drift is the problem.
+- **Prettier:** Prettier 3 is current; Prettier 4 is only published as alpha releases on the `next` tag, so do not install `prettier@next`. The Prettier docs recommend an exact version (`--save-exact`) because even patch releases can change output; a caret range is fine when everyone installs from the committed lockfile. Mention the trade-off when version drift is the problem.
+- **prettier-plugin-tailwindcss:** 0.8.x needs Prettier 3.7 or later (its changelog), although its `peerDependencies` still say `^3.0`, and Node.js 20.19 or later. Upgrade Prettier first when an older 3.x is installed.
+- **eslint-plugin-prettier and eslint-config-prettier:** eslint-plugin-prettier 5 needs Prettier 3 and accepts eslint-config-prettier `>=7 <10` or `>=10.1`, so avoid eslint-config-prettier 10.0.x. Both accept ESLint 10.
+- **Husky:** 9.x is current (no major release since). Husky 9 needs Node.js 18 or later.
+- **lint-staged:** 17 needs Node.js 22.22.1 or later and Git 2.32.0 or later. On older Node.js, install the previous major whose `engines` accepts it and say so.
+- **commitlint:** `@commitlint/cli` and `@commitlint/config-conventional` 21 need Node.js 22.12.0 or later; keep both packages on the same major.
+- **Node.js floor:** with the latest lint-staged and commitlint, the toolchain needs Node.js 22.22.1 or later. Use Node.js 24 for new setups and pin it with `.nvmrc` or `engines`.

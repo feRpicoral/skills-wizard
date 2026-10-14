@@ -12,7 +12,7 @@ ESLint 10 cannot load `.eslintrc*`, `.eslintignore` or an `eslintConfig` key in 
    - `npx @eslint/migrate-config .eslintrc.json` (also `.eslintrc` and `.eslintrc.yml`). For `.eslintrc.js` it only emits the evaluated data, without functions or conditionals.
    - `npx codemod @eslint/v8-to-v9-config` also rewrites `eslintConfig` in package.json, `.eslintignore`, `/* exported */` and some `/* eslint */` comments.
    - Neither output is guaranteed to work unchanged. Check it against the mapping below.
-4. Write `eslint.config.mjs` (house convention) with the same behavior: same rules, same globals per file group, same ignores. Do not add plugins or style rules during the migration unless the user asks.
+4. Write `eslint.config.mjs` (this skill's default file name) with the same behavior: same rules, same globals per file group, same ignores. Do not add plugins or style rules during the migration unless the user asks.
 5. Remove `/* eslint-env */` comments (errors in ESLint 10). Declare the globals in the config, or use `/* global describe, it -- Mocha globals */`.
 6. Delete `.eslintrc*`, `.eslintignore` and `eslintConfig`. Update scripts: drop `--ignore-path`, `--env`, `--no-eslintrc` (now `--no-config-lookup`), `--rulesdir` and `--resolve-plugins-relative-to`.
 7. Add `@eslint/js` and `globals` to devDependencies when the config uses them (ESLint does not install them).

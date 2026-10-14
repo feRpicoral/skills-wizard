@@ -6,7 +6,7 @@ compatibility: Requires gh (GitHub CLI) authenticated with repository administra
 
 # GitHub Repository Setup
 
-Configure a GitHub repository with the house merge policy and default-branch protection ruleset before pushing feature work.
+Configure a GitHub repository with a merge-commit-only policy, head-branch cleanup and a default-branch protection ruleset before pushing feature work.
 
 ## Start here
 

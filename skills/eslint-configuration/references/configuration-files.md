@@ -30,7 +30,7 @@ module.exports = defineConfig([
 ]);
 ```
 
-`eslint.config.mjs` is always ES modules, which is why the house configs use it.
+`eslint.config.mjs` is always ES modules, which is why this skill's default configs use it.
 
 ## Lookup
 
@@ -145,7 +145,7 @@ export default defineConfig([
 
 `@eslint/js` provides `js/recommended` (rules ESLint recommends for everyone) and `js/all` (every core rule; changes with each minor and major release, not recommended for production). Install `@eslint/js` separately.
 
-Spreading an imported array into the top level (`...nextVitals`) also works; the house configs do this for framework configs.
+Spreading an imported array into the top level (`...nextVitals`) also works; the default configs do this for framework configs.
 
 ## settings
 

@@ -24,7 +24,7 @@
     "should_trigger": true
   },
   {
-    "query": "We have an Nx monorepo with apps/api and libs/shared. How should we structure the root eslint.config.mjs and package-level overrides using our house style?",
+    "query": "We have an Nx monorepo with apps/api and libs/shared. How should we structure the root eslint.config.mjs and package-level overrides using the usual opinionated setup?",
     "should_trigger": true
   },
   {

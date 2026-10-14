@@ -6,7 +6,7 @@ compatibility: Requires Node.js, NestJS (@nestjs/common, @nestjs/core), Prisma 7
 
 # NestJS Domain Module
 
-Build and maintain NestJS domain modules following the house `controller -> service -> repository` architecture with `nestjs-zod` DTOs and co-located `*.spec.ts` unit tests.
+Build and maintain NestJS domain modules following a layered `controller -> service -> repository` architecture with `nestjs-zod` DTOs and co-located `*.spec.ts` unit tests.
 
 ## Start here
 
@@ -52,7 +52,7 @@ export class InvoiceResponseDto extends createZodDto(invoiceResponseSchema) {}
 
 ### 2. Implement the repository (`<domain>.repository.ts`)
 
-Inject `PrismaService` only here. Follow the house function-parameter convention: when a method takes two or more parameters of the same type or more than 3 parameters in total, accept a single destructured object typed by a named `interface` above the method or class:
+Inject `PrismaService` only here. Follow this function-parameter convention: when a method takes two or more parameters of the same type or more than 3 parameters in total, accept a single destructured object typed by a named `interface` above the method or class:
 
 ```ts
 import { Injectable } from '@nestjs/common';

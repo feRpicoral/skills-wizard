@@ -155,7 +155,7 @@ export default defineConfig([
 The ESLint docs do not document TypeScript setup beyond listing `@typescript-eslint/parser` as compatible. Use typescript-eslint (https://typescript-eslint.io) and follow its documentation for its configs and options. Two things come from the ESLint side:
 
 - `.ts`, `.mts` and `.cts` files are only linted when a `files` pattern matches them (shared configs usually add these patterns).
-- The house configs spread `tseslint.configs.recommended` from the `typescript-eslint` package or get typescript-eslint through `eslint-config-next/typescript` or `@nx/eslint-plugin`; see house-style.md.
+- The default configs spread `tseslint.configs.recommended` from the `typescript-eslint` package or get typescript-eslint through `eslint-config-next/typescript` or `@nx/eslint-plugin`; see default-setup.md.
 
 ## Common problems
 
