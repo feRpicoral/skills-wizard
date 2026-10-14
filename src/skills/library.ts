@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { Scope } from '../blocks/library.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import { CatalogError } from '../errors.ts';
 import { lstatIfExists, readDirIfExists } from '../install/fs.ts';
 import {
@@ -129,6 +129,33 @@ export function defaultSkillNames(
   return library.skills
     .filter((skill) => skill.defaults.includes(scope))
     .map((skill) => skill.name);
+}
+
+export interface BlockSkillNamesParams {
+  library: SkillLibrary;
+  blocks: BlockLibrary;
+  blockIds: readonly string[];
+  scope: Scope;
+}
+
+/**
+ * Skills suggested by the `skills` frontmatter of the blocks in `blockIds`,
+ * limited to skills in `library` available for `scope`, in block order without
+ * duplicates.
+ */
+export function blockSkillNames({
+  library,
+  blocks,
+  blockIds,
+  scope,
+}: BlockSkillNamesParams): string[] {
+  const selected = new Set(blockIds);
+  const names = blocks.blocks
+    .filter((block) => selected.has(block.id))
+    .flatMap((block) => block.skills)
+    .filter((name) => findSkill(library, name)?.scopes.includes(scope));
+
+  return [...new Set(names)];
 }
 
 export function unknownSkillNames(

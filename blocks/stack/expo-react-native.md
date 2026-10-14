@@ -4,6 +4,7 @@ summary: Expo New Architecture, app.config.ts, EAS Build/Update, native-stack an
 group: stack
 scopes: [project]
 defaults: []
+skills: [eas-workflows, eas-update, expo-dev-client, expo-upgrade, expo-module, react-native-best-practices, react-navigation, react-native-testing, upgrading-react-native, vercel-react-native-skills]
 ---
 
 ## Expo and React Native

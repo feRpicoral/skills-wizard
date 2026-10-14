@@ -60,7 +60,7 @@ Without a terminal, commands print the plan and only write when you pass `--yes`
 `skills-wizard` with no command (in a terminal) shows the wizard banner and the main menu. Use ↑/↓ to move and enter to select.
 
 - **Stays open:** after an action finishes, fails or is cancelled, you return to the menu you started it from, so you can list MCP servers, run `doctor` and then set up a project in one session.
-- **Back and Exit:** every submenu (Skills, MCP servers, Sync and health checks) ends with **← Back** and **Exit**. Esc goes back one level, cancels a running prompt, and on the main menu exits.
+- **Back and Exit:** every submenu (Skills, MCP servers, Sync and health checks) ends with **← Back** and **Exit**. Esc goes back one level and on the main menu exits. Inside a setup, Esc returns to the previous question with your earlier answer kept, and on the first question returns to the menu.
 - **Colors:** the banner uses 24-bit color when available, the 256-color palette otherwise, and plain ASCII art on 16-color or monochrome terminals. `NO_COLOR` and `FORCE_COLOR` are honored, and narrow terminals get the title below the art.
 
 The screenshot above is generated from the real banner with `yarn readme:screenshot`.
@@ -141,7 +141,7 @@ flowchart LR
 
 ## Adding or editing a block
 
-1. Create `blocks/<group>/<id>.md` with frontmatter: `title`, `summary`, `group`, `scopes`, `defaults` and, if needed, `variables` and `requires` (blocks it depends on or whose sections it refers to, listed earlier in the order).
+1. Create `blocks/<group>/<id>.md` with frontmatter: `title`, `summary`, `group`, `scopes`, `defaults` and, if needed, `variables`, `requires` (blocks it depends on or whose sections it refers to, listed earlier in the order) and `skills` (skills `init` preselects when the block is newly selected).
 2. Add its id to `blocks/index.yaml` where it should appear in the composed file.
 3. Run `yarn test`.
 4. Run `skills-wizard init` and select the new block. `sync` only re-renders the blocks an install already recorded, so it picks up edits to existing blocks but never adds new ones. When an edit adds a variable to a recorded block, `sync` looks the value up the way `init` does and otherwise asks you to set it with `skills-wizard init --var name=value`.

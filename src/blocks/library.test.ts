@@ -104,6 +104,7 @@ test('loads blocks with their frontmatter and trimmed body', async (t) => {
     defaults: ['global'],
     variables: [],
     requires: [],
+    skills: [],
     body: '## One\n\nText.',
   });
 });

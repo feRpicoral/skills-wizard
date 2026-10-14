@@ -2,6 +2,7 @@ import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { ManifestError, UsageError } from '../errors.ts';
 import { buildPlan } from '../install/plan.ts';
+import type { McpCatalog } from '../mcp/model.ts';
 import {
   findPreset,
   loadPresetsIfAvailable,
@@ -10,10 +11,12 @@ import {
   type ProjectStyle,
   type ResolvedPresetSelection,
   resolvePresetSelection,
-  resolveProjectPresetAndStyle,
+  resolveProjectPresetChoice,
+  resolveProjectStyle,
 } from '../project/presets.ts';
 import { promptProjectDir, promptScope } from '../prompts/selection.ts';
-import type { SkillMode } from '../skills/install.ts';
+import { runWizard, wizardStep } from '../prompts/wizard.ts';
+import { DEFAULT_SKILL_MODE, type SkillMode } from '../skills/install.ts';
 import { loadSkillLibrary, type SkillLibrary } from '../skills/library.ts';
 import {
   globalManifestPath,
@@ -25,6 +28,7 @@ import {
   resolveBlocksSelection,
   resolveInstallOptions,
   resolveMcpSelection,
+  resolveSkillModeSelection,
   resolveSkillsSelection,
   resolveToolsSelection,
   resolveVariablesSelection,
@@ -110,85 +114,42 @@ async function readGlobalManifestForProject(
   }
 }
 
-interface ResolveProjectPresetContextParams {
+interface ResolvePresetDefaultsParams {
   ctx: Context;
-  scope: Scope;
-  prompting: boolean;
-  tools: readonly ToolId[];
   library: BlockLibrary;
   skillLibrary: SkillLibrary;
+  presets: readonly PresetDefinition[];
+  hasGlobalInstall: boolean;
   location: Location;
   previous: Manifest | null;
   reconciled: ReconciledManifest | null;
+  preset: PresetChoice | undefined;
+  style: ProjectStyle | undefined;
   requestedPreset: PresetChoice | undefined;
   requestedStyle: ProjectStyle | undefined;
 }
 
-interface ResolvedProjectPresetContext {
-  preset: PresetChoice | undefined;
-  style: ProjectStyle | undefined;
+interface ResolvedPresetDefaults {
   presetChanged: boolean;
   styleChanged: boolean;
   presetSelection: ResolvedPresetSelection | null;
   replacedPreset: PresetDefinition | undefined;
 }
 
-async function resolveProjectPresetContext({
-  ctx,
-  scope,
-  prompting,
-  tools,
+function resolvePresetDefaults({
   library,
   skillLibrary,
+  presets,
+  hasGlobalInstall,
   location,
   previous,
   reconciled,
+  preset,
+  style,
   requestedPreset,
   requestedStyle,
-}: ResolveProjectPresetContextParams): Promise<ResolvedProjectPresetContext> {
-  if (scope !== 'project') {
-    return {
-      preset: undefined,
-      style: undefined,
-      presetChanged: false,
-      styleChanged: false,
-      presetSelection: null,
-      replacedPreset: undefined,
-    };
-  }
-
-  const presets = await loadPresetsIfAvailable(ctx.repoRoot, {
-    blockLibrary: library,
-    skillLibrary,
-  });
-  const globalManifest = await readGlobalManifestForProject(ctx, prompting);
-  const hasGlobalInstall =
-    globalManifest !== null &&
-    tools.length > 0 &&
-    tools.every((tool) => globalManifest.tools.includes(tool));
-
-  if (reconciled?.unknownPreset !== undefined) {
-    notify({
-      ctx,
-      prompting,
-      message: `Preset "${reconciled.unknownPreset}" is no longer recognized and was dropped.`,
-      level: 'warn',
-    });
-  }
-
+}: ResolvePresetDefaultsParams): ResolvedPresetDefaults {
   const previousPreset = reconciled?.preset;
-  const { preset, style } = await resolveProjectPresetAndStyle({
-    scope,
-    prompting,
-    hasGlobalInstall,
-    presets,
-    detection: location.detection,
-    previous,
-    previousPreset,
-    requestedPreset,
-    requestedStyle,
-  });
-
   const presetChanged =
     requestedPreset !== undefined ||
     (previous !== null &&
@@ -229,16 +190,14 @@ async function resolveProjectPresetContext({
       ? findPreset(presets, previousPreset)
       : undefined;
 
-  return {
-    preset,
-    style,
-    presetChanged,
-    styleChanged,
-    presetSelection,
-    replacedPreset,
-  };
+  return { presetChanged, styleChanged, presetSelection, replacedPreset };
 }
 
+/**
+ * Sets up instructions, skills and MCP servers for a scope. In a terminal each
+ * question is a wizard step: esc goes back to the previous question with its
+ * answer kept, and esc on the first question cancels.
+ */
 export async function runInit(
   ctx: Context,
   {
@@ -257,165 +216,310 @@ export async function runInit(
   }: InitOptions,
 ): Promise<number> {
   const prompting = ctx.interactive && !confirmOptions.yes;
-  const scope = requestedScope ?? (prompting ? await promptScope() : undefined);
+  let scope!: Scope;
+  let projectDir: string | undefined;
+  let location!: Location;
+  let library!: BlockLibrary;
+  let skillLibrary!: SkillLibrary;
+  let mcpCatalog!: McpCatalog;
+  let previous: Manifest | null = null;
+  let reconciled: ReconciledManifest | null = null;
+  let tools: ToolId[] = [];
+  let presets: PresetDefinition[] = [];
+  let hasGlobalInstall = false;
+  let preset: PresetChoice | undefined;
+  let style: ProjectStyle | undefined;
+  let presetDefaults!: ResolvedPresetDefaults;
+  let blocks: string[] = [];
+  let variables: Record<string, string> = {};
+  let skills: string[] = [];
+  let skillMode: SkillMode = DEFAULT_SKILL_MODE;
+  let mcp: string[] = [];
+  let keepLocal = false;
+  let code = 0;
 
-  if (!scope) throw new UsageError('Pass --global or --project <dir>.');
+  await runWizard([
+    wizardStep<Scope>(async (remembered) => {
+      const chosen =
+        requestedScope ??
+        (prompting ? await promptScope(remembered) : undefined);
 
-  checkScopeOptions(scope, {
-    skillMode: requestedSkillMode,
-    keepLocal: requestedKeepLocal,
-    preset: requestedPreset,
-    style: requestedStyle,
-  });
+      if (!chosen) throw new UsageError('Pass --global or --project <dir>.');
 
-  const projectDir =
-    scope === 'project' && requestedProjectDir === undefined && prompting
-      ? await promptProjectDir(ctx.cwd)
-      : requestedProjectDir;
-  const location = await resolveLocation({
-    ctx,
-    scope,
-    projectDir,
-    detect: scope === 'project',
-  });
-  const library = await loadLibrary(ctx);
-  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
-  const mcpCatalog = await loadMcpServers(ctx);
-  const previous = await readLocationManifest({ ctx, prompting, location });
-  const reconciled = previous
-    ? await reconcileManifest({
-        manifest: previous,
+      checkScopeOptions(chosen, {
+        skillMode: requestedSkillMode,
+        keepLocal: requestedKeepLocal,
+        preset: requestedPreset,
+        style: requestedStyle,
+      });
+      scope = chosen;
+
+      return scope;
+    }),
+    wizardStep<string | undefined>(async (remembered) => {
+      projectDir =
+        scope === 'project' && requestedProjectDir === undefined && prompting
+          ? await promptProjectDir(ctx.cwd, remembered)
+          : requestedProjectDir;
+
+      return projectDir;
+    }),
+    wizardStep<undefined>(async () => {
+      location = await resolveLocation({
+        ctx,
+        scope,
+        projectDir,
+        detect: scope === 'project',
+      });
+      library = await loadLibrary(ctx);
+      skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+      mcpCatalog = await loadMcpServers(ctx);
+      previous = await readLocationManifest({ ctx, prompting, location });
+      reconciled = previous
+        ? await reconcileManifest({
+            manifest: previous,
+            library,
+            location,
+            lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
+          })
+        : null;
+
+      return undefined;
+    }),
+    wizardStep<ToolId[]>(async (remembered) => {
+      tools = await resolveToolsSelection({
+        ctx,
+        scope,
+        prompting,
+        requestedTools,
+        previous,
+        remembered,
+      });
+
+      return tools;
+    }),
+    wizardStep<PresetChoice | undefined>(async (remembered) => {
+      if (scope !== 'project') {
+        preset = undefined;
+
+        return preset;
+      }
+
+      presets = await loadPresetsIfAvailable(ctx.repoRoot, {
+        blockLibrary: library,
+        skillLibrary,
+      });
+      const globalManifest = await readGlobalManifestForProject(ctx, prompting);
+      hasGlobalInstall =
+        globalManifest !== null &&
+        tools.length > 0 &&
+        tools.every((tool) => globalManifest.tools.includes(tool));
+
+      if (reconciled?.unknownPreset !== undefined) {
+        notify({
+          ctx,
+          prompting,
+          message: `Preset "${reconciled.unknownPreset}" is no longer recognized and was dropped.`,
+          level: 'warn',
+        });
+      }
+
+      preset = await resolveProjectPresetChoice({
+        scope,
+        prompting,
+        presets,
+        detection: location.detection,
+        previous,
+        previousPreset: reconciled?.preset,
+        requestedPreset,
+        remembered,
+      });
+
+      return preset;
+    }),
+    wizardStep<ProjectStyle | undefined>(async (remembered) => {
+      style = await resolveProjectStyle({
+        scope,
+        prompting,
+        hasGlobalInstall,
+        detection: location.detection,
+        previous,
+        preset,
+        requestedStyle,
+        remembered,
+      });
+
+      return style;
+    }),
+    wizardStep<string[]>(async (remembered) => {
+      presetDefaults =
+        scope === 'project'
+          ? resolvePresetDefaults({
+              ctx,
+              library,
+              skillLibrary,
+              presets,
+              hasGlobalInstall,
+              location,
+              previous,
+              reconciled,
+              preset,
+              style,
+              requestedPreset,
+              requestedStyle,
+            })
+          : {
+              presetChanged: false,
+              styleChanged: false,
+              presetSelection: null,
+              replacedPreset: undefined,
+            };
+      blocks = await resolveBlocksSelection({
+        ctx,
         library,
+        scope,
+        prompting,
+        requestedBlocks,
+        preset,
+        style,
+        presetChanged: presetDefaults.presetChanged,
+        styleChanged: presetDefaults.styleChanged,
+        presetSelection: presetDefaults.presetSelection,
+        replacedPreset: presetDefaults.replacedPreset,
+        reconciled,
+        remembered,
+      });
+
+      return blocks;
+    }),
+    wizardStep<Record<string, string>>(async (remembered) => {
+      variables = await resolveVariablesSelection({
+        ctx,
+        library,
+        scope,
+        blocks,
+        prompting,
+        givenVariables,
+        previous,
+        reconciled,
+        remembered,
+      });
+
+      return variables;
+    }),
+    wizardStep<string[]>(async (remembered) => {
+      skills = await resolveSkillsSelection({
+        ctx,
+        library,
+        skillLibrary,
+        scope,
+        blocks,
+        prompting,
+        requestedSkills,
+        presetChanged: presetDefaults.presetChanged,
+        presetSelection: presetDefaults.presetSelection,
+        replacedPreset: presetDefaults.replacedPreset,
+        previous,
+        remembered,
+      });
+
+      return skills;
+    }),
+    wizardStep<SkillMode>(async (remembered) => {
+      skillMode = await resolveSkillModeSelection({
+        skillLibrary,
+        scope,
+        skills,
+        prompting,
+        requestedSkillMode,
+        previous,
+        remembered,
+      });
+
+      return skillMode;
+    }),
+    wizardStep<string[]>(async (remembered) => {
+      mcp = await resolveMcpSelection({
+        ctx,
+        mcpCatalog,
+        scope,
+        prompting,
+        requestedMcp,
         location,
-        lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
-      })
-    : null;
+        previous,
+        remembered,
+      });
 
-  const tools = await resolveToolsSelection({
-    ctx,
-    scope,
-    prompting,
-    requestedTools,
-    previous,
-  });
-  const {
-    preset,
-    style,
-    presetChanged,
-    styleChanged,
-    presetSelection,
-    replacedPreset,
-  } = await resolveProjectPresetContext({
-    ctx,
-    scope,
-    prompting,
-    tools,
-    library,
-    skillLibrary,
-    location,
-    previous,
-    reconciled,
-    requestedPreset,
-    requestedStyle,
-  });
-  const blocks = await resolveBlocksSelection({
-    ctx,
-    library,
-    scope,
-    prompting,
-    requestedBlocks,
-    preset,
-    style,
-    presetChanged,
-    styleChanged,
-    presetSelection,
-    replacedPreset,
-    reconciled,
-  });
-  const variables = await resolveVariablesSelection({
-    ctx,
-    library,
-    scope,
-    blocks,
-    prompting,
-    givenVariables,
-    previous,
-    reconciled,
-  });
-  const { skills, skillMode } = await resolveSkillsSelection({
-    ctx,
-    skillLibrary,
-    scope,
-    prompting,
-    requestedSkills,
-    requestedSkillMode,
-    presetChanged,
-    presetSelection,
-    replacedPreset,
-    previous,
-  });
-  const mcp = await resolveMcpSelection({
-    ctx,
-    mcpCatalog,
-    scope,
-    prompting,
-    requestedMcp,
-    location,
-    previous,
-  });
-  const { keepLocal } = await resolveInstallOptions({
-    ctx,
-    scope,
-    location,
-    prompting,
-    requestedKeepLocal,
-    previous,
-    reconciled,
-  });
+      return mcp;
+    }),
+    wizardStep<boolean>(async (remembered) => {
+      ({ keepLocal } = await resolveInstallOptions({
+        ctx,
+        scope,
+        location,
+        prompting,
+        requestedKeepLocal,
+        previous,
+        reconciled,
+        remembered,
+      }));
 
-  const installing = tools.length > 0 ? skills : [];
+      return keepLocal;
+    }),
+    wizardStep<number>(async () => {
+      code = await planAndApply();
 
-  if (scope === 'global') await warnLockedSkills(ctx, prompting, installing);
+      return code;
+    }),
+  ]);
 
-  const skillSources = await fetchSkills({
-    ctx,
-    prompting,
-    library: skillLibrary,
-    names: installing,
-  });
-  const plan = await buildPlan({
-    scope,
-    selection: {
-      tools,
-      blocks,
-      skills,
-      mcp,
-      variables,
-      keepLocal,
-      skillMode,
-      preset,
-      style,
-    },
-    library,
-    paths: ctx.paths,
-    repoRoot: ctx.repoRoot,
-    previous,
-    manifestPath: location.manifestPath,
-    project: location.project,
-    skillSources,
-    mcpCatalog,
-  });
+  return code;
 
-  if (keepLocal) {
-    await warnTrackedFiles({
+  async function planAndApply(): Promise<number> {
+    const installing = tools.length > 0 ? skills : [];
+
+    if (scope === 'global') await warnLockedSkills(ctx, prompting, installing);
+
+    const skillSources = await fetchSkills({
       ctx,
       prompting,
-      plan,
-      project: location.project,
+      library: skillLibrary,
+      names: installing,
     });
+    const plan = await buildPlan({
+      scope,
+      selection: {
+        tools,
+        blocks,
+        skills,
+        mcp,
+        variables,
+        keepLocal,
+        skillMode,
+        preset,
+        style,
+      },
+      library,
+      paths: ctx.paths,
+      repoRoot: ctx.repoRoot,
+      previous,
+      manifestPath: location.manifestPath,
+      project: location.project,
+      skillSources,
+      mcpCatalog,
+    });
+
+    if (keepLocal) {
+      await warnTrackedFiles({
+        ctx,
+        prompting,
+        plan,
+        project: location.project,
+      });
+    }
+
+    const result = await confirmAndApply(ctx, plan, confirmOptions);
+
+    return result.code;
   }
-
-  const result = await confirmAndApply(ctx, plan, confirmOptions);
-
-  return result.code;
 }

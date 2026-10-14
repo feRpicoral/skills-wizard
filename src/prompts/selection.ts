@@ -20,13 +20,22 @@ import type { SkillMode } from '../skills/install.ts';
 import type { SkillDefinition, SkillLibrary } from '../skills/library.ts';
 import { TOOL_IDS, type ToolId, TOOLS } from '../tools/registry.ts';
 
+let answered = 0;
+
 export function unwrap<T>(value: T | symbol): Exclude<T, symbol> {
   if (clack.isCancel(value)) throw new CancelledError('Cancelled');
+
+  answered += 1;
 
   return value as Exclude<T, symbol>;
 }
 
-export async function promptScope(): Promise<Scope> {
+/** How many prompts have been answered (not cancelled) in this process. */
+export function answeredPrompts(): number {
+  return answered;
+}
+
+export async function promptScope(initial?: Scope): Promise<Scope> {
   return unwrap(
     await clack.select<Scope>({
       message: 'What do you want to set up?',
@@ -34,17 +43,21 @@ export async function promptScope(): Promise<Scope> {
         { value: 'global', label: 'System-wide', hint: 'every project' },
         { value: 'project', label: 'A project', hint: 'one directory' },
       ],
+      ...(initial !== undefined ? { initialValue: initial } : {}),
     }),
   );
 }
 
-export async function promptProjectDir(cwd: string): Promise<string> {
+export async function promptProjectDir(
+  cwd: string,
+  initial: string = cwd,
+): Promise<string> {
   return unwrap(
     await clack.path({
       message: 'Project directory',
       root: cwd,
       directory: true,
-      initialValue: cwd,
+      initialValue: initial,
     }),
   );
 }

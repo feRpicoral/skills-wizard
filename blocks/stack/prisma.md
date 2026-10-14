@@ -4,6 +4,7 @@ summary: Prisma 7 with adapter-pg, prisma.config.ts, uuid(7) primary keys and sn
 group: stack
 scopes: [project]
 defaults: []
+skills: [prisma-cli, prisma-client-api, prisma-orm-setup, prisma-upgrade-v7]
 ---
 
 ## Prisma ORM

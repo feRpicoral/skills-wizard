@@ -21,6 +21,7 @@ function block(id: string, overrides: Partial<Block> = {}): Block {
     defaults: ['global'],
     variables: [],
     requires: [],
+    skills: [],
     body: `## ${id}`,
     ...overrides,
   };

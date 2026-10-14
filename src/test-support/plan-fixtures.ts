@@ -40,6 +40,7 @@ export const library: BlockLibrary = {
       defaults: ['global'],
       variables: ['githubUsername'],
       requires: [],
+      skills: [],
       body: 'GitHub username: {{githubUsername}}',
     },
     {
@@ -51,6 +52,7 @@ export const library: BlockLibrary = {
       defaults: ['global', 'project'],
       variables: [],
       requires: [],
+      skills: [],
       body: '## Style\n\nBe direct.',
     },
   ],
