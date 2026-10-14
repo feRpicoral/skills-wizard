@@ -65,6 +65,10 @@ export async function runSync(
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: reconciled.keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
+      ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
+      ...(previous.options.style !== undefined
+        ? { style: previous.options.style }
+        : {}),
     },
     library,
     paths: ctx.paths,

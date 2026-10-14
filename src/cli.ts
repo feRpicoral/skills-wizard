@@ -10,6 +10,8 @@ import {
   parseCommand,
   type ParsedCommand,
   parseList,
+  parsePreset,
+  parseProjectStyle,
   parseSkillMode,
   parseTools,
   parseVariables,
@@ -28,6 +30,7 @@ import {
   isSystemError,
   UsageError,
 } from './errors.ts';
+import { PRESET_IDS } from './project/presets.ts';
 import { TOOL_IDS } from './tools/registry.ts';
 
 export { isSystemError };
@@ -60,6 +63,9 @@ Options:
   --skills <names>      Comma-separated skills from catalog.yaml or skills/
                         (an empty list removes every installed skill)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
+  --preset <id>         Project preset: ${PRESET_IDS.join(', ')}, none
+  --style <mode>        Project instructions style: lean (default with a system-wide install),
+                        self-contained, or strict (alias for self-contained)
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -123,6 +129,8 @@ function dispatchCommand({
       const blocks = parseList(values.blocks);
       const skills = parseList(values.skills);
       const skillMode = parseSkillMode(values['skill-mode']);
+      const preset = parsePreset(values.preset);
+      const style = parseProjectStyle(values.style);
       return runInit(ctx, {
         variables: parseVariables(values.var),
         yes,
@@ -133,6 +141,8 @@ function dispatchCommand({
         ...(blocks ? { blocks } : {}),
         ...(skills ? { skills } : {}),
         ...(skillMode ? { skillMode } : {}),
+        ...(preset ? { preset } : {}),
+        ...(style ? { style } : {}),
         ...(values['link-command'] !== undefined
           ? { linkCommand: values['link-command'] }
           : {}),

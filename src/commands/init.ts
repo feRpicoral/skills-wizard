@@ -1,13 +1,28 @@
 import { resolve } from 'node:path';
 
-import type { Scope } from '../blocks/library.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
-import { UsageError } from '../errors.ts';
+import { ManifestError, UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
+import {
+  findPreset,
+  loadPresetsIfAvailable,
+  type PresetChoice,
+  type PresetDefinition,
+  type ProjectStyle,
+  type ResolvedPresetSelection,
+  resolvePresetSelection,
+  resolveProjectPresetAndStyle,
+} from '../project/presets.ts';
 import { promptProjectDir, promptScope } from '../prompts/selection.ts';
 import type { SkillMode } from '../skills/install.ts';
-import { loadSkillLibrary } from '../skills/library.ts';
+import { loadSkillLibrary, type SkillLibrary } from '../skills/library.ts';
+import {
+  globalManifestPath,
+  type Manifest,
+  readGlobalManifest,
+} from '../state/manifest.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   resolveBlocksSelection,
@@ -20,21 +35,25 @@ import {
   confirmAndApply,
   fetchSkills,
   loadLibrary,
+  type Location,
   notify,
   readLocationManifest,
+  type ReconciledManifest,
   reconcileManifest,
   resolveLocation,
   warnLockedSkills,
   warnTrackedFiles,
 } from './shared.ts';
 
-interface InitOptions {
+export interface InitOptions {
   scope?: Scope;
   projectDir?: string;
   tools?: ToolId[];
   blocks?: string[];
   skills?: string[];
   skillMode?: SkillMode;
+  preset?: PresetChoice;
+  style?: ProjectStyle;
   variables: Record<string, string>;
   linkCommand?: boolean;
   keepLocal?: boolean;
@@ -51,11 +70,13 @@ interface ScopeSpecificOptions {
   linkCommand?: boolean | undefined;
   skillMode?: SkillMode | undefined;
   keepLocal?: boolean | undefined;
+  preset?: PresetChoice | undefined;
+  style?: ProjectStyle | undefined;
 }
 
 function checkScopeOptions(
   scope: Scope,
-  { linkCommand, skillMode, keepLocal }: ScopeSpecificOptions,
+  { linkCommand, skillMode, keepLocal, preset, style }: ScopeSpecificOptions,
 ): void {
   if (scope === 'project' && linkCommand !== undefined) {
     throw new UsageError(
@@ -68,6 +89,161 @@ function checkScopeOptions(
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
   }
+  if (scope === 'global' && preset !== undefined) {
+    throw new UsageError('--preset only applies to project installs.');
+  }
+  if (scope === 'global' && style !== undefined) {
+    throw new UsageError('--style only applies to project installs.');
+  }
+}
+
+async function readGlobalManifestForProject(
+  ctx: Context,
+  prompting: boolean,
+): Promise<Manifest | null> {
+  try {
+    return await readGlobalManifest(globalManifestPath(ctx.paths));
+  } catch (error) {
+    if (error instanceof ManifestError) {
+      notify({
+        ctx,
+        prompting,
+        message: `Skipping corrupt system-wide manifest when detecting default project style: ${error.message}`,
+        level: 'warn',
+      });
+      return null;
+    }
+    throw error;
+  }
+}
+
+interface ResolveProjectPresetContextParams {
+  ctx: Context;
+  scope: Scope;
+  prompting: boolean;
+  tools: readonly ToolId[];
+  library: BlockLibrary;
+  skillLibrary: SkillLibrary;
+  location: Location;
+  previous: Manifest | null;
+  reconciled: ReconciledManifest | null;
+  requestedPreset: PresetChoice | undefined;
+  requestedStyle: ProjectStyle | undefined;
+}
+
+interface ResolvedProjectPresetContext {
+  preset: PresetChoice | undefined;
+  style: ProjectStyle | undefined;
+  presetChanged: boolean;
+  styleChanged: boolean;
+  presetSelection: ResolvedPresetSelection | null;
+  replacedPreset: PresetDefinition | undefined;
+}
+
+async function resolveProjectPresetContext({
+  ctx,
+  scope,
+  prompting,
+  tools,
+  library,
+  skillLibrary,
+  location,
+  previous,
+  reconciled,
+  requestedPreset,
+  requestedStyle,
+}: ResolveProjectPresetContextParams): Promise<ResolvedProjectPresetContext> {
+  if (scope !== 'project') {
+    return {
+      preset: undefined,
+      style: undefined,
+      presetChanged: false,
+      styleChanged: false,
+      presetSelection: null,
+      replacedPreset: undefined,
+    };
+  }
+
+  const presets = await loadPresetsIfAvailable(ctx.repoRoot, {
+    blockLibrary: library,
+    skillLibrary,
+  });
+  const globalManifest = await readGlobalManifestForProject(ctx, prompting);
+  const hasGlobalInstall =
+    globalManifest !== null &&
+    tools.length > 0 &&
+    tools.every((tool) => globalManifest.tools.includes(tool));
+  if (reconciled?.unknownPreset !== undefined) {
+    notify({
+      ctx,
+      prompting,
+      message: `Preset "${reconciled.unknownPreset}" is no longer recognized and was dropped.`,
+      level: 'warn',
+    });
+  }
+  const previousPreset = reconciled?.preset;
+  const { preset, style } = await resolveProjectPresetAndStyle({
+    scope,
+    prompting,
+    hasGlobalInstall,
+    presets,
+    detection: location.detection,
+    previous,
+    previousPreset,
+    requestedPreset,
+    requestedStyle,
+  });
+
+  const presetChanged =
+    requestedPreset !== undefined ||
+    (previous !== null &&
+      preset !== undefined &&
+      preset !== (previousPreset ?? 'none'));
+  const styleChanged =
+    requestedStyle !== undefined ||
+    (previous !== null &&
+      style !== undefined &&
+      style !== previous.options.style);
+  const usePresetDefaults =
+    presetChanged ||
+    styleChanged ||
+    (previous === null &&
+      ((preset !== undefined && preset !== 'none') ||
+        style !== undefined ||
+        (preset !== 'none' &&
+          ((location.detection?.detectedBlocks.length ?? 0) > 0 ||
+            (location.detection?.detectedSkills.length ?? 0) > 0))));
+  const presetSelection = usePresetDefaults
+    ? resolvePresetSelection({
+        preset: findPreset(presets, preset),
+        style: style ?? (hasGlobalInstall ? 'lean' : 'self-contained'),
+        blockLibrary: library,
+        skillLibrary,
+        ...(location.detection?.packageManager !== undefined
+          ? { packageManager: location.detection.packageManager }
+          : {}),
+        detectedBlocks:
+          preset === 'none' ? [] : (location.detection?.detectedBlocks ?? []),
+        detectedSkills:
+          preset === 'none' ? [] : (location.detection?.detectedSkills ?? []),
+      })
+    : null;
+  const replacedPreset =
+    previous !== null &&
+    presetChanged &&
+    previousPreset !== undefined &&
+    previousPreset !== preset
+      ? findPreset(presets, previousPreset)
+      : undefined;
+
+  return {
+    preset,
+    style,
+    presetChanged,
+    styleChanged,
+    presetSelection,
+    replacedPreset,
+  };
 }
 
 export async function runInit(
@@ -79,6 +255,8 @@ export async function runInit(
     blocks: requestedBlocks,
     skills: requestedSkills,
     skillMode: requestedSkillMode,
+    preset: requestedPreset,
+    style: requestedStyle,
     variables: givenVariables,
     linkCommand: requestedLinkCommand,
     keepLocal: requestedKeepLocal,
@@ -92,6 +270,8 @@ export async function runInit(
     linkCommand: requestedLinkCommand,
     skillMode: requestedSkillMode,
     keepLocal: requestedKeepLocal,
+    preset: requestedPreset,
+    style: requestedStyle,
   });
 
   const projectDir =
@@ -102,8 +282,10 @@ export async function runInit(
     ctx,
     scope,
     ...(projectDir !== undefined ? { projectDir } : {}),
+    detect: scope === 'project',
   });
   const library = await loadLibrary(ctx);
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
   const previous = await readLocationManifest({ ctx, prompting, location });
   const reconciled = previous
     ? await reconcileManifest({
@@ -121,12 +303,38 @@ export async function runInit(
     ...(requestedTools ? { requestedTools } : {}),
     previous,
   });
+  const {
+    preset,
+    style,
+    presetChanged,
+    styleChanged,
+    presetSelection,
+    replacedPreset,
+  } = await resolveProjectPresetContext({
+    ctx,
+    scope,
+    prompting,
+    tools,
+    library,
+    skillLibrary,
+    location,
+    previous,
+    reconciled,
+    requestedPreset,
+    requestedStyle,
+  });
   const blocks = await resolveBlocksSelection({
     ctx,
     library,
     scope,
     prompting,
     ...(requestedBlocks ? { requestedBlocks } : {}),
+    ...(preset !== undefined ? { preset } : {}),
+    ...(style !== undefined ? { style } : {}),
+    presetChanged,
+    styleChanged,
+    presetSelection,
+    ...(replacedPreset ? { replacedPreset } : {}),
     reconciled,
   });
   const variables = await resolveVariablesSelection({
@@ -139,7 +347,6 @@ export async function runInit(
     previous,
     reconciled,
   });
-  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
   const { skills, skillMode } = await resolveSkillsSelection({
     ctx,
     skillLibrary,
@@ -147,6 +354,9 @@ export async function runInit(
     prompting,
     ...(requestedSkills ? { requestedSkills } : {}),
     ...(requestedSkillMode ? { requestedSkillMode } : {}),
+    presetChanged,
+    presetSelection,
+    ...(replacedPreset ? { replacedPreset } : {}),
     previous,
   });
   const { linkCommand, keepLocal } = await resolveInstallOptions({
@@ -178,6 +388,8 @@ export async function runInit(
       linkCommand,
       keepLocal,
       skillMode,
+      ...(preset !== undefined ? { preset } : {}),
+      ...(style !== undefined ? { style } : {}),
     },
     library,
     paths: ctx.paths,

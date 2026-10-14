@@ -14,6 +14,9 @@ import { isSkillName, SKILL_FILE } from './validate.ts';
 const FIRST_PARTY_DIR = 'skills';
 const FIRST_PARTY_GROUP = 'First-party';
 const ALL_SCOPES: readonly Scope[] = ['global', 'project'];
+const FIRST_PARTY_GLOBAL_DEFAULTS: ReadonlySet<string> = new Set([
+  'github-repo-setup',
+]);
 
 export type SkillOrigin =
   | { type: 'catalog'; entry: CatalogEntry }
@@ -47,7 +50,7 @@ async function firstPartySkills(repoRoot: string): Promise<SkillDefinition[]> {
       name: entry.name,
       group: FIRST_PARTY_GROUP,
       scopes: [...ALL_SCOPES],
-      defaults: [],
+      defaults: FIRST_PARTY_GLOBAL_DEFAULTS.has(entry.name) ? ['global'] : [],
       origin: {
         type: 'local',
         dir: skillDir,

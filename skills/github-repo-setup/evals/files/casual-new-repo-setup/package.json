@@ -1,0 +1,9 @@
+{
+  "name": "@acme/billing-service",
+  "version": "0.1.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acme/billing-service.git"
+  }
+}

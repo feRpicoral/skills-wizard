@@ -93,8 +93,9 @@ export async function runDoctor(
     skills,
     sources,
     findings: skillResolutionFindings,
-  } = await resolveDoctorSkills(ctx, manifest);
-  const { blocks, keepLocal, foundVariables, unresolvedVariables } = reconciled;
+  } = await resolveDoctorSkills(ctx, manifest, scope);
+  const { blocks, preset, keepLocal, foundVariables, unresolvedVariables } =
+    reconciled;
   // A placeholder keeps conflict checks running without a value, but the
   // rendered files would always differ, so out-of-date files are not reported
   // (skill folders and links still are).
@@ -121,6 +122,7 @@ export async function runDoctor(
       skills,
       skillSources: sources,
       keepLocal,
+      preset,
       reportOutdated: unresolvedVariables.length === 0,
     })),
     ...(await symlinkFindings(ctx, manifest)),

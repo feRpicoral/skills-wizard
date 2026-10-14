@@ -1,0 +1,82 @@
+[
+  {
+    "query": "We are connecting Prisma 7 to a new Supabase database in our Next.js app. Set up prisma.config.ts, src/db.ts, and .env.example with our pooling and API key conventions.",
+    "should_trigger": true
+  },
+  {
+    "query": "Running yarn prisma migrate dev against our Supabase database complains about drift in the auth and storage schemas and asks to reset the database. How do we create the first migration safely?",
+    "should_trigger": true
+  },
+  {
+    "query": "Generate a 0_init baseline migration in prisma/migrations/0_init/migration.sql using prisma migrate diff and mark it applied against our Supabase database.",
+    "should_trigger": true
+  },
+  {
+    "query": "Replace our legacy NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY environment variables and split DATABASE_URL into transaction and session pooler URLs for Prisma.",
+    "should_trigger": true
+  },
+  {
+    "query": "Which Supabase Supavisor port should DATABASE_TRANSACTION_POOLING_URL and DATABASE_SESSION_POOLING_URL use, and which one goes in prisma.config.ts vs PrismaPg?",
+    "should_trigger": true
+  },
+  {
+    "query": "We just provisioned a new free-tier Supabase project for our staging environment and wired up Prisma. Check our .env.example and tell me what operational setup we still need.",
+    "should_trigger": true
+  },
+  {
+    "query": "Our Prisma migrations hang in CI when running against Supabase on port 6543 with pgbouncer=true. Fix prisma.config.ts and the runtime adapter setup.",
+    "should_trigger": true
+  },
+  {
+    "query": "Audit our Supabase and Prisma environment schema in src/env.ts to make sure it uses publishable and secret keys and both Supavisor pooling URLs.",
+    "should_trigger": true
+  },
+  {
+    "query": "Write a baseline script that diffs an empty schema against prisma/schema.prisma into prisma/migrations/0_init/migration.sql and resolves it as applied on Supabase.",
+    "should_trigger": true
+  },
+  {
+    "query": "Configure @prisma/adapter-pg with DATABASE_TRANSACTION_POOLING_URL in src/prisma.service.ts and DATABASE_SESSION_POOLING_URL in prisma.config.ts.",
+    "should_trigger": true
+  },
+  {
+    "query": "Scaffold a NestJS domain module for billing with controller, service, repository, and createZodDto DTOs.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a SQL query in PostgreSQL to calculate 30-day rolling revenue per customer using a window function.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up ESLint 10 flat config in eslint.config.mjs with typescript-eslint and eslint-plugin-prettier/recommended.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure our GitHub repository via gh CLI to allow only merge commits and protect main with a branch ruleset.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a Redis caching layer using ioredis to our user profile lookup service.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up Prettier in .prettierrc with singleQuote: true and ignore src/generated/prisma in .prettierignore.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a React custom hook with TanStack Query and a query-key factory for fetching paginated invoices.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure Testcontainers with a local PostgreSQL image for our Jest integration test suite.",
+    "should_trigger": false
+  },
+  {
+    "query": "Create a new first-party skill in skills/drizzle-migrations using yarn agents-config skill new.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up SQLAlchemy 2.0 async sessions and Alembic migrations in our Python uv service.",
+    "should_trigger": false
+  }
+]

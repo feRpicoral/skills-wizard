@@ -1,0 +1,152 @@
+{
+  "skill_name": "nestjs-module",
+  "evals": [
+    {
+      "id": "casual-scaffold-invoices-module",
+      "prompt": "Can you add an invoices module to this NestJS API so we can create an invoice and fetch an invoice by id for an organization?",
+      "expected_output": "A complete src/modules/invoices/ domain module with invoices.dto.ts using createZodDto, invoices.repository.ts encapsulating PrismaService, invoices.service.ts with named parameter objects for multi-string parameters, invoices.controller.ts, invoices.module.ts, and AAA unit tests in invoices.service.spec.ts.",
+      "files": [
+        "evals/files/casual-scaffold-invoices-module/package.json",
+        "evals/files/casual-scaffold-invoices-module/prisma/schema.prisma",
+        "evals/files/casual-scaffold-invoices-module/src/modules/prisma/prisma.module.ts",
+        "evals/files/casual-scaffold-invoices-module/src/modules/prisma/prisma.service.ts",
+        "evals/files/casual-scaffold-invoices-module/src/app.module.ts"
+      ],
+      "assertions": [
+        "PrismaService is injected only in InvoicesRepository, never in InvoicesController or InvoicesService",
+        "Methods taking multiple string IDs accept a single parameter object typed by a named interface above the class",
+        "Unit tests in invoices.service.spec.ts follow AAA layout separated by blank lines without phase comments",
+        {
+          "type": "file_exists",
+          "path": "src/modules/invoices/invoices.dto.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/modules/invoices/invoices.dto.ts",
+          "pattern": "createZodDto"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/invoices/invoices.repository.ts"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/invoices/invoices.service.ts"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/invoices/invoices.controller.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/modules/invoices/invoices.controller.ts",
+          "pattern": "ZodResponse"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/invoices/invoices.module.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/app.module.ts",
+          "pattern": "InvoicesModule"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/invoices/invoices.service.spec.ts"
+        }
+      ]
+    },
+    {
+      "id": "precise-webhooks-domain-module",
+      "prompt": "We need endpoints to register and look up organization webhook endpoints (by organizationId and endpointId) backed by the WebhookEndpoint model in prisma/schema.prisma. Add the webhooks feature to this NestJS service following our module conventions.",
+      "expected_output": "All six files created under src/modules/webhooks/ following strict Controller -> Service -> Repository layering, Zod DTOs with @ZodResponse, named interface parameter objects for multi-string methods, WebhooksModule registered in src/app.module.ts, and AAA unit tests.",
+      "files": [
+        "evals/files/precise-webhooks-domain-module/package.json",
+        "evals/files/precise-webhooks-domain-module/prisma/schema.prisma",
+        "evals/files/precise-webhooks-domain-module/src/modules/prisma/prisma.module.ts",
+        "evals/files/precise-webhooks-domain-module/src/modules/prisma/prisma.service.ts",
+        "evals/files/precise-webhooks-domain-module/src/app.module.ts"
+      ],
+      "assertions": [
+        "WebhooksModule exports only WebhooksService and keeps WebhooksRepository internal to the module",
+        "WebhooksService and WebhooksRepository methods taking organizationId and endpointId accept a destructured object typed by a named interface",
+        {
+          "type": "file_exists",
+          "path": "src/modules/webhooks/webhooks.dto.ts"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/webhooks/webhooks.repository.ts"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/webhooks/webhooks.service.ts"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/webhooks/webhooks.controller.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/modules/webhooks/webhooks.controller.ts",
+          "pattern": "ZodResponse"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/webhooks/webhooks.module.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/app.module.ts",
+          "pattern": "WebhooksModule"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/webhooks/webhooks.service.spec.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/modules/webhooks/webhooks.repository.ts",
+          "pattern": "interface\\s+\\w+"
+        }
+      ]
+    },
+    {
+      "id": "edge-refactor-leaky-controller-and-class-validator",
+      "prompt": "Refactor `src/modules/subscriptions/` to match our NestJS module architecture: get Prisma out of the controller, replace `class-validator` DTOs with `nestjs-zod`, fix the positional string arguments in the service, and add unit tests.",
+      "expected_output": "Refactored subscriptions module with createZodDto schemas in subscriptions.dto.ts, Prisma queries extracted to subscriptions.repository.ts, business logic and named parameter interfaces in subscriptions.service.ts, thin HTTP routing in subscriptions.controller.ts, updated subscriptions.module.ts, and AAA tests in subscriptions.service.spec.ts.",
+      "files": [
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/package.json",
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/src/modules/prisma/prisma.module.ts",
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/src/modules/prisma/prisma.service.ts",
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/src/modules/subscriptions/subscriptions.dto.ts",
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/src/modules/subscriptions/subscriptions.controller.ts",
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/src/modules/subscriptions/subscriptions.service.ts",
+        "evals/files/edge-refactor-leaky-controller-and-class-validator/src/modules/subscriptions/subscriptions.module.ts"
+      ],
+      "assertions": [
+        "SubscriptionsController no longer injects PrismaService and delegates all operations to SubscriptionsService",
+        "SubscriptionsService methods taking organizationId and subscriptionId accept a single named interface parameter object instead of positional string parameters",
+        {
+          "type": "file_exists",
+          "path": "src/modules/subscriptions/subscriptions.repository.ts"
+        },
+        {
+          "type": "regex",
+          "path": "src/modules/subscriptions/subscriptions.dto.ts",
+          "pattern": "createZodDto"
+        },
+        {
+          "type": "regex",
+          "path": "src/modules/subscriptions/subscriptions.dto.ts",
+          "pattern": "^(?![\\s\\S]*class-validator)"
+        },
+        {
+          "type": "file_exists",
+          "path": "src/modules/subscriptions/subscriptions.service.spec.ts"
+        }
+      ]
+    }
+  ]
+}

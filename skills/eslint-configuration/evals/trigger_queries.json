@@ -1,0 +1,82 @@
+[
+  {
+    "query": "Hey, can you set up linting for this TypeScript service from scratch? Everything lives in src/ and we use Yarn 4.",
+    "should_trigger": true
+  },
+  {
+    "query": "Please migrate our .eslintrc.json and .eslintignore to ESLint flat config in eslint.config.mjs and upgrade eslint to v10.",
+    "should_trigger": true
+  },
+  {
+    "query": "ESLint keeps complaining about our generated OpenAPI client in src/generated/client.ts, and we want console.log to be a warning everywhere except scripts/. Can you update eslint.config.mjs?",
+    "should_trigger": true
+  },
+  {
+    "query": "Our imports in src/ are completely unsorted and unused variables keep slipping into PRs unless they start with an underscore. Add lint rules to enforce import sorting and unused-var checks.",
+    "should_trigger": true
+  },
+  {
+    "query": "After upgrading to ESLint 10, running yarn lint fails with 'A config object is using the extends key, which is not supported in flat config system'. How do we fix eslint.config.mjs?",
+    "should_trigger": true
+  },
+  {
+    "query": "Wire ESLint and Prettier into lint-staged and a Husky pre-commit hook for our Next.js repository so staged TypeScript files get checked before commit.",
+    "should_trigger": true
+  },
+  {
+    "query": "We have an Nx monorepo with apps/api and libs/shared. How should we structure the root eslint.config.mjs and package-level overrides using our house style?",
+    "should_trigger": true
+  },
+  {
+    "query": "Why is eslint ignoring my .ts files when I run npx eslint src/ unless I add a files pattern in eslint.config.mjs?",
+    "should_trigger": true
+  },
+  {
+    "query": "Enforce type-only imports with @typescript-eslint/consistent-type-imports in our flat config and make sure eslint-plugin-prettier/recommended sits in the right position.",
+    "should_trigger": true
+  },
+  {
+    "query": "lint-staged passes an ignored file to eslint --max-warnings 0 and the commit fails with 'File ignored because of a matching ignore pattern'. Fix our lint-staged ESLint command.",
+    "should_trigger": true
+  },
+  {
+    "query": "Add .prettierrc with singleQuote: true and stop Prettier from reformatting the Markdown comparison table in docs/benchmarks.md.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure prettier-plugin-tailwindcss in .prettierrc for our Tailwind CSS v4 stylesheet at src/app/globals.css.",
+    "should_trigger": false
+  },
+  {
+    "query": "Enable strict, noUncheckedIndexedAccess, and noImplicitOverride in tsconfig.json and fix the resulting TypeScript compiler errors in src/billing.ts.",
+    "should_trigger": false
+  },
+  {
+    "query": "Scaffold a new NestJS domain module for invoices with controller, service, repository, and zod DTOs under src/modules/invoices.",
+    "should_trigger": false
+  },
+  {
+    "query": "Create a baseline Prisma migration in prisma/migrations/0_init/migration.sql for our existing Supabase database and configure DATABASE_TRANSACTION_POOLING_URL.",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure our GitHub repository via gh CLI to allow only merge commits, auto-delete head branches, and protect main with a branch ruleset.",
+    "should_trigger": false
+  },
+  {
+    "query": "Run the skill evaluation benchmark for skills/eslint-configuration with 3 runs per variant and regenerate report.md.",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up ruff linting and formatting along with mypy --strict in pyproject.toml for our Python FastAPI service.",
+    "should_trigger": false
+  },
+  {
+    "query": "Add a GitHub Actions workflow in .github/workflows/deploy.yml that builds our Docker image and deploys it to Fly.io with flyctl.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write unit tests for src/project/detect.ts using node:test with arrange, act, and assert phases separated by blank lines.",
+    "should_trigger": false
+  }
+]

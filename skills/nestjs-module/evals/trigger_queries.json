@@ -1,0 +1,82 @@
+[
+  {
+    "query": "Scaffold a new billing domain module in our NestJS API with controller, service, repository, and Zod DTOs",
+    "should_trigger": true
+  },
+  {
+    "query": "Refactor this NestJS controller that injects PrismaService directly so it uses a repository and service layer",
+    "should_trigger": true
+  },
+  {
+    "query": "Add a webhooks module under src/modules/webhooks in our NestJS backend with nestjs-zod validation and unit tests",
+    "should_trigger": true
+  },
+  {
+    "query": "Convert our NestJS DTOs from class-validator and class-transformer to nestjs-zod createZodDto",
+    "should_trigger": true
+  },
+  {
+    "query": "How should we structure a new NestJS feature module so Prisma queries don't leak into controllers or services?",
+    "should_trigger": true
+  },
+  {
+    "query": "Create an organizations module for our NestJS app with controller, service, repository, and .service.spec.ts",
+    "should_trigger": true
+  },
+  {
+    "query": "Set up a NestJS CRUD module for API keys with @ZodResponse serialization and repository isolation",
+    "should_trigger": true
+  },
+  {
+    "query": "Write unit tests and repository wiring for a new NestJS notifications module",
+    "should_trigger": true
+  },
+  {
+    "query": "Split this bloated NestJS service that calls this.prisma everywhere into a clean service + repository module",
+    "should_trigger": true
+  },
+  {
+    "query": "Add a NestJS endpoint and domain module for managing team invitations with Zod request and response schemas",
+    "should_trigger": true
+  },
+  {
+    "query": "Create a Next.js App Router route handler at app/api/webhooks/route.ts",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure Supabase connection pooling with ?pgbouncer=true&connection_limit=1 in prisma.config.ts",
+    "should_trigger": false
+  },
+  {
+    "query": "Add an Express middleware to log HTTP request durations",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a FastAPI router with Pydantic models for user registration",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up ESLint flat config with typescript-eslint for our backend repository",
+    "should_trigger": false
+  },
+  {
+    "query": "Create a React hook using TanStack Query to fetch invoices from /api/invoices",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure Nx module boundary tags in eslint.config.mjs",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a Prisma migration to add an index on organization_id in the invoices table",
+    "should_trigger": false
+  },
+  {
+    "query": "Configure GitHub branch protection rulesets for the main branch using gh api",
+    "should_trigger": false
+  },
+  {
+    "query": "Set up Prettier with prettier-plugin-organize-imports in our Node project",
+    "should_trigger": false
+  }
+]

@@ -19,6 +19,7 @@ import {
   statIfExists,
   writeTextAtomic,
 } from '../install/fs.ts';
+import { PROJECT_STYLES } from '../project/presets.ts';
 import { SKILL_MODES } from '../skills/install.ts';
 import { isSkillName } from '../skills/validate.ts';
 import { TOOL_IDS } from '../tools/registry.ts';
@@ -114,6 +115,8 @@ const manifestSchema = z.object({
       linkCommand: z.boolean().optional(),
       keepLocal: z.boolean().optional(),
       skillMode: z.enum(SKILL_MODES).optional(),
+      preset: z.string().min(1).optional(),
+      style: z.enum(PROJECT_STYLES).optional(),
     })
     .default({}),
   entries: z.array(entrySchema),

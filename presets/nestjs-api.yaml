@@ -1,0 +1,12 @@
+id: nestjs-api
+name: NestJS API
+description: NestJS backend API with TypeScript and nestjs-zod domain modules
+blocks:
+  - stack/typescript
+  - stack/node-yarn
+  - stack/lint-format
+  - stack/nestjs
+skills:
+  - eslint-configuration
+  - prettier-configuration
+  - nestjs-module

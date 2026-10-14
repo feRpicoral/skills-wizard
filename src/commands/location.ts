@@ -16,6 +16,8 @@ import {
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
 import { skillFolders } from '../install/targets.ts';
+import { detectProject, type ProjectDetection } from '../project/detect.ts';
+import { buildProjectSeed } from '../project/seed.ts';
 import {
   checkSkillEntries,
   globalManifestPath,
@@ -32,6 +34,7 @@ export interface Location {
   scope: Scope;
   manifestPath: string;
   project?: ProjectContext;
+  detection?: ProjectDetection;
 }
 
 async function readPackageJson(projectDir: string): Promise<string | null> {
@@ -97,12 +100,22 @@ export interface ResolveLocationParams {
   ctx: Context;
   scope: Scope;
   projectDir?: string;
+  detect?: boolean;
 }
 
+/**
+ * Resolves the target install `Location` (`manifestPath`, `project` context,
+ * git repository metadata, and optional `ProjectDetection` + `AGENTS.md` seed)
+ * for `global` or `project` scope.
+ *
+ * Full project stack detection runs when `detect` is `true` (used by `init`) or
+ * when `AGENTS.md` does not yet have a non-empty preamble.
+ */
 export async function resolveLocation({
   ctx,
   scope,
   projectDir,
+  detect = false,
 }: ResolveLocationParams): Promise<Location> {
   if (scope === 'global') {
     return { scope, manifestPath: globalManifestPath(ctx.paths) };
@@ -114,6 +127,24 @@ export async function resolveLocation({
   }
   const dir = await realpath(requested);
   const repository = await gitContext(dir, ctx.sources.env);
+  const existingAgentsMd = await readTextIfExists(join(dir, 'AGENTS.md'));
+  const needsSeed = !existingAgentsMd?.trim();
+
+  if (detect || needsSeed) {
+    const detection = await detectProject(dir);
+    return {
+      scope,
+      manifestPath: projectManifestPath(dir),
+      detection,
+      project: {
+        dir,
+        title: detection.name,
+        seed: buildProjectSeed(detection),
+        ...(repository ? { git: repository } : {}),
+      },
+    };
+  }
+
   return {
     scope,
     manifestPath: projectManifestPath(dir),

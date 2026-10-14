@@ -13,6 +13,8 @@ const DEFAULT_STRING_OPTIONS = new Set<string>([
   '--blocks',
   '--skills',
   '--skill-mode',
+  '--preset',
+  '--style',
   '--template',
   '--runner',
   '--binary',
@@ -280,6 +282,10 @@ interface BuildSkillCommandOptionsParams {
   baselineRef: string | undefined;
 }
 
+/**
+ * Validates and converts parsed CLI option values and positional arguments into
+ * {@link SkillCommandOptions} for `agents-config skill` subcommands.
+ */
 export function buildSkillCommandOptions({
   values,
   positionals,
