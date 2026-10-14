@@ -32,6 +32,7 @@
     "detect-newline": "4.0.1",
     "dot-prop": "10.2.0",
     "jsonc-parser": "3.3.1",
+    "smol-toml": "^1.9.1",
     "which": "7.0.0",
     "write-file-atomic": "8.0.0",
     "yaml": "^2.9.1",

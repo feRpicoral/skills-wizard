@@ -15,10 +15,11 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
-import { skillFolders } from '../install/targets.ts';
+import { mcpConfigPaths, skillFolders } from '../install/targets.ts';
 import { detectProject, type ProjectDetection } from '../project/detect.ts';
 import { buildProjectSeed } from '../project/seed.ts';
 import {
+  checkMcpEntries,
   checkSkillEntries,
   globalManifestPath,
   type Manifest,
@@ -199,12 +200,26 @@ export async function readLocationManifest({
         ...(location.project ? { project: location.project } : {}),
       })
     : null;
+  const mcpPaths = manifest
+    ? mcpConfigPaths({
+        scope: location.scope,
+        paths: ctx.paths,
+        ...(location.project ? { project: location.project } : {}),
+      })
+    : null;
   if (manifest && folders) {
     checkSkillEntries({
       file: location.manifestPath,
       entries: manifest.entries,
       folders,
       scope: location.scope,
+    });
+  }
+  if (manifest && mcpPaths) {
+    checkMcpEntries({
+      file: location.manifestPath,
+      entries: manifest.entries,
+      mcpPaths,
     });
   }
   return manifest;

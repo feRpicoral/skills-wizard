@@ -128,6 +128,60 @@ export function resolveSkillsShUrl(env: Environment = process.env): string {
   return value.replace(/\/+$/, '');
 }
 
+export const DEFAULT_GITHUB_MCP_REGISTRY_URL =
+  'https://api.mcp.github.com/v0.1/servers';
+export const DEFAULT_OFFICIAL_MCP_REGISTRY_URL =
+  'https://registry.modelcontextprotocol.io/v0.1/servers';
+
+export interface ResolveMcpRegistryUrlParams {
+  official?: boolean;
+  env?: Environment;
+}
+
+export function resolveMcpRegistryUrl({
+  official = false,
+  env = process.env,
+}: ResolveMcpRegistryUrlParams = {}): string {
+  const value = env.MCP_REGISTRY_URL?.trim();
+  if (!value) {
+    return official
+      ? DEFAULT_OFFICIAL_MCP_REGISTRY_URL
+      : DEFAULT_GITHUB_MCP_REGISTRY_URL;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new EnvironmentError(
+      `MCP_REGISTRY_URL must be an http:// or https:// URL, got "${value}"`,
+      { cause: error },
+    );
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new EnvironmentError(
+      `MCP_REGISTRY_URL must be an http:// or https:// URL, got "${value}"`,
+    );
+  }
+  if (
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.username !== '' ||
+    parsed.password !== ''
+  ) {
+    throw new EnvironmentError(
+      `MCP_REGISTRY_URL must not include credentials, query parameters, or fragments, got "${value}"`,
+    );
+  }
+  return value.replace(/\/+$/, '');
+}
+
+export function hasEnvVar(
+  name: string,
+  env: Environment = process.env,
+): boolean {
+  return Boolean(env[name]?.trim());
+}
+
 // What `git rev-parse --local-env-vars` lists, plus GIT_NAMESPACE and the
 // GIT_CONFIG_KEY_n/VALUE_n pairs. This also drops `-c` settings a caller
 // passed (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT); put settings the cache

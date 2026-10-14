@@ -9,6 +9,7 @@ import {
 import { displayPath } from '../install/describe.ts';
 import { lstatIfExists } from '../install/fs.ts';
 import { buildPlan, type Plan } from '../install/plan.ts';
+import type { McpCatalog } from '../mcp/model.ts';
 import {
   DEFAULT_SKILL_MODE,
   resolveSkillSources,
@@ -24,6 +25,7 @@ import { forgetProject, readProjects } from '../state/projects.ts';
 import {
   confirmAndApplyPlans,
   loadLibrary,
+  loadMcpServers,
   type Location,
   notify,
   readLocationManifest,
@@ -148,6 +150,7 @@ interface PlanUpdateTargetParams {
   prompting: boolean;
   library: BlockLibrary;
   skillLibrary: SkillLibrary;
+  mcpCatalog: McpCatalog;
   skillSources: ReadonlyMap<string, SkillSource>;
   location: Location;
   previous: Manifest;
@@ -158,6 +161,7 @@ async function planUpdateTarget({
   prompting,
   library,
   skillLibrary,
+  mcpCatalog,
   skillSources,
   location,
   previous,
@@ -169,6 +173,7 @@ async function planUpdateTarget({
     previous,
     library,
     skillLibrary,
+    mcpCatalog,
   });
   return buildPlan({
     scope: location.scope,
@@ -176,6 +181,7 @@ async function planUpdateTarget({
       tools: previous.tools,
       blocks: reconciled.blocks,
       skills: reconciled.skills,
+      mcp: reconciled.mcp,
       variables: reconciled.variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: reconciled.keepLocal,
@@ -192,6 +198,7 @@ async function planUpdateTarget({
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
     skillSources,
+    mcpCatalog,
   });
 }
 
@@ -201,6 +208,7 @@ interface BuildUpdatePlansParams {
   targets: readonly UpdateTarget[];
   library: BlockLibrary;
   skillLibrary: SkillLibrary;
+  mcpCatalog: McpCatalog;
   sources: ReadonlyMap<string, SkillSource>;
 }
 
@@ -210,6 +218,7 @@ async function buildUpdatePlans({
   targets,
   library,
   skillLibrary,
+  mcpCatalog,
   sources,
 }: BuildUpdatePlansParams): Promise<Plan[]> {
   const plans: Plan[] = [];
@@ -221,6 +230,7 @@ async function buildUpdatePlans({
           prompting,
           library,
           skillLibrary,
+          mcpCatalog,
           skillSources: sources,
           location: target.location,
           previous: target.manifest,
@@ -263,6 +273,7 @@ export async function runUpdate(
 
   const library = await loadLibrary(ctx);
   const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const mcpCatalog = await loadMcpServers(ctx);
   const allSkills = [
     ...new Set(
       targets.flatMap(({ manifest }) =>
@@ -308,6 +319,7 @@ export async function runUpdate(
       targets,
       library,
       skillLibrary,
+      mcpCatalog,
       sources,
     });
     const hasExtraWork = stale.length > 0;

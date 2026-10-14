@@ -667,6 +667,7 @@ __metadata:
     jsonc-parser: "npm:3.3.1"
     lint-staged: "npm:^17.6.0"
     prettier: "npm:^3.9.9"
+    smol-toml: "npm:^1.9.1"
     typescript: "npm:^6.0.3"
     typescript-eslint: "npm:^8.71.1"
     which: "npm:7.0.0"
@@ -1666,6 +1667,13 @@ __metadata:
   version: 1.0.5
   resolution: "sisteransi@npm:1.0.5"
   checksum: 10c0/230ac975cca485b7f6fe2b96a711aa62a6a26ead3e6fb8ba17c5a00d61b8bed0d7adc21f5626b70d7c33c62ff4e63933017a6462942c719d1980bb0b1207ad46
+  languageName: node
+  linkType: hard
+
+"smol-toml@npm:^1.9.1":
+  version: 1.9.1
+  resolution: "smol-toml@npm:1.9.1"
+  checksum: 10c0/8acccf7bbc063f29405f58f5014ab39bf4eb9d7f0e000e5e3f140f7d4d6ead5696681a7c15260d1f2910213012c0af43b31a05bf94f704b0bdf39989fba08c02
   languageName: node
   linkType: hard
 

@@ -26,6 +26,7 @@ import {
   applyWithCatalogRollback,
   buildSyncPlanForLocation,
   loadLibrary,
+  loadMcpServers,
   notify,
   readLocationManifest,
   resolveLocation,
@@ -204,7 +205,13 @@ export async function runAdopt(
   skillLibrary = additions.library;
 
   const library = await loadLibrary(ctx);
-  const tools = requestedTools ?? previous.tools;
+  const mcpCatalog = await loadMcpServers(ctx);
+  const tools =
+    requestedTools !== undefined
+      ? requestedTools.length === 0
+        ? []
+        : [...new Set([...previous.tools, ...requestedTools])]
+      : previous.tools;
   if (tools.length === 0) {
     throw new UsageError(
       'No tools recorded; pass --tools <ids> or run agents-config init --global.',
@@ -219,6 +226,7 @@ export async function runAdopt(
     previous,
     library,
     skillLibrary,
+    mcpCatalog,
     tools,
     extraSkills: picked,
     adopt: { names: new Set(picked), backupDir },

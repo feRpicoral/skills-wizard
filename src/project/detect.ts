@@ -65,7 +65,10 @@ export interface ProjectDetection {
   workspaces: WorkspacePackageInfo[];
   detectedBlocks: string[];
   detectedSkills: string[];
+  detectedMcpServers: string[];
 }
+
+export const DETECTABLE_MCP_SERVERS = ['nx', 'supabase', 'sentry'] as const;
 
 export const DETECTABLE_BLOCKS = [
   'stack/nextjs',
@@ -118,12 +121,8 @@ function isViteSsrFramework(deps: ReadonlySet<string>): boolean {
 
 function detectNodePresets(deps: ReadonlySet<string>): Set<PresetId> {
   const presets = new Set<PresetId>();
-  if (deps.has('expo')) {
-    presets.add('expo-app');
-  }
-  if (deps.has('next')) {
-    presets.add('nextjs-app');
-  }
+  if (deps.has('expo')) presets.add('expo-app');
+  if (deps.has('next')) presets.add('nextjs-app');
   if (deps.has('@nestjs/core') || deps.has('@nestjs/common')) {
     presets.add('nestjs-api');
   }
@@ -137,19 +136,13 @@ function detectNodePresets(deps: ReadonlySet<string>): Set<PresetId> {
   return presets;
 }
 
-interface ChoosePresetParams {
+function choosePreset(params: {
   hasNx: boolean;
   hasPackageJson: boolean;
   hasPyproject: boolean;
   rootDeps: ReadonlySet<string>;
-}
-
-function choosePreset({
-  hasNx,
-  hasPackageJson,
-  hasPyproject,
-  rootDeps,
-}: ChoosePresetParams): PresetId | undefined {
+}): PresetId | undefined {
+  const { hasNx, hasPackageJson, hasPyproject, rootDeps } = params;
   if (hasNx || rootDeps.has('nx') || rootDeps.has('@nx/workspace')) {
     return 'nx-monorepo';
   }
@@ -202,25 +195,33 @@ function collectWorkspaceFrameworkSelections(
   }
 }
 
-interface CollectCrossCuttingParams {
+function collectCrossCuttingSelections(params: {
+  hasNx: boolean;
   allDeps: ReadonlySet<string>;
   hasPrismaFiles: boolean;
   hasSupabaseFiles: boolean;
+  hasSentry: boolean;
   hasComponentsJson: boolean;
   isUvProject: boolean;
   blocks: Set<string>;
   skills: Set<string>;
-}
-
-function collectCrossCuttingSelections({
-  allDeps,
-  hasPrismaFiles,
-  hasSupabaseFiles,
-  hasComponentsJson,
-  isUvProject,
-  blocks,
-  skills,
-}: CollectCrossCuttingParams): void {
+  mcpServers: Set<string>;
+}): void {
+  const {
+    hasNx,
+    allDeps,
+    hasPrismaFiles,
+    hasSupabaseFiles,
+    hasSentry,
+    hasComponentsJson,
+    isUvProject,
+    blocks,
+    skills,
+    mcpServers,
+  } = params;
+  if (hasNx || allDeps.has('nx') || allDeps.has('@nx/workspace')) {
+    mcpServers.add('nx');
+  }
   const hasPrisma =
     hasPrismaFiles || allDeps.has('prisma') || allDeps.has('@prisma/client');
   if (hasPrisma) {
@@ -234,7 +235,6 @@ function collectCrossCuttingSelections({
       skills.add(s);
     }
   }
-
   const hasSupabase =
     hasSupabaseFiles ||
     allDeps.has('@supabase/supabase-js') ||
@@ -246,13 +246,13 @@ function collectCrossCuttingSelections({
     }
     skills.add('supabase');
     skills.add('supabase-postgres-best-practices');
+    mcpServers.add('supabase');
   }
-
+  if (hasSentry) mcpServers.add('sentry');
   if (allDeps.has('@tanstack/react-query')) {
     blocks.add('stack/tanstack-query');
     skills.add('tanstack-query-expert');
   }
-
   if (
     hasComponentsJson ||
     allDeps.has('tailwindcss') ||
@@ -262,16 +262,17 @@ function collectCrossCuttingSelections({
     blocks.add('stack/tailwind-shadcn');
     skills.add('tailwind-patterns');
   }
-
   const hasAiSdk =
     allDeps.has('ai') || [...allDeps].some((dep) => dep.startsWith('@ai-sdk/'));
   const hasAnthropicSdk = allDeps.has('@anthropic-ai/sdk');
-  const hasLlm =
+  if (
     hasAiSdk ||
     hasAnthropicSdk ||
     allDeps.has('openai') ||
-    allDeps.has('@google/genai');
-  if (hasLlm) blocks.add('stack/llm-apps');
+    allDeps.has('@google/genai')
+  ) {
+    blocks.add('stack/llm-apps');
+  }
   if (hasAiSdk) skills.add('ai-sdk');
   if (hasAnthropicSdk) skills.add('claude-api');
   if (allDeps.has('@playwright/test') || allDeps.has('playwright')) {
@@ -280,100 +281,91 @@ function collectCrossCuttingSelections({
   if (isUvProject) blocks.add('stack/python-uv');
 }
 
-interface CollectAdditiveParams {
+function collectAdditiveSelections(params: {
+  hasNx: boolean;
   hasWorkspacePackages: boolean;
   allDeps: ReadonlySet<string>;
   presetsById: ReadonlyMap<PresetId, PresetDefinition>;
   hasPrismaFiles: boolean;
   hasSupabaseFiles: boolean;
+  hasSentry: boolean;
   hasComponentsJson: boolean;
   isUvProject: boolean;
-}
-
-function collectAdditiveSelections({
-  hasWorkspacePackages,
-  allDeps,
-  presetsById,
-  hasPrismaFiles,
-  hasSupabaseFiles,
-  hasComponentsJson,
-  isUvProject,
-}: CollectAdditiveParams): { blocks: string[]; skills: string[] } {
+}): {
+  blocks: string[];
+  skills: string[];
+  mcpServers: string[];
+} {
   const blocks = new Set<string>();
   const skills = new Set<string>();
+  const mcpServers = new Set<string>();
 
-  if (hasWorkspacePackages) {
-    collectWorkspaceFrameworkSelections(allDeps, presetsById, blocks, skills);
+  if (params.hasWorkspacePackages) {
+    collectWorkspaceFrameworkSelections(
+      params.allDeps,
+      params.presetsById,
+      blocks,
+      skills,
+    );
   }
   collectCrossCuttingSelections({
-    allDeps,
-    hasPrismaFiles,
-    hasSupabaseFiles,
-    hasComponentsJson,
-    isUvProject,
+    ...params,
     blocks,
     skills,
+    mcpServers,
   });
 
   return {
     blocks: [...blocks],
     skills: [...skills],
+    mcpServers: [...mcpServers],
   };
 }
 
-interface ProjectFileMarkers {
-  hasPrismaFiles: boolean;
-  hasSupabaseFiles: boolean;
-  hasComponentsJson: boolean;
-}
+const SENTRY_ROOT_CANDIDATES = [
+  'sentry.client.config.ts',
+  'sentry.client.config.js',
+  'sentry.server.config.ts',
+  'sentry.server.config.js',
+  '.sentryclirc',
+] as const;
 
 async function probeProjectMarkers(
   projectDir: string,
   root: string,
   workspaces: readonly WorkspacePackageInfo[],
-): Promise<ProjectFileMarkers> {
-  const workspacePrismaCandidates = workspaces.flatMap((ws) => [
-    `${ws.relativePath}/prisma/schema.prisma`,
-    `${ws.relativePath}/prisma.config.ts`,
-  ]);
-  const workspaceSupabaseCandidates = workspaces.map(
-    (ws) => `${ws.relativePath}/supabase/config.toml`,
-  );
-  const workspaceComponentsCandidates = workspaces.map(
-    (ws) => `${ws.relativePath}/components.json`,
-  );
-
-  const [hasPrismaFiles, hasSupabaseFiles, hasComponentsJson] =
+) {
+  const probe = (files: readonly string[]) =>
+    hasAnyRelativeFile({
+      projectDir,
+      root,
+      candidates: [
+        ...files,
+        ...workspaces.flatMap((ws) =>
+          files.map((f) => `${ws.relativePath}/${f}`),
+        ),
+      ],
+    });
+  const [hasPrismaFiles, hasSupabaseFiles, hasComponentsJson, hasSentryFiles] =
     await Promise.all([
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: [
-          'prisma/schema.prisma',
-          'prisma.config.ts',
-          ...workspacePrismaCandidates,
-        ],
-      }),
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: ['supabase/config.toml', ...workspaceSupabaseCandidates],
-      }),
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: ['components.json', ...workspaceComponentsCandidates],
-      }),
+      probe(['prisma/schema.prisma', 'prisma.config.ts']),
+      probe(['supabase/config.toml']),
+      probe(['components.json']),
+      probe(SENTRY_ROOT_CANDIDATES),
     ]);
-
-  return { hasPrismaFiles, hasSupabaseFiles, hasComponentsJson };
+  return {
+    hasPrismaFiles,
+    hasSupabaseFiles,
+    hasComponentsJson,
+    hasSentryFiles,
+  };
 }
 
 /**
  * Inspects a project directory (`package.json`, `pyproject.toml`, lockfiles,
  * `.nvmrc`, `nx.json`, `pnpm-workspace.yaml`, and workspace packages) to infer
  * the project name, primary stack preset, package manager, scripts, and
- * additive blocks and skills.
+ * additive blocks, skills, and MCP servers.
  */
 export async function detectProject(
   projectDir: string,
@@ -440,6 +432,10 @@ export async function detectProject(
     }),
   ]);
 
+  const hasSentryDeps =
+    [...allDeps].some((dep) => dep.startsWith('@sentry/')) ||
+    (pyprojectSource !== null && /\bsentry[-_]sdk\b/i.test(pyprojectSource));
+
   const preset = choosePreset({
     hasNx,
     hasPackageJson: pkg !== null,
@@ -462,11 +458,15 @@ export async function detectProject(
         : 'uv'
       : undefined;
   const additive = collectAdditiveSelections({
+    hasNx,
     hasWorkspacePackages:
       hasNx || workspacePatterns.length > 0 || workspaces.length > 0,
     allDeps,
     presetsById,
-    ...markers,
+    hasPrismaFiles: markers.hasPrismaFiles,
+    hasSupabaseFiles: markers.hasSupabaseFiles,
+    hasSentry: markers.hasSentryFiles || hasSentryDeps,
+    hasComponentsJson: markers.hasComponentsJson,
     isUvProject,
   });
 
@@ -487,5 +487,6 @@ export async function detectProject(
     workspaces,
     detectedBlocks: additive.blocks,
     detectedSkills: additive.skills,
+    detectedMcpServers: additive.mcpServers,
   };
 }

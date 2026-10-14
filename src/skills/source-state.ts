@@ -29,6 +29,8 @@ export interface SourceSettings {
   url: (repo: string) => string;
   env: Environment;
   now: () => Date;
+  mcpRegistryUrl?: string | ((options?: { official?: boolean }) => string);
+  fetch?: typeof globalThis.fetch;
 }
 
 export interface SourceCache extends SourceSettings {

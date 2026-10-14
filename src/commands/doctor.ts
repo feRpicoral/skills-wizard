@@ -11,6 +11,7 @@ import {
   planFindings,
   symlinkFindings,
 } from './doctor-checks.ts';
+import { mcpFindings, resolveDoctorMcp } from './doctor-mcp.ts';
 import { resolveDoctorSkills, skillFindings } from './doctor-skills.ts';
 import {
   loadLibrary,
@@ -94,6 +95,11 @@ export async function runDoctor(
     sources,
     findings: skillResolutionFindings,
   } = await resolveDoctorSkills(ctx, manifest, scope);
+  const {
+    mcpCatalog,
+    mcp,
+    findings: mcpResolutionFindings,
+  } = await resolveDoctorMcp(ctx, manifest, scope);
   const { blocks, preset, keepLocal, foundVariables, unresolvedVariables } =
     reconciled;
   // A placeholder keeps conflict checks running without a value, but the
@@ -111,6 +117,7 @@ export async function runDoctor(
       location,
       reconciled,
       skillResolutionFindings,
+      mcpResolutionFindings,
     }),
     ...(await planFindings({
       ctx,
@@ -121,10 +128,13 @@ export async function runDoctor(
       variables,
       skills,
       skillSources: sources,
+      mcp,
+      mcpCatalog,
       keepLocal,
       preset,
       reportOutdated: unresolvedVariables.length === 0,
     })),
+    ...mcpFindings({ ctx, scope, manifest, mcpCatalog, mcp }),
     ...(await symlinkFindings(ctx, manifest)),
     ...(scope === 'global'
       ? [

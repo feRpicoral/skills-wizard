@@ -1,8 +1,10 @@
 import {
   gitEnvironment,
+  hasEnvVar,
   type Paths,
   resolveAgyBin,
   resolveAgyExtraArgs,
+  resolveMcpRegistryUrl,
   resolvePaths,
   resolveSearchPath,
   resolveSkillsShUrl,
@@ -19,6 +21,7 @@ export interface AgySettings {
 
 export interface DiscoverySettings {
   skillsShUrl?: string | (() => string);
+  mcpRegistryUrl?: string | ((options?: { official?: boolean }) => string);
   fetch?: typeof globalThis.fetch;
 }
 
@@ -31,6 +34,7 @@ export interface Context {
   sources: SourceSettings;
   discovery?: DiscoverySettings;
   agy?: AgySettings;
+  hasEnvVar?: (name: string) => boolean;
   print: (line?: string) => void;
 }
 
@@ -57,25 +61,38 @@ export function createContext({
     process.stdout.write(`${line}\n`);
   },
 }: CreateContextParams): Context {
+  const env = sources?.env ?? gitEnvironment();
+  const mcpRegistryUrl =
+    discovery?.mcpRegistryUrl ??
+    sources?.mcpRegistryUrl ??
+    (({ official } = {}) =>
+      resolveMcpRegistryUrl({
+        ...(official !== undefined ? { official } : {}),
+      }));
+  const sourcesSettings: SourceSettings = {
+    url: sources?.url ?? githubUrl,
+    env,
+    now: sources?.now ?? (() => new Date()),
+    mcpRegistryUrl,
+    ...(sources?.fetch !== undefined ? { fetch: sources.fetch } : {}),
+  };
   return {
     paths,
     repoRoot,
     cwd,
     searchPath,
     interactive,
-    sources: {
-      url: sources?.url ?? githubUrl,
-      env: sources?.env ?? gitEnvironment(),
-      now: sources?.now ?? (() => new Date()),
-    },
+    sources: sourcesSettings,
     discovery: {
       skillsShUrl: discovery?.skillsShUrl ?? (() => resolveSkillsShUrl()),
+      mcpRegistryUrl,
       ...(discovery?.fetch !== undefined ? { fetch: discovery.fetch } : {}),
     },
     agy: {
       bin: () => resolveAgyBin(),
       extraArgs: () => resolveAgyExtraArgs(),
     },
+    hasEnvVar: (name) => hasEnvVar(name, sourcesSettings.env ?? env),
     print,
   };
 }

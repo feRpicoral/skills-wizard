@@ -3,6 +3,8 @@ import { join, relative } from 'node:path';
 import { composeGlobal, composeProject } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
+import type { McpCatalog } from '../mcp/model.ts';
+import type { McpJsonClient } from '../mcp/render.ts';
 import type { PresetChoice, ProjectStyle } from '../project/presets.ts';
 import type { SkillMode, SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
@@ -12,17 +14,25 @@ import {
   type ToolId,
 } from '../tools/registry.ts';
 import {
+  globalMcpTargets,
+  mcpConfigPaths,
+  type McpTargetsResult,
+  projectMcpTargets,
+  selectedMcpServers,
+} from './mcp-targets.ts';
+import {
   globalSkillTargets,
   projectSkillTargets,
   skillFolders,
 } from './skill-targets.ts';
 
-export { skillFolders };
+export { mcpConfigPaths, skillFolders };
 
 export interface Selection {
   tools: ToolId[];
   blocks: string[];
   skills: string[];
+  mcp?: string[];
   variables: Record<string, string>;
   linkCommand: boolean;
   keepLocal: boolean;
@@ -53,6 +63,7 @@ export interface PlanInput {
   manifestPath: string;
   project?: ProjectContext;
   skillSources?: ReadonlyMap<string, SkillSource>;
+  mcpCatalog?: McpCatalog;
   adopt?: Adoption;
 }
 
@@ -85,6 +96,7 @@ export interface JsonArrayTarget {
   path: string;
   key: string;
   values: readonly string[];
+  mcpPermissionClient?: 'claude-code';
   label: string;
 }
 
@@ -107,13 +119,31 @@ export interface SkillTarget {
   backup?: string;
 }
 
+export interface McpJsonTarget {
+  kind: 'mcp-json';
+  path: string;
+  servers: Readonly<Record<string, Record<string, unknown>>>;
+  mcpClient?: McpJsonClient;
+  label: string;
+}
+
+export interface McpTomlTarget {
+  kind: 'mcp-toml';
+  path: string;
+  body: string;
+  serverNames: readonly string[];
+  label: string;
+}
+
 export type Target =
   | RegionTarget
   | ExcludeRegionTarget
   | LineTarget
   | JsonArrayTarget
   | SymlinkTarget
-  | SkillTarget;
+  | SkillTarget
+  | McpJsonTarget
+  | McpTomlTarget;
 
 export type FileTarget = Exclude<Target, SymlinkTarget | SkillTarget>;
 
@@ -163,22 +193,25 @@ function globalSettingTargets(
   });
 }
 
-function globalTargets({
-  selection,
-  paths,
-  library,
-  repoRoot,
-  ...rest
-}: PlanInput): Target[] {
+function globalTargets(input: PlanInput): McpTargetsResult {
+  const { selection, paths, library, repoRoot } = input;
   const tools = orderedTools(selection.tools);
   const targets: Target[] = [];
+  const warnings: string[] = [];
 
   if (tools.length > 0) {
     const body = composeGlobal(library, selection.blocks, selection.variables);
+    const mcp = globalMcpTargets({
+      tools,
+      servers: selectedMcpServers(input),
+      paths,
+    });
+    warnings.push(...mcp.warnings);
     targets.push(
       ...globalInstructionTargets(tools, body, paths),
       ...globalSettingTargets(tools, paths),
-      ...globalSkillTargets({ selection, paths, library, repoRoot, ...rest }),
+      ...mcp.targets,
+      ...globalSkillTargets(input),
     );
   }
 
@@ -190,7 +223,7 @@ function globalTargets({
       label: 'agents-config command',
     });
   }
-  return targets;
+  return { targets, warnings };
 }
 
 interface ProjectToolTargetsParams {
@@ -244,9 +277,10 @@ function gitExcludeTarget({
   targets,
   manifestPath,
 }: GitExcludeTargetParams): ExcludeRegionTarget {
-  const paths = [...targets.map((target) => target.path), manifestPath].map(
-    (path) => relative(root, path),
-  );
+  const uniquePaths = [
+    ...new Set([...targets.map((target) => target.path), manifestPath]),
+  ];
+  const paths = uniquePaths.map((path) => relative(root, path));
   return {
     kind: 'exclude-region',
     path: excludePath,
@@ -256,17 +290,17 @@ function gitExcludeTarget({
   };
 }
 
-function projectTargets({
-  selection,
-  library,
-  project,
-  manifestPath,
-  ...rest
-}: PlanInput): Target[] {
+function projectTargets(input: PlanInput): McpTargetsResult {
+  const { selection, library, project, manifestPath } = input;
   const tools = orderedTools(selection.tools);
-  if (!project || tools.length === 0) return [];
+  if (!project || tools.length === 0) return { targets: [], warnings: [] };
 
   const instructionsPath = join(project.dir, 'AGENTS.md');
+  const mcp = projectMcpTargets({
+    tools,
+    servers: selectedMcpServers(input),
+    projectDir: project.dir,
+  });
   const targets: Target[] = [
     {
       kind: 'region',
@@ -280,10 +314,8 @@ function projectTargets({
       projectDir: project.dir,
       instructionsPath,
     }),
-    ...projectSkillTargets(
-      { selection, library, project, manifestPath, ...rest },
-      project,
-    ),
+    ...mcp.targets,
+    ...projectSkillTargets(input, project),
   ];
 
   if (selection.keepLocal && project.git) {
@@ -297,11 +329,11 @@ function projectTargets({
       }),
     );
   }
-  return targets;
+  return { targets, warnings: mcp.warnings };
 }
 
-export function targetsForPlan({ scope, ...rest }: PlanInput): Target[] {
-  return scope === 'global'
-    ? globalTargets({ scope, ...rest })
-    : projectTargets({ scope, ...rest });
+export function targetsForPlan(input: PlanInput): McpTargetsResult {
+  return input.scope === 'global'
+    ? globalTargets(input)
+    : projectTargets(input);
 }

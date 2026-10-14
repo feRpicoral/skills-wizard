@@ -84,6 +84,7 @@ test('collectChangeReports reports each distinct outdated copy across manifests'
     tools: ['codex'],
     blocks: [],
     skills: ['notes'],
+    mcp: [],
     variables: {},
     options: {},
     entries: [

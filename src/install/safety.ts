@@ -259,8 +259,10 @@ export function writeAction({
 export function wasCreated(
   existing: string | null,
   previous: ManifestEntry | null,
+  pathCreated?: boolean,
 ): boolean {
   if (existing === null) return true;
+  if (pathCreated) return true;
   return previous !== null && 'createdFile' in previous
     ? previous.createdFile
     : false;
@@ -271,6 +273,7 @@ export interface PlanFileParams {
   previous: ManifestEntry | null;
   staged: StagedContents;
   boundary?: string;
+  pathCreated?: boolean;
 }
 
 export type ResolvedTargetOutcome =
@@ -281,6 +284,7 @@ export async function resolveTargetFile({
   previous,
   staged,
   boundary,
+  pathCreated,
 }: PlanFileParams): Promise<ResolvedTargetOutcome> {
   const inspection = await inspectTargetFile({
     target,
@@ -296,7 +300,8 @@ export async function resolveTargetFile({
       writePath: inspection.writePath,
       existing: inspection.current,
       createdFile:
-        !inspection.viaLink && wasCreated(inspection.onDisk, previous),
+        !inspection.viaLink &&
+        wasCreated(inspection.onDisk, previous, pathCreated),
     },
   };
 }

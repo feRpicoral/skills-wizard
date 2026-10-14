@@ -12,6 +12,8 @@ import {
   type ParsedCommand,
   parseDiscoverSource,
   parseList,
+  parseMcpSubcommand,
+  parsePositiveInt,
   parsePreset,
   parseProjectStyle,
   parseRefFlag,
@@ -23,6 +25,7 @@ import { runAdd } from './commands/add.ts';
 import { runAdopt } from './commands/adopt.ts';
 import { runDoctor } from './commands/doctor.ts';
 import { runInit } from './commands/init.ts';
+import { runMcp } from './commands/mcp.ts';
 import { runMenu } from './commands/menu.ts';
 import { runSkill } from './commands/skill.ts';
 import { runSync } from './commands/sync.ts';
@@ -56,6 +59,10 @@ Commands:
   skill eval <name>         Run with-skill vs baseline benchmark and grade assertions
   skill triggers <name>     Measure trigger precision/recall on trigger_queries.json
   skill report <name> [dir] Regenerate report.md from an existing benchmark iteration or run-dir
+  mcp [list]                List curated MCP servers and their install status
+  mcp add <name...>         Install curated MCP servers into the selected scope
+  mcp remove <name...>      Remove installed MCP servers from the selected scope
+  mcp search <query>        Search the MCP registry (and optionally append to mcp/servers.yaml)
   help                      Show this help
 
 Run without a command in a terminal to open the interactive menu.
@@ -68,6 +75,8 @@ Options:
   --blocks <ids>        Comma-separated block ids, for example core/no-ai-tells
   --skills <names>      Comma-separated skills from catalog.yaml or skills/
                         (an empty list removes every installed skill)
+  --mcp <names>         Comma-separated MCP servers from mcp/servers.yaml
+                        (an empty list removes every installed MCP server)
   --skill-mode <mode>   System-wide first-party skills: copy (default) or link
   --preset <id>         Project preset: ${PRESET_IDS.join(', ')}, none
   --style <mode>        Project instructions style: lean (default with a system-wide install),
@@ -77,6 +86,9 @@ Options:
   --ref <ref>           add: pin repository branch, tag, or commit SHA
   --include-offensive   add: include offensive security skills in awesome index search
   --install             add: also install the skill after adding it to catalog.yaml
+  --official            mcp search: query registry.modelcontextprotocol.io instead of GitHub
+  --limit <n>           mcp search: maximum number of registry results (default: 10)
+  --add                 mcp search: append the selected server to mcp/servers.yaml
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -139,6 +151,7 @@ function dispatchCommand({
       const tools = parseTools(values.tools);
       const blocks = parseList(values.blocks);
       const skills = parseList(values.skills);
+      const mcp = parseList(values.mcp);
       const skillMode = parseSkillMode(values['skill-mode']);
       const preset = parsePreset(values.preset);
       const style = parseProjectStyle(values.style);
@@ -151,6 +164,7 @@ function dispatchCommand({
         ...(tools ? { tools } : {}),
         ...(blocks ? { blocks } : {}),
         ...(skills ? { skills } : {}),
+        ...(mcp ? { mcp } : {}),
         ...(skillMode ? { skillMode } : {}),
         ...(preset ? { preset } : {}),
         ...(style ? { style } : {}),
@@ -212,6 +226,34 @@ function dispatchCommand({
         ctx,
         buildSkillCommandOptions({ values, positionals, baselineRef }),
       );
+    case 'mcp': {
+      const subcommand = parseMcpSubcommand(positionals[1]);
+      if (
+        terminal &&
+        !yes &&
+        subcommand !== 'list' &&
+        (subcommand !== 'search' || Boolean(values.add))
+      ) {
+        clack.intro('agents-config');
+      }
+      const tools = parseTools(values.tools);
+      const limit = parsePositiveInt({
+        value: values.limit,
+        flagName: 'limit',
+      });
+      return runMcp(ctx, {
+        subcommand,
+        args: positionals.slice(2),
+        ...(scope ? { scope } : {}),
+        ...projectOption,
+        ...(tools ? { tools } : {}),
+        ...(values.official !== undefined ? { official: values.official } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(values.add !== undefined ? { add: values.add } : {}),
+        yes,
+        dryRun,
+      });
+    }
   }
 }
 

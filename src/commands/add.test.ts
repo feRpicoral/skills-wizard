@@ -70,6 +70,7 @@ async function testContext(
       '    defaults: [global]',
       '',
     ].join('\n'),
+    'mcp/servers.yaml': 'servers: []\n',
   });
   const output: string[] = [];
   const ctx: Context = {
