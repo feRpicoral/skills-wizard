@@ -63,7 +63,7 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     detect: {
       dirs: (paths) => [
         join(paths.geminiHome, 'antigravity'),
-        '/Applications/Antigravity.app',
+        join(paths.applicationsDir, 'Antigravity.app'),
       ],
       bins: [],
     },

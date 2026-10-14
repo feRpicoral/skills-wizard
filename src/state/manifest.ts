@@ -152,8 +152,13 @@ export async function readManifest(file: string): Promise<Manifest | null> {
   return result.data;
 }
 
-// System-wide entries are used as they are, so a relative path would resolve
-// against whatever directory the CLI runs from.
+/**
+ * Reads and validates the system-wide manifest at `file`.
+ *
+ * System-wide entries are used as they are, so relative `path` or symlink
+ * `target` values are rejected with {@link ManifestError} rather than resolved
+ * against whatever directory the CLI happens to run from.
+ */
 export async function readGlobalManifest(
   file: string,
 ): Promise<Manifest | null> {
@@ -173,6 +178,15 @@ export async function readGlobalManifest(
   return manifest;
 }
 
+/**
+ * Reads and validates a project manifest at `file`, resolving each entry's
+ * stored relative path against `dir`.
+ *
+ * Verifies that `file` itself resolves inside `dir`, rejects absolute entry
+ * paths or paths escaping `dir` with {@link ManifestError}, and drops stale
+ * `exclude-region` entries whose path no longer matches `gitExcludePath`
+ * (returning those dropped paths in `ignored`).
+ */
 export async function readProjectManifest(
   file: string,
   { dir, ...rest }: ProjectBase,

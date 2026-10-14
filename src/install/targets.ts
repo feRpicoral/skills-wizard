@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import { composeGlobal, composeProject } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
+import { ManagedRegionError } from '../errors.ts';
 import type { Manifest } from '../state/manifest.ts';
 import {
   orderedTools,
@@ -129,12 +130,17 @@ function globalSettingTargets(
   });
 }
 
+type GlobalTargetsParams = Pick<
+  PlanInput,
+  'selection' | 'paths' | 'library' | 'repoRoot'
+>;
+
 function globalTargets({
   selection,
   paths,
   library,
   repoRoot,
-}: PlanInput): Target[] {
+}: GlobalTargetsParams): Target[] {
   const tools = orderedTools(selection.tools);
   const targets: Target[] = [];
 
@@ -194,6 +200,11 @@ function projectToolTargets({
 }
 
 function gitignorePattern(path: string): string {
+  if (/[\r\n]/.test(path)) {
+    throw new ManagedRegionError(
+      'git exclude entry path must not contain line breaks',
+    );
+  }
   const escaped = path
     .replace(/[[\]*?\\]/g, '\\$&')
     .replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length));
@@ -227,12 +238,17 @@ function gitExcludeTarget({
   };
 }
 
+type ProjectTargetsParams = Pick<
+  PlanInput,
+  'selection' | 'library' | 'project' | 'manifestPath'
+>;
+
 function projectTargets({
   selection,
   library,
   project,
   manifestPath,
-}: PlanInput): Target[] {
+}: ProjectTargetsParams): Target[] {
   const tools = orderedTools(selection.tools);
   if (!project || tools.length === 0) return [];
 
@@ -266,7 +282,21 @@ function projectTargets({
   return targets;
 }
 
-export function targetsForPlan({ scope, ...rest }: PlanInput): Target[] {
-  const input: PlanInput = { scope, ...rest };
-  return scope === 'global' ? globalTargets(input) : projectTargets(input);
+export function targetsForPlan({
+  scope,
+  selection,
+  library,
+  paths,
+  repoRoot,
+  manifestPath,
+  project,
+}: PlanInput): Target[] {
+  return scope === 'global'
+    ? globalTargets({ selection, paths, library, repoRoot })
+    : projectTargets({
+        selection,
+        library,
+        manifestPath,
+        ...(project ? { project } : {}),
+      });
 }

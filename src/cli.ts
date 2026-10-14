@@ -122,9 +122,13 @@ function rejectOptions(command: Command, provided: readonly string[]): void {
   }
 }
 
-function isSystemError(error: unknown): error is Error {
+export function isSystemError(error: unknown): error is NodeJS.ErrnoException {
   return (
-    error instanceof Error && 'code' in error && typeof error.code === 'string'
+    error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    'errno' in error &&
+    typeof error.errno === 'number'
   );
 }
 
@@ -135,7 +139,23 @@ async function version(): Promise<string> {
   return packageJson.version;
 }
 
-async function main(argv: string[]): Promise<number> {
+type ParsedCommand =
+  | { kind: 'help' }
+  | { kind: 'version' }
+  | { kind: 'default' }
+  | {
+      kind: 'command';
+      command: Command;
+      values: ReturnType<
+        typeof parseArgs<{ options: typeof OPTIONS }>
+      >['values'];
+      scope?: Scope;
+      yes: boolean;
+      dryRun: boolean;
+      projectDir?: string;
+    };
+
+function parseCommand(argv: string[]): ParsedCommand {
   let parsed;
   try {
     parsed = parseArgs({
@@ -152,15 +172,8 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const { values, positionals } = parsed;
-  const print = (line: string) => process.stdout.write(`${line}\n`);
-  if (values.help) {
-    print(HELP);
-    return 0;
-  }
-  if (values.version) {
-    print(await version());
-    return 0;
-  }
+  if (values.help) return { kind: 'help' };
+  if (values.version) return { kind: 'version' };
   if (positionals.length > 1) {
     throw new UsageError(
       `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
@@ -170,7 +183,6 @@ async function main(argv: string[]): Promise<number> {
     throw new UsageError('Use either --global or --project, not both.');
   }
 
-  const terminal = process.stdin.isTTY && process.stdout.isTTY;
   const command = positionals[0];
   if (command === undefined || command === 'help') {
     if (command === undefined) {
@@ -180,39 +192,66 @@ async function main(argv: string[]): Promise<number> {
           `${flags(provided)} must follow a command such as init`,
         );
       }
-      if (terminal) {
-        return runMenu(
-          createContext({
-            repoRoot: REPO_ROOT,
-            cwd: process.cwd(),
-            interactive: true,
-          }),
-        );
-      }
+      return { kind: 'default' };
     }
-    print(HELP);
-    return 0;
+    return { kind: 'help' };
   }
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
   }
   rejectOptions(command, Object.keys(values));
 
-  const ctx = createContext({
-    repoRoot: REPO_ROOT,
-    cwd: process.cwd(),
-    interactive: terminal,
-  });
   const scope: Scope | undefined =
     values.project !== undefined
       ? 'project'
       : values.global
         ? 'global'
         : undefined;
-  const yes = values.yes ?? false;
-  const dryRun = values['dry-run'] ?? false;
-  const projectDir =
-    values.project !== undefined ? { projectDir: values.project } : {};
+  return {
+    kind: 'command',
+    command,
+    values,
+    ...(scope ? { scope } : {}),
+    yes: values.yes ?? false,
+    dryRun: values['dry-run'] ?? false,
+    ...(values.project !== undefined ? { projectDir: values.project } : {}),
+  };
+}
+
+async function main(argv: string[]): Promise<number> {
+  const parsed = parseCommand(argv);
+  const print = (line: string) => process.stdout.write(`${line}\n`);
+  if (parsed.kind === 'help') {
+    print(HELP);
+    return 0;
+  }
+  if (parsed.kind === 'version') {
+    print(await version());
+    return 0;
+  }
+
+  const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (parsed.kind === 'default') {
+    if (terminal) {
+      return runMenu(
+        createContext({
+          repoRoot: REPO_ROOT,
+          cwd: process.cwd(),
+          interactive: true,
+        }),
+      );
+    }
+    print(HELP);
+    return 0;
+  }
+
+  const ctx = createContext({
+    repoRoot: REPO_ROOT,
+    cwd: process.cwd(),
+    interactive: terminal,
+  });
+  const { command, values, scope, yes, dryRun, projectDir } = parsed;
+  const projectOption = projectDir !== undefined ? { projectDir } : {};
 
   switch (command) {
     case 'init': {
@@ -224,7 +263,7 @@ async function main(argv: string[]): Promise<number> {
         yes,
         dryRun,
         ...(scope ? { scope } : {}),
-        ...projectDir,
+        ...projectOption,
         ...(tools ? { tools } : {}),
         ...(blocks ? { blocks } : {}),
         ...(values['link-command'] !== undefined
@@ -238,28 +277,30 @@ async function main(argv: string[]): Promise<number> {
         scope: scope ?? 'global',
         yes,
         dryRun,
-        ...projectDir,
+        ...projectOption,
       });
     case 'doctor':
-      return runDoctor(ctx, { scope: scope ?? 'global', ...projectDir });
+      return runDoctor(ctx, { scope: scope ?? 'global', ...projectOption });
   }
 }
 
-try {
-  process.exitCode = await main(process.argv.slice(2));
-} catch (error) {
-  if (error instanceof CancelledError) {
-    clack.cancel(error.message);
-    process.exitCode = 1;
-  } else if (error instanceof UsageError) {
-    process.stderr.write(
-      `${styleText('red', error.message)}\nRun agents-config --help for usage.\n`,
-    );
-    process.exitCode = 2;
-  } else if (error instanceof AgentsConfigError || isSystemError(error)) {
-    process.stderr.write(`${styleText('red', error.message)}\n`);
-    process.exitCode = 1;
-  } else {
-    throw error;
+if (import.meta.main) {
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    if (error instanceof CancelledError) {
+      clack.cancel(error.message);
+      process.exitCode = 1;
+    } else if (error instanceof UsageError) {
+      process.stderr.write(
+        `${styleText('red', error.message)}\nRun agents-config --help for usage.\n`,
+      );
+      process.exitCode = 2;
+    } else if (error instanceof AgentsConfigError || isSystemError(error)) {
+      process.stderr.write(`${styleText('red', error.message)}\n`);
+      process.exitCode = 1;
+    } else {
+      throw error;
+    }
   }
 }

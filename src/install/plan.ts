@@ -145,11 +145,16 @@ async function planRemovalActions({
   return actions;
 }
 
+type ComposeManifestMetadataParams = Pick<
+  PlanInput,
+  'scope' | 'selection' | 'library'
+>;
+
 function composeManifestMetadata({
   scope,
   selection,
   library,
-}: PlanInput): Omit<Manifest, 'entries'> {
+}: ComposeManifestMetadataParams): Omit<Manifest, 'entries'> {
   const blocks = selectBlocks(library, selection.blocks, scope);
   const variables = Object.fromEntries(
     requiredVariables(blocks).flatMap((name) => {
@@ -193,20 +198,28 @@ async function resolveManifestStatus({
   return existing === content ? 'unchanged' : 'update';
 }
 
+/**
+ * Builds the non-destructive install and removal {@link Plan} for a global or
+ * project configuration run without modifying the filesystem.
+ *
+ * Plans every selected target in order, stages each resulting write or delete
+ * in memory by canonical `realLocation`, plans removals for entries present in
+ * `previous` that are no longer selected (skipping files still owned by an
+ * active target), and computes the next manifest metadata and status.
+ *
+ * @throws {ManifestError} If `manifestPath` is a symlink or resolves outside
+ * the project boundary.
+ */
 export async function buildPlan({
   scope,
+  selection,
+  library,
+  paths,
+  repoRoot,
   previous,
   manifestPath,
   project,
-  ...rest
 }: PlanInput): Promise<Plan> {
-  const input: PlanInput = {
-    scope,
-    previous,
-    manifestPath,
-    ...(project ? { project } : {}),
-    ...rest,
-  };
   const boundary = scope === 'project' ? project?.dir : undefined;
   await checkManifestPath({
     manifestPath,
@@ -218,7 +231,16 @@ export async function buildPlan({
   );
   const staged: StagedContents = new Map();
   const { actions: targetActions, plannedKeys } = await planTargetActions({
-    targets: targetsForPlan(input),
+    targets: targetsForPlan({
+      scope,
+      selection,
+      library,
+      paths,
+      repoRoot,
+      previous,
+      manifestPath,
+      ...(project ? { project } : {}),
+    }),
     previousEntries,
     staged,
     ...(boundary ? { boundary } : {}),
@@ -232,7 +254,7 @@ export async function buildPlan({
   });
   const actions = [...targetActions, ...removalActions];
 
-  const manifest = composeManifestMetadata(input);
+  const manifest = composeManifestMetadata({ scope, selection, library });
   const entries = actions.flatMap((action) =>
     action.entry ? [action.entry] : [],
   );

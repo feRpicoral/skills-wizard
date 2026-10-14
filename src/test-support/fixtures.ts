@@ -40,7 +40,10 @@ export async function writeFiles(
 
 export async function tempPaths(t: TestContext): Promise<Paths> {
   const home = await tempDir(t);
-  return resolvePaths({ HOME: home });
+  return {
+    ...resolvePaths({ HOME: home }),
+    applicationsDir: join(home, 'Applications'),
+  };
 }
 
 interface BlockFixture {

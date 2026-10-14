@@ -1,6 +1,6 @@
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import { readSymlink, resolveIfSymlink, statIfExists } from './fs.ts';
+import { readSymlink } from './fs.ts';
 import { removeLine } from './import-line.ts';
 import {
   isEmptyJsonObject,
@@ -16,15 +16,13 @@ import {
   type Change,
   CHANGED_OUTSIDE,
   conflict,
-  fileKindProblem,
-  leftInPlace,
-  locationProblem,
+  inspectTargetFile,
   NONE,
   NOTHING_LEFT,
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
-import { readStaged, type StagedContents } from './staged.ts';
+import type { StagedContents } from './staged.ts';
 
 type SymlinkEntry = Extract<ManifestEntry, { kind: 'symlink' }>;
 type FileEntry = Exclude<ManifestEntry, SymlinkEntry>;
@@ -109,36 +107,36 @@ interface ResolveRemovalFileParams {
   boundary?: string;
 }
 
+type ResolvedRemovalOutcome =
+  | { ok: true; file: ResolvedRemovalFile }
+  | { ok: false; action: PlannedAction };
+
 async function resolveRemovalFile({
   entry,
   staged,
   boundary,
-}: ResolveRemovalFileParams): Promise<PlannedAction | ResolvedRemovalFile> {
-  const target = { path: entry.path, label: REMOVAL_LABEL };
-  const viaLink = await resolveIfSymlink(entry.path);
-  const writePath = viaLink ?? entry.path;
-  const effectiveBoundary =
-    entry.kind === 'exclude-region' ? undefined : boundary;
-  const problem = await locationProblem({
-    path: writePath,
-    ...(effectiveBoundary ? { boundary: effectiveBoundary } : {}),
+}: ResolveRemovalFileParams): Promise<ResolvedRemovalOutcome> {
+  const inspection = await inspectTargetFile({
+    target: { path: entry.path, label: REMOVAL_LABEL, kind: entry.kind },
+    previous: entry,
+    staged,
+    ...(boundary ? { boundary } : {}),
   });
-  if (problem) {
-    return conflict({
-      target,
-      previous: entry,
-      reason: leftInPlace(problem),
-    });
+  if (!inspection.ok) return inspection;
+  if (inspection.current === null) {
+    return {
+      ok: false,
+      action: removal({ entry, change: NONE, reason: 'already gone' }),
+    };
   }
-  const kindProblem = fileKindProblem(await statIfExists(writePath));
-  if (kindProblem) {
-    return conflict({ target, previous: entry, reason: kindProblem });
-  }
-  const { current: existing } = await readStaged({ staged, path: writePath });
-  if (existing === null) {
-    return removal({ entry, change: NONE, reason: 'already gone' });
-  }
-  return { writePath, existing, viaLink: viaLink !== null };
+  return {
+    ok: true,
+    file: {
+      writePath: inspection.writePath,
+      existing: inspection.current,
+      viaLink: inspection.viaLink,
+    },
+  };
 }
 
 function planRegionRemoval(
@@ -255,15 +253,15 @@ export async function planRemoval({
     staged,
     ...(boundary ? { boundary } : {}),
   });
-  if ('status' in resolved) return resolved;
+  if (!resolved.ok) return resolved.action;
 
   switch (entry.kind) {
     case 'region':
     case 'exclude-region':
-      return planRegionRemoval(entry, resolved);
+      return planRegionRemoval(entry, resolved.file);
     case 'line':
-      return planLineRemoval(entry, resolved);
+      return planLineRemoval(entry, resolved.file);
     case 'json-array':
-      return planJsonArrayRemoval(entry, resolved);
+      return planJsonArrayRemoval(entry, resolved.file);
   }
 }

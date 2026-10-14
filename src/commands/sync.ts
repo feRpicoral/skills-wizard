@@ -1,10 +1,4 @@
-import {
-  requiredVariables,
-  selectBlocks,
-  withRequirements,
-} from '../blocks/compose.ts';
-import type { BlockLibrary, Scope } from '../blocks/library.ts';
-import { lookupVariables } from '../blocks/variables.ts';
+import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
@@ -12,12 +6,13 @@ import { buildPlan } from '../install/plan.ts';
 import { promptVariables } from '../prompts/selection.ts';
 import {
   confirmAndApply,
-  dropUnavailableBlocks,
   loadLibrary,
   type Location,
   notify,
   notifyLeftGit,
   readLocationManifest,
+  type ReconciledManifest,
+  reconcileManifest,
   resolveLocation,
   setVariablesCommand,
   warnTrackedFiles,
@@ -26,10 +21,9 @@ import {
 interface ResolveVariablesParams {
   ctx: Context;
   prompting: boolean;
-  library: BlockLibrary;
-  blocks: readonly string[];
   location: Location;
   recorded: Readonly<Record<string, string>>;
+  reconciled: ReconciledManifest;
 }
 
 // A block edited to use a new variable has no recorded value yet. Look it up
@@ -37,31 +31,64 @@ interface ResolveVariablesParams {
 async function resolveVariables({
   ctx,
   prompting,
-  library,
-  blocks,
   location,
   recorded,
+  reconciled: { missingVariables, foundVariables, unresolvedVariables },
 }: ResolveVariablesParams): Promise<Record<string, string>> {
-  const needed = requiredVariables(
-    selectBlocks(library, blocks, location.scope),
-  );
-  const missing = needed.filter((name) => !recorded[name]?.trim());
-  if (missing.length === 0) return { ...recorded };
-
-  const found = await lookupVariables(missing, recorded);
+  if (missingVariables.length === 0) return { ...recorded };
   if (prompting) {
-    return { ...recorded, ...(await promptVariables(missing, found)) };
+    return {
+      ...recorded,
+      ...(await promptVariables(missingVariables, foundVariables)),
+    };
   }
-  const unresolved = missing.filter((name) => !found[name]?.trim());
-  if (unresolved.length > 0) {
+  if (unresolvedVariables.length > 0) {
     throw new UsageError(
-      `The blocks now use variables with no recorded value: ${unresolved.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolved })}`,
+      `The blocks now use variables with no recorded value: ${unresolvedVariables.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolvedVariables })}`,
     );
   }
   ctx.print(
-    `Using looked-up values for new variables: ${missing.map((name) => `${name}=${found[name] ?? ''}`).join(', ')}`,
+    `Using looked-up values for new variables: ${missingVariables.map((name) => `${name}=${foundVariables[name] ?? ''}`).join(', ')}`,
   );
-  return found;
+  return foundVariables;
+}
+
+interface NotifyReconciledBlocksParams {
+  ctx: Context;
+  prompting: boolean;
+  scope: Scope;
+  reconciled: ReconciledManifest;
+}
+
+function notifyReconciledBlocks({
+  ctx,
+  prompting,
+  scope,
+  reconciled: { unknownBlocks, outOfScopeBlocks, addedBlocks },
+}: NotifyReconciledBlocksParams): void {
+  if (unknownBlocks.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer in the library were dropped: ${unknownBlocks.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  if (outOfScopeBlocks.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Blocks no longer available for ${scope} scope were dropped: ${outOfScopeBlocks.join(', ')}`,
+      level: 'warn',
+    });
+  }
+  if (addedBlocks.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Added required blocks: ${addedBlocks.join(', ')}`,
+    });
+  }
 }
 
 interface SyncOptions {
@@ -81,7 +108,7 @@ export async function runSync(
     scope,
     ...(projectDir !== undefined ? { projectDir } : {}),
   });
-  const previous = await readLocationManifest(ctx, prompting, location);
+  const previous = await readLocationManifest({ ctx, prompting, location });
   if (!previous) {
     throw new UsageError(
       `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init first.`,
@@ -89,42 +116,31 @@ export async function runSync(
   }
 
   const library = await loadLibrary(ctx);
-  const known = dropUnavailableBlocks({
-    ctx,
-    prompting,
+  const reconciled = await reconcileManifest({
+    manifest: previous,
     library,
-    ids: previous.blocks,
-    scope,
+    location,
+    lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
   });
-  const { ids: blocks, added } = withRequirements(library, known);
-  if (added.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Added required blocks: ${added.join(', ')}`,
-    });
-  }
+  notifyReconciledBlocks({ ctx, prompting, scope, reconciled });
   const variables = await resolveVariables({
     ctx,
     prompting,
-    library,
-    blocks,
     location,
     recorded: previous.variables,
+    reconciled,
   });
-  const recordedLocal = previous.options.keepLocal ?? false;
-  const keepLocal = recordedLocal && location.project?.git !== undefined;
-  if (location.project && recordedLocal && !keepLocal) {
-    notifyLeftGit(ctx, prompting, location.project.dir);
+  if (reconciled.leftGit && location.project) {
+    notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
   }
   const plan = await buildPlan({
     scope,
     selection: {
       tools: previous.tools,
-      blocks,
+      blocks: reconciled.blocks,
       variables,
       linkCommand: previous.options.linkCommand ?? false,
-      keepLocal,
+      keepLocal: reconciled.keepLocal,
     },
     library,
     paths: ctx.paths,
@@ -133,7 +149,7 @@ export async function runSync(
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
   });
-  if (keepLocal) {
+  if (reconciled.keepLocal) {
     await warnTrackedFiles({
       ctx,
       prompting,

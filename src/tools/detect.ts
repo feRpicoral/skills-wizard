@@ -34,15 +34,14 @@ export async function detectTools(
   paths: Paths,
   searchPath: readonly string[],
 ): Promise<ToolId[]> {
-  const detected: ToolId[] = [];
-  for (const id of TOOL_IDS) {
-    const { dirs, bins } = TOOLS[id].detect;
-    if (
-      (await anyExists(dirs(paths))) ||
-      (await onSearchPath({ bins, searchPath }))
-    ) {
-      detected.push(id);
-    }
-  }
-  return detected;
+  const results = await Promise.all(
+    TOOL_IDS.map(async (id) => {
+      const { dirs, bins } = TOOLS[id].detect;
+      const installed =
+        (await anyExists(dirs(paths))) ||
+        (await onSearchPath({ bins, searchPath }));
+      return installed ? id : null;
+    }),
+  );
+  return results.filter((id): id is ToolId => id !== null);
 }
