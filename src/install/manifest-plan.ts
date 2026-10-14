@@ -41,7 +41,6 @@ export function composeManifestMetadata({
     options:
       scope === 'global'
         ? {
-            linkCommand: selection.linkCommand,
             skillMode: selection.skillMode,
           }
         : {

@@ -277,11 +277,6 @@ test('global skill entries and the command link pass the check', () => {
           path: '/home/me/.claude/skills/notes',
           target: '/home/me/.agents/skills/notes',
         },
-        {
-          kind: 'symlink',
-          path: '/home/me/.local/bin/skills-wizard',
-          target: '/repo/src/cli.ts',
-        },
       ],
       folders: {
         copies: '/home/me/.agents/skills',

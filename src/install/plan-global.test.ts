@@ -1,13 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readlink,
-  realpath,
-  rm,
-  symlink,
-} from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -119,58 +111,6 @@ test('writes through a symlinked instructions file and keeps the link', async (t
     await readFile(real, 'utf8'),
     /^# Mine\n\n<!-- BEGIN:skills-wizard -->/,
   );
-});
-
-test('never replaces an unmanaged file at the command link path', async (t) => {
-  const paths = await tempPaths(t);
-  await writeFiles(paths.home, { '.local/bin/skills-wizard': 'mine\n' });
-
-  const plan = await installGlobal(paths, ['codex'], { linkCommand: true });
-
-  const link = plan.actions.find(
-    (action) => action.label === 'skills-wizard command',
-  );
-  assert.equal(link?.status, 'conflict');
-  assert.equal(
-    await readFile(join(paths.localBin, 'skills-wizard'), 'utf8'),
-    'mine\n',
-  );
-});
-
-test('links the command and removes the link once deselected', async (t) => {
-  const paths = await tempPaths(t);
-  const link = join(paths.localBin, 'skills-wizard');
-  await installGlobal(paths, ['codex'], { linkCommand: true });
-
-  await installGlobal(paths, ['codex'], { linkCommand: false });
-
-  await assert.rejects(lstat(link), { code: 'ENOENT' });
-});
-
-test('a still selected link that was retargeted is left alone', async (t) => {
-  const paths = await tempPaths(t);
-  const link = join(paths.localBin, 'skills-wizard');
-  await installGlobal(paths, ['codex'], { linkCommand: true });
-  await rm(link);
-  await symlink('/elsewhere/cli', link);
-
-  const plan = await installGlobal(paths, ['codex'], { linkCommand: true });
-
-  const action = plan.actions.find((entry) => entry.path === link);
-  assert.equal(action?.status, 'conflict');
-  assert.equal(await readlink(link), '/elsewhere/cli');
-});
-
-test('a still selected link replaced by a file is left alone', async (t) => {
-  const paths = await tempPaths(t);
-  const link = join(paths.localBin, 'skills-wizard');
-  await installGlobal(paths, ['codex'], { linkCommand: true });
-  await rm(link);
-  await writeFiles(paths.home, { '.local/bin/skills-wizard': 'mine\n' });
-
-  await installGlobal(paths, ['codex'], { linkCommand: true });
-
-  assert.equal(await readFile(link, 'utf8'), 'mine\n');
 });
 
 async function linkedDotfile(paths: Paths): Promise<string> {

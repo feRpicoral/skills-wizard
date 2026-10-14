@@ -37,7 +37,6 @@ test('resolvePaths honors tool home overrides', () => {
     codexHome: '/codex',
     geminiHome: '/home/me/.gemini',
     copilotHome: '/copilot',
-    localBin: '/home/me/.local/bin',
     applicationsDir: '/Applications',
   });
 });

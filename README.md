@@ -51,7 +51,7 @@ nvm use && corepack enable && yarn install
 yarn skills-wizard
 ```
 
-With no command, the CLI opens an interactive menu. The system-wide flow can link a `skills-wizard` command into `~/.local/bin`, so it runs from any directory once `~/.local/bin` is on your `PATH`.
+With no command, the CLI opens an interactive menu.
 
 Without a terminal, commands print the plan and only write when you pass `--yes`.
 

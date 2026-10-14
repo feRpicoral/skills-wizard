@@ -163,7 +163,6 @@ test('keep-local marks a conflict instead of crashing buildPlan when a relative 
       blocks: ['core/style'],
       skills: [],
       variables: {},
-      linkCommand: false,
       keepLocal: true,
       skillMode: 'copy',
     },

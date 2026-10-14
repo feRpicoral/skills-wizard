@@ -34,7 +34,6 @@ export interface Selection {
   skills: string[];
   mcp?: string[];
   variables: Record<string, string>;
-  linkCommand: boolean;
   keepLocal: boolean;
   skillMode: SkillMode;
   preset?: PresetChoice;
@@ -197,7 +196,7 @@ function globalSettingTargets(
 }
 
 function globalTargets(input: PlanInput): McpTargetsResult {
-  const { selection, paths, library, repoRoot } = input;
+  const { selection, paths, library } = input;
   const tools = orderedTools(selection.tools);
   const targets: Target[] = [];
   const warnings: string[] = [];
@@ -217,15 +216,6 @@ function globalTargets(input: PlanInput): McpTargetsResult {
       ...mcp.targets,
       ...globalSkillTargets(input),
     );
-  }
-
-  if (selection.linkCommand) {
-    targets.push({
-      kind: 'symlink',
-      path: join(paths.localBin, 'skills-wizard'),
-      target: join(repoRoot, 'src', 'cli.ts'),
-      label: 'skills-wizard command',
-    });
   }
 
   return { targets, warnings };
