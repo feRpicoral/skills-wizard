@@ -251,7 +251,7 @@ export async function planFindings({
     ) {
       findings.push({
         level: 'warn',
-        message: `${where} is out of date; run agents-config sync`,
+        message: `${where} is out of date; run skills-wizard sync`,
       });
     }
   }
@@ -293,28 +293,28 @@ export function manifestFindings({
   if (unknownPreset !== undefined) {
     findings.push({
       level: 'warn',
-      message: `Preset "${unknownPreset}" is no longer recognized; agents-config sync will drop it`,
+      message: `Preset "${unknownPreset}" is no longer recognized; skills-wizard sync will drop it`,
     });
   }
 
   if (unknownBlocks.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Blocks no longer in the library: ${unknownBlocks.join(', ')}; agents-config sync will drop them${replacementSkillHint(unknownBlocks)}`,
+      message: `Blocks no longer in the library: ${unknownBlocks.join(', ')}; skills-wizard sync will drop them${replacementSkillHint(unknownBlocks)}`,
     });
   }
 
   if (outOfScopeBlocks.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Blocks no longer available for ${scope} scope: ${outOfScopeBlocks.join(', ')}; agents-config sync will drop them${replacementSkillHint(outOfScopeBlocks)}`,
+      message: `Blocks no longer available for ${scope} scope: ${outOfScopeBlocks.join(', ')}; skills-wizard sync will drop them${replacementSkillHint(outOfScopeBlocks)}`,
     });
   }
 
   if (addedBlocks.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Required blocks missing from the install: ${addedBlocks.join(', ')}; agents-config sync will add them`,
+      message: `Required blocks missing from the install: ${addedBlocks.join(', ')}; skills-wizard sync will add them`,
     });
   }
 
@@ -323,7 +323,7 @@ export function manifestFindings({
   if (leftGit && location.project) {
     findings.push({
       level: 'warn',
-      message: `${displayPath({ path: location.project.dir, home: ctx.paths.home })} is no longer in a git repository; agents-config sync will stop keeping its files local`,
+      message: `${displayPath({ path: location.project.dir, home: ctx.paths.home })} is no longer in a git repository; skills-wizard sync will stop keeping its files local`,
     });
   }
 
@@ -332,7 +332,7 @@ export function manifestFindings({
   )) {
     findings.push({
       level: 'warn',
-      message: `The blocks now use ${name}, which has no recorded value; agents-config sync will record ${name}=${foundVariables[name] ?? ''}`,
+      message: `The blocks now use ${name}, which has no recorded value; skills-wizard sync will record ${name}=${foundVariables[name] ?? ''}`,
     });
   }
 

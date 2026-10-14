@@ -164,7 +164,7 @@ export function globalManifestPath(paths: Paths): string {
 }
 
 export function projectManifestPath(projectDir: string): string {
-  return join(projectDir, '.agents', 'agents-config.json');
+  return join(projectDir, '.agents', 'skills-wizard.json');
 }
 
 function resolveProjectEntry(

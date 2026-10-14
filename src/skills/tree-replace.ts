@@ -46,7 +46,7 @@ interface SiblingPathParams {
 function sibling({ path, purpose }: SiblingPathParams): string {
   return join(
     dirname(path),
-    `.${basename(path)}.agents-config-${process.pid}.${purpose}`,
+    `.${basename(path)}.skills-wizard-${process.pid}.${purpose}`,
   );
 }
 

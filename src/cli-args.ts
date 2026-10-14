@@ -375,7 +375,7 @@ export function parseMcpSubcommand(value: string | undefined): McpSubcommand {
   }
 
   throw new UsageError(
-    'Usage: agents-config mcp [list | add <name...> | remove <name...> | search <query>]',
+    'Usage: skills-wizard mcp [list | add <name...> | remove <name...> | search <query>]',
   );
 }
 

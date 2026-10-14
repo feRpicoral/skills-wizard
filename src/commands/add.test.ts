@@ -487,7 +487,7 @@ test('runAdd --install requires an existing install and rolls back catalog.yaml 
     }),
     (error: unknown) =>
       error instanceof UsageError &&
-      /Nothing recorded at .* run agents-config init --global first/.test(
+      /Nothing recorded at .* run skills-wizard init --global first/.test(
         error.message,
       ),
   );

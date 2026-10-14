@@ -1,17 +1,17 @@
 ---
 name: skill-author
 description: Designs, scaffolds, writes, and refactors Agent Skills (SKILL.md, references/, scripts/, assets/, and starter evals/) in skills/<name>. Use when the user asks to create a new skill, turn a workflow into a reusable skill, scaffold skills/<name>, write or tighten SKILL.md instructions and frontmatter descriptions, or split an oversized skill into progressive-disclosure reference files. Don't use for running benchmarks, grading eval runs, measuring trigger precision/recall, or writing evals for an existing skill (use skill-evaluator), or for editing global AGENTS.md blocks.
-compatibility: Uses the agents-config CLI when it is on PATH and falls back to manual checks without it
+compatibility: Uses the skills-wizard CLI when it is on PATH and falls back to manual checks without it
 ---
 
 # Skill Author
 
-Author spec-compliant, progressive-disclosure Agent Skills under `skills/<name>/` and validate them with `agents-config skill validate`.
+Author spec-compliant, progressive-disclosure Agent Skills under `skills/<name>/` and validate them with `skills-wizard skill validate`.
 
 ## Running the CLI
 
-- Run `agents-config skill <subcommand>` from the repository that holds `skills/<name>/`.
-- Inside the agents-config repository itself, run `yarn agents-config skill <subcommand>` instead.
+- Run `skills-wizard skill <subcommand>` from the repository that holds `skills/<name>/`.
+- Inside the skills-wizard repository itself, run `yarn skills-wizard skill <subcommand>` instead.
 - If neither command is available, say so, create the files by hand following the steps below, and check the result against the checklist in [references/spec-and-patterns.md](references/spec-and-patterns.md). Tell the user the validation was manual.
 
 ## Workflow
@@ -30,7 +30,7 @@ Author spec-compliant, progressive-disclosure Agent Skills under `skills/<name>/
 2. **Scaffold the skill directory**
    - Run the scaffolder from the repository root:
      ```bash
-     agents-config skill new <name> --template <basic|scripted|reference-heavy> --with-evals
+     skills-wizard skill new <name> --template <basic|scripted|reference-heavy> --with-evals
      ```
    - Naming rules (`name` frontmatter and folder name must match):
      - 1-64 characters, lowercase ASCII letters, digits, and single hyphens (`^[a-z0-9]+(-[a-z0-9]+)*$`).
@@ -72,7 +72,7 @@ Author spec-compliant, progressive-disclosure Agent Skills under `skills/<name>/
 7. **Validate before finishing**
    - Run strict spec validation:
      ```bash
-     agents-config skill validate skills/<name>
+     skills-wizard skill validate skills/<name>
      ```
    - Fix all reported errors and warnings before handing off to `skill-evaluator` for benchmarking.
 

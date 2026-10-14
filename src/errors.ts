@@ -1,41 +1,41 @@
-export class AgentsConfigError extends Error {
+export class SkillsWizardError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = new.target.name;
   }
 }
 
-export class UsageError extends AgentsConfigError {}
+export class UsageError extends SkillsWizardError {}
 
 export class MissingVariablesError extends UsageError {}
 
-export class CancelledError extends AgentsConfigError {}
+export class CancelledError extends SkillsWizardError {}
 
-export class EnvironmentError extends AgentsConfigError {}
+export class EnvironmentError extends SkillsWizardError {}
 
-export class BlockLibraryError extends AgentsConfigError {}
+export class BlockLibraryError extends SkillsWizardError {}
 
-export class CompositionError extends AgentsConfigError {}
+export class CompositionError extends SkillsWizardError {}
 
-export class FrontmatterError extends AgentsConfigError {}
+export class FrontmatterError extends SkillsWizardError {}
 
-export class ManagedRegionError extends AgentsConfigError {}
+export class ManagedRegionError extends SkillsWizardError {}
 
-export class JsonMergeError extends AgentsConfigError {}
+export class JsonMergeError extends SkillsWizardError {}
 
-export class ManifestError extends AgentsConfigError {}
+export class ManifestError extends SkillsWizardError {}
 
-export class RegistryError extends AgentsConfigError {}
+export class RegistryError extends SkillsWizardError {}
 
-export class ApplyError extends AgentsConfigError {}
+export class ApplyError extends SkillsWizardError {}
 
-export class UnsafeWriteError extends AgentsConfigError {}
+export class UnsafeWriteError extends SkillsWizardError {}
 
-export class CatalogError extends AgentsConfigError {}
+export class CatalogError extends SkillsWizardError {}
 
-export class SourceError extends AgentsConfigError {}
+export class SourceError extends SkillsWizardError {}
 
-export class SetupError extends AgentsConfigError {
+export class SetupError extends SkillsWizardError {
   readonly signal?: NodeJS.Signals;
 
   constructor(
@@ -49,13 +49,13 @@ export class SetupError extends AgentsConfigError {
   }
 }
 
-export class EvalError extends AgentsConfigError {}
+export class EvalError extends SkillsWizardError {}
 
-export class RunnerError extends AgentsConfigError {}
+export class RunnerError extends SkillsWizardError {}
 
-export class PresetError extends AgentsConfigError {}
+export class PresetError extends SkillsWizardError {}
 
-export class McpError extends AgentsConfigError {}
+export class McpError extends SkillsWizardError {}
 
 export function isSystemError(error: unknown): error is NodeJS.ErrnoException {
   return (

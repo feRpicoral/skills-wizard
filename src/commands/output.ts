@@ -75,5 +75,5 @@ export function setVariablesCommand({
     ? `--project ${shellPath(displayPath({ path: location.project.dir, home: ctx.paths.home }))}`
     : '--global';
   const variables = names.map((name) => `--var ${name}=<value>`).join(' ');
-  return `agents-config init ${target} ${variables}`;
+  return `skills-wizard init ${target} ${variables}`;
 }

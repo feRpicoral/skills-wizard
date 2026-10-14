@@ -67,7 +67,7 @@ test('a second run plans nothing, including the manifest', async (t) => {
   assert.equal(plan.manifestStatus, 'unchanged');
 });
 
-test('deselecting tools removes only the content agents-config added', async (t) => {
+test('deselecting tools removes only the content skills-wizard added', async (t) => {
   const paths = await tempPaths(t);
   await writeFiles(paths.home, {
     '.claude/CLAUDE.md': '# Mine\n',
@@ -117,29 +117,29 @@ test('writes through a symlinked instructions file and keeps the link', async (t
   );
   assert.match(
     await readFile(real, 'utf8'),
-    /^# Mine\n\n<!-- BEGIN:agents-config -->/,
+    /^# Mine\n\n<!-- BEGIN:skills-wizard -->/,
   );
 });
 
 test('never replaces an unmanaged file at the command link path', async (t) => {
   const paths = await tempPaths(t);
-  await writeFiles(paths.home, { '.local/bin/agents-config': 'mine\n' });
+  await writeFiles(paths.home, { '.local/bin/skills-wizard': 'mine\n' });
 
   const plan = await installGlobal(paths, ['codex'], { linkCommand: true });
 
   const link = plan.actions.find(
-    (action) => action.label === 'agents-config command',
+    (action) => action.label === 'skills-wizard command',
   );
   assert.equal(link?.status, 'conflict');
   assert.equal(
-    await readFile(join(paths.localBin, 'agents-config'), 'utf8'),
+    await readFile(join(paths.localBin, 'skills-wizard'), 'utf8'),
     'mine\n',
   );
 });
 
 test('links the command and removes the link once deselected', async (t) => {
   const paths = await tempPaths(t);
-  const link = join(paths.localBin, 'agents-config');
+  const link = join(paths.localBin, 'skills-wizard');
   await installGlobal(paths, ['codex'], { linkCommand: true });
 
   await installGlobal(paths, ['codex'], { linkCommand: false });
@@ -149,7 +149,7 @@ test('links the command and removes the link once deselected', async (t) => {
 
 test('a still selected link that was retargeted is left alone', async (t) => {
   const paths = await tempPaths(t);
-  const link = join(paths.localBin, 'agents-config');
+  const link = join(paths.localBin, 'skills-wizard');
   await installGlobal(paths, ['codex'], { linkCommand: true });
   await rm(link);
   await symlink('/elsewhere/cli', link);
@@ -163,10 +163,10 @@ test('a still selected link that was retargeted is left alone', async (t) => {
 
 test('a still selected link replaced by a file is left alone', async (t) => {
   const paths = await tempPaths(t);
-  const link = join(paths.localBin, 'agents-config');
+  const link = join(paths.localBin, 'skills-wizard');
   await installGlobal(paths, ['codex'], { linkCommand: true });
   await rm(link);
-  await writeFiles(paths.home, { '.local/bin/agents-config': 'mine\n' });
+  await writeFiles(paths.home, { '.local/bin/skills-wizard': 'mine\n' });
 
   await installGlobal(paths, ['codex'], { linkCommand: true });
 

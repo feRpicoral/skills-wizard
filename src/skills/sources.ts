@@ -166,7 +166,7 @@ async function clone(
   dir: string,
   spec: SourceSpec,
 ): Promise<void> {
-  const staging = `${dir}.agents-config-${process.pid}.tmp`;
+  const staging = `${dir}.skills-wizard-${process.pid}.tmp`;
   const pinnedCommit = spec.ref !== undefined && isCommitSha(spec.ref);
 
   await rm(staging, { recursive: true, force: true });
@@ -308,7 +308,7 @@ export async function snapshotSourceCheckout(
 
 /**
  * Restores a cached repository's sparse-checkout cone, detached `HEAD` commit,
- * and `.git/agents-config.json` state to a prior {@link SourceCheckoutSnapshot},
+ * and `.git/skills-wizard.json` state to a prior {@link SourceCheckoutSnapshot},
  * or deletes the cached checkout if `snapshot.existed` is `false`.
  */
 export async function restoreSourceCheckout(

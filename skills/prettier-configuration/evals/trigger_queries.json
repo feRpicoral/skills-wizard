@@ -76,7 +76,7 @@
     "should_trigger": false
   },
   {
-    "query": "Run yarn agents-config skill triggers eslint-configuration --split validation to measure trigger precision and recall.",
+    "query": "Run yarn skills-wizard skill triggers eslint-configuration --split validation to measure trigger precision and recall.",
     "should_trigger": false
   }
 ]

@@ -76,7 +76,7 @@
     "should_trigger": false
   },
   {
-    "query": "Run yarn agents-config skill validate skills/github-repo-setup to check the skill frontmatter against the spec.",
+    "query": "Run yarn skills-wizard skill validate skills/github-repo-setup to check the skill frontmatter against the spec.",
     "should_trigger": false
   }
 ]

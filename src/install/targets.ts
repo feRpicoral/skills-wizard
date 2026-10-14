@@ -222,9 +222,9 @@ function globalTargets(input: PlanInput): McpTargetsResult {
   if (selection.linkCommand) {
     targets.push({
       kind: 'symlink',
-      path: join(paths.localBin, 'agents-config'),
+      path: join(paths.localBin, 'skills-wizard'),
       target: join(repoRoot, 'src', 'cli.ts'),
-      label: 'agents-config command',
+      label: 'skills-wizard command',
     });
   }
 

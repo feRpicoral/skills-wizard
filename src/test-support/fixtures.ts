@@ -9,7 +9,7 @@ import { stringify } from 'yaml';
 import { type Paths, resolvePaths } from '../env.ts';
 
 export async function tempDir(t: TestContext): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'agents-config-test-'));
+  const dir = await mkdtemp(join(tmpdir(), 'skills-wizard-test-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }

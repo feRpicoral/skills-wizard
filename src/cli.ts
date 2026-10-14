@@ -32,12 +32,13 @@ import { runSync } from './commands/sync.ts';
 import { runUpdate } from './commands/update.ts';
 import { type Context, createContext } from './context.ts';
 import {
-  AgentsConfigError,
   CancelledError,
   isSystemError,
+  SkillsWizardError,
   UsageError,
 } from './errors.ts';
 import { PRESET_IDS } from './project/presets.ts';
+import { renderBanner } from './prompts/banner.ts';
 import { DISCOVER_SOURCES } from './skills/discover.ts';
 import { TOOL_IDS } from './tools/registry.ts';
 
@@ -45,7 +46,9 @@ export { isSystemError };
 
 const REPO_ROOT = join(import.meta.dirname, '..');
 
-const HELP = `Usage: agents-config [command] [options]
+const TAGLINE = 'Instructions, skills and MCP servers for every coding agent';
+
+const HELP = `Usage: skills-wizard [command] [options]
 
 Commands:
   init                      Install instructions and skills system-wide or into a project
@@ -110,7 +113,7 @@ Options:
   --split <name>        skill triggers: train, validation, or all (default: all)
   --threshold <0..1>    skill triggers: pass threshold for positive queries (default: 0.5)
   --var <name=value>    Block variable, repeatable
-  --link-command        Link the agents-config command into ~/.local/bin
+  --link-command        Link the skills-wizard command into ~/.local/bin
   --local               Project scope: keep the files out of git
   -y, --yes             Apply without asking (required without a terminal)
   --dry-run             Show the plan without writing anything
@@ -149,7 +152,7 @@ function dispatchCommand({
 
   switch (command) {
     case 'init': {
-      if (terminal && !yes) clack.intro('agents-config');
+      if (terminal && !yes) clack.intro('skills-wizard');
 
       const tools = parseTools(values.tools);
       const blocks = parseList(values.blocks);
@@ -179,7 +182,7 @@ function dispatchCommand({
       });
     }
     case 'add': {
-      if (terminal && !yes) clack.intro('agents-config');
+      if (terminal && !yes) clack.intro('skills-wizard');
 
       const tools = parseTools(values.tools);
       const source = parseDiscoverSource(values.source);
@@ -211,10 +214,10 @@ function dispatchCommand({
         ...projectOption,
       });
     case 'update':
-      if (terminal && !yes) clack.intro('agents-config');
+      if (terminal && !yes) clack.intro('skills-wizard');
       return runUpdate(ctx, { yes, dryRun });
     case 'adopt': {
-      if (terminal && !yes) clack.intro('agents-config');
+      if (terminal && !yes) clack.intro('skills-wizard');
 
       const tools = parseTools(values.tools);
       const fromFlag = parseList(values.skills) ?? [];
@@ -243,7 +246,7 @@ function dispatchCommand({
         subcommand !== 'list' &&
         (subcommand !== 'search' || Boolean(values.add))
       ) {
-        clack.intro('agents-config');
+        clack.intro('skills-wizard');
       }
 
       const tools = parseTools(values.tools);
@@ -278,15 +281,25 @@ async function main(argv: string[]): Promise<number> {
   const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
   if (parsed.kind === 'default') {
-    return terminal
-      ? runMenu(
-          createContext({
-            repoRoot: REPO_ROOT,
-            cwd: process.cwd(),
-            interactive: true,
-          }),
-        )
-      : (print(HELP), 0);
+    if (!terminal) return (print(HELP), 0);
+
+    const banner = renderBanner({
+      title: 'skills-wizard',
+      version: await version(),
+      tagline: TAGLINE,
+      // Honors NO_COLOR, FORCE_COLOR and the terminal's reported support.
+      colorDepth: process.stdout.getColorDepth(),
+      columns: process.stdout.columns,
+    });
+
+    return runMenu(
+      createContext({
+        repoRoot: REPO_ROOT,
+        cwd: process.cwd(),
+        interactive: true,
+      }),
+      { banner },
+    );
   }
 
   const ctx = createContext({
@@ -307,10 +320,10 @@ if (import.meta.main) {
       process.exitCode = 1;
     } else if (error instanceof UsageError) {
       process.stderr.write(
-        `${styleText('red', error.message)}\nRun agents-config --help for usage.\n`,
+        `${styleText('red', error.message)}\nRun skills-wizard --help for usage.\n`,
       );
       process.exitCode = 2;
-    } else if (error instanceof AgentsConfigError || isSystemError(error)) {
+    } else if (error instanceof SkillsWizardError || isSystemError(error)) {
       process.stderr.write(`${styleText('red', error.message)}\n`);
       process.exitCode = 1;
     } else {

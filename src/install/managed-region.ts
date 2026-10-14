@@ -23,8 +23,8 @@ interface Markers {
 }
 
 export const MARKDOWN_MARKERS: Markers = {
-  begin: '<!-- BEGIN:agents-config -->',
-  end: '<!-- END:agents-config -->',
+  begin: '<!-- BEGIN:skills-wizard -->',
+  end: '<!-- END:skills-wizard -->',
 };
 
 export function excludeMarkers(id: string): Markers {
@@ -35,8 +35,8 @@ export function excludeMarkers(id: string): Markers {
   }
 
   return {
-    begin: `# BEGIN:agents-config ${id}`,
-    end: `# END:agents-config ${id}`,
+    begin: `# BEGIN:skills-wizard ${id}`,
+    end: `# END:skills-wizard ${id}`,
   };
 }
 

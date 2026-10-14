@@ -54,7 +54,7 @@ export async function addCandidateToMcpCatalog({
 }: AddCandidateToMcpCatalogParams): Promise<number> {
   if (findMcpServer(catalog, chosen.server.name)) {
     throw new UsageError(
-      `MCP server "${chosen.server.name}" is already in mcp/servers.yaml; run agents-config mcp add ${chosen.server.name} to install it.`,
+      `MCP server "${chosen.server.name}" is already in mcp/servers.yaml; run skills-wizard mcp add ${chosen.server.name} to install it.`,
     );
   }
 
@@ -125,7 +125,7 @@ export async function runMcpSearch({
   const trimmed = query.trim();
   if (!trimmed) {
     throw new UsageError(
-      'Pass a search query, for example: agents-config mcp search sentry',
+      'Pass a search query, for example: skills-wizard mcp search sentry',
     );
   }
 

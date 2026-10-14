@@ -76,7 +76,7 @@
     "should_trigger": false
   },
   {
-    "query": "Install our global AGENTS.md instructions and skills for Claude Code using agents-config init.",
+    "query": "Install our global AGENTS.md instructions and skills for Claude Code using skills-wizard init.",
     "should_trigger": false
   }
 ]
