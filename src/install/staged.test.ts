@@ -9,12 +9,12 @@ import { readStaged, stageAction, type StagedContents } from './staged.ts';
 test('staging a link deletion leaves the file it points to in place', async (t) => {
   const dir = await realpath(await tempDir(t));
   await writeFiles(dir, { 'cli.ts': 'run\n' });
-  await symlink(join(dir, 'cli.ts'), join(dir, 'agents-config'));
+  await symlink(join(dir, 'cli.ts'), join(dir, 'skills-wizard'));
   const staged: StagedContents = new Map();
   await stageAction({
     staged,
     action: {
-      path: join(dir, 'agents-config'),
+      path: join(dir, 'skills-wizard'),
       label: 'no longer selected',
       status: 'remove',
       change: { type: 'delete' },

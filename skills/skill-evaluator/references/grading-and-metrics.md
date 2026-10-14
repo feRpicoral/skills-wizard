@@ -79,7 +79,7 @@
 
 ## 4. Benchmark and Trigger Artifacts
 
-Results are stored outside the repository under `~/.agents/agents-config/evals/<skill>/`. Both artifacts carry `"schema_version": 1` at the top level.
+Results are stored outside the repository under `~/.agents/skills-wizard/evals/<skill>/`. Both artifacts carry `"schema_version": 1` at the top level.
 
 - `iteration-<N>/benchmark.json`:
   - `metadata`: `skill_name`, `skill_path`, `runner`, `timestamp`, `runs_per_configuration`, `compare_ref`, `compare_skills` (optional array of competing skill names when `--compare <skill-a>,<skill-b>` ran), `baseline_status` (`"clean"`, `"possibly contaminated"`, or `"skipped"`), `with_skill_contaminated` (optional boolean), `warnings`.

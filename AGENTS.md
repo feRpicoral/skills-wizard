@@ -1,14 +1,16 @@
-# agents-config
+# skills-wizard
 
 A CLI and the content it installs: `AGENTS.md` instructions, skills, and curated MCP server configurations for Claude Code, Codex, Gemini CLI, Antigravity (IDE and `agy`) and Copilot.
 
 ## Commands
 
 - Setup: `nvm use && corepack enable && yarn install`
-- Run the CLI from source: `yarn agents-config [command]`. Node 24 strips the TypeScript types at runtime, so there is no build step.
-- Validate and add skills: `yarn agents-config skill validate [path...]`, `yarn agents-config skill validate --catalog`, `yarn agents-config add [query|url]`
-- Scaffold and evaluate skills: `yarn agents-config skill new <name> [--with-evals]`, `yarn agents-config skill eval <name> [--compare <ref>|<skill-a>,<skill-b>]`, `yarn agents-config skill triggers <name>`, `yarn agents-config skill report <name> [iteration-dir]`
-- Manage and search MCP servers: `yarn agents-config mcp [list]`, `yarn agents-config mcp add <name...>`, `yarn agents-config mcp remove <name...>`, `yarn agents-config mcp search <query> [--official] [--limit <n>] [--add]`
+- Run the CLI from source: `yarn skills-wizard [command]`. Node 24 strips the TypeScript types at runtime, so development has no build step.
+- Validate and add skills: `yarn skills-wizard skill validate [path...]`, `yarn skills-wizard skill validate --catalog`, `yarn skills-wizard add [query|url]`
+- Scaffold and evaluate skills: `yarn skills-wizard skill new <name> [--with-evals]`, `yarn skills-wizard skill eval <name> [--compare <ref>|<skill-a>,<skill-b>]`, `yarn skills-wizard skill triggers <name>`, `yarn skills-wizard skill report <name> [iteration-dir]`
+- Manage and search MCP servers: `yarn skills-wizard mcp [list]`, `yarn skills-wizard mcp add <name...>`, `yarn skills-wizard mcp remove <name...>`, `yarn skills-wizard mcp search <query> [--official] [--limit <n>] [--add]`
+- Regenerate the README screenshot after changing the banner or main menu: `yarn readme:screenshot`
+- Build the npm package output (`dist/`, also run by `prepack`): `yarn build`. Node does not strip types under `node_modules`, so the published `bin` points at compiled JavaScript.
 - Checks before pushing: `yarn lint && yarn typecheck && yarn test`
 
 ## Layout
@@ -26,7 +28,8 @@ A CLI and the content it installs: `AGENTS.md` instructions, skills, and curated
 - `src/install/`: planning and applying file and skill changes (managed regions, import lines, JSON merges, MCP JSON/TOML merges, symlinks, skill trees).
 - `src/tools/registry.ts`: where each supported tool reads its instructions and skills.
 - `src/state/`: manifests and the recorded projects registry (`projects.json`).
-- `src/commands/` and `src/prompts/`: CLI commands (`init`, `sync`, `update`, `add`, `adopt`, `doctor`, `skill`, `mcp`) and interactive prompts.
+- `src/commands/` and `src/prompts/`: CLI commands (`init`, `sync`, `update`, `add`, `adopt`, `doctor`, `skill`, `mcp`), the interactive menu loop (`menu.ts`), interactive prompts and the launch banner (`banner.ts`).
+- `scripts/`: repository maintenance scripts (`readme-screenshot.ts` renders `docs/assets/cli.svg`).
 - `docs/`: architecture and per-tool reference.
 
 ## Conventions
@@ -36,7 +39,7 @@ A CLI and the content it installs: `AGENTS.md` instructions, skills, and curated
 - Never modify or delete a path that is not recorded in a manifest.
 - Block bodies start with an H2 heading, except `core/identity`. Block text becomes installed instructions, so edit it deliberately. Prettier ignores `blocks/` to keep that text exact.
 - Every skill in `catalog.yaml` from the same repository must share one `ref`, and its upstream `SKILL.md` frontmatter `name` must match the catalog `name`.
-- Add first-party skills under `skills/<name>/` (`yarn agents-config skill new <name> --with-evals`), validate with `yarn agents-config skill validate skills/<name>`, and evaluate with `yarn agents-config skill eval <name>` and `yarn agents-config skill triggers <name>`.
-- First-party skill instructions call `agents-config skill ...`; `yarn agents-config` applies only inside this repository.
+- Add first-party skills under `skills/<name>/` (`yarn skills-wizard skill new <name> --with-evals`), validate with `yarn skills-wizard skill validate skills/<name>`, and evaluate with `yarn skills-wizard skill eval <name>` and `yarn skills-wizard skill triggers <name>`.
+- First-party skill instructions call `skills-wizard skill ...`; `yarn skills-wizard` applies only inside this repository.
 - Code, docs, tests and commits reference only public tools and paths.
 - Tests use `tempPaths`, `tempDir` and local bare git repositories (`createUpstream`) and never touch the network or the real home directory.

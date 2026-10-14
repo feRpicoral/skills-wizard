@@ -207,7 +207,7 @@ export async function runSkillNewCommand(
 ): Promise<number> {
   if (paths.length !== 1 || !paths[0]) {
     throw new UsageError(
-      'Usage: agents-config skill new <name> [--template basic|scripted|reference-heavy] [--with-evals]',
+      'Usage: skills-wizard skill new <name> [--template basic|scripted|reference-heavy] [--with-evals]',
     );
   }
 

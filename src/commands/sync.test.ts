@@ -86,7 +86,7 @@ test('sync stops with the init command when a block gains a variable it cannot l
     runSync(createCtx().ctx, { scope: 'global', yes: true, dryRun: false }),
     (error: unknown) =>
       error instanceof UsageError &&
-      /githubUsername.*agents-config init --global --var githubUsername=<value>/.test(
+      /githubUsername.*skills-wizard init --global --var githubUsername=<value>/.test(
         error.message,
       ),
   );
@@ -162,7 +162,7 @@ test('sync without a recorded install is a usage error', async (t) => {
     runSync(createCtx().ctx, { scope: 'global', yes: true, dryRun: false }),
     (error: unknown) =>
       error instanceof UsageError &&
-      /run agents-config init first/.test(error.message),
+      /run skills-wizard init first/.test(error.message),
   );
 });
 

@@ -42,14 +42,14 @@ function directory(env: Environment, name: string): string | undefined {
 export function resolvePaths(env: Environment = process.env): Paths {
   const home = directory(env, 'HOME') ?? homedir();
   const cache = directory(env, 'XDG_CACHE_HOME') ?? join(home, '.cache');
-  const stateDir = join(home, '.agents', 'agents-config');
+  const stateDir = join(home, '.agents', 'skills-wizard');
 
   return {
     home,
     stateDir,
     evalsDir: join(stateDir, 'evals'),
     skillsDir: join(home, '.agents', 'skills'),
-    sourcesDir: join(cache, 'agents-config', 'sources'),
+    sourcesDir: join(cache, 'skills-wizard', 'sources'),
     claudeHome: directory(env, 'CLAUDE_CONFIG_DIR') ?? join(home, '.claude'),
     codexHome: directory(env, 'CODEX_HOME') ?? join(home, '.codex'),
     geminiHome: join(home, '.gemini'),

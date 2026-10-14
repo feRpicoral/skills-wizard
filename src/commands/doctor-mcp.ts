@@ -32,7 +32,7 @@ export async function resolveDoctorMcp(
   if (unknownMcp.length > 0) {
     findings.push({
       level: 'warn',
-      message: `MCP servers no longer in mcp/servers.yaml: ${unknownMcp.join(', ')}; agents-config sync will remove them`,
+      message: `MCP servers no longer in mcp/servers.yaml: ${unknownMcp.join(', ')}; skills-wizard sync will remove them`,
     });
   }
 
@@ -45,7 +45,7 @@ export async function resolveDoctorMcp(
   if (outOfScopeMcp.length > 0) {
     findings.push({
       level: 'warn',
-      message: `MCP servers no longer available for ${scope} scope: ${outOfScopeMcp.join(', ')}; agents-config sync will remove them`,
+      message: `MCP servers no longer available for ${scope} scope: ${outOfScopeMcp.join(', ')}; skills-wizard sync will remove them`,
     });
   }
 

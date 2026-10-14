@@ -14,7 +14,7 @@ import { tempDir } from '../test-support/fixtures.ts';
 import { runInit } from './init.ts';
 
 function projectsPath(home: string): string {
-  return join(home, '.agents', 'agents-config', 'projects.json');
+  return join(home, '.agents', 'skills-wizard', 'projects.json');
 }
 
 test('init --dry-run prints the plan and writes nothing', async (t) => {
@@ -222,7 +222,7 @@ test('init drops keep-local with a notice once the project leaves git', async (t
   assert.equal(code, 0);
   assert.match(output(), /no longer in a git repository/);
   assert.match(
-    await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
+    await readFile(join(project, '.agents', 'skills-wizard.json'), 'utf8'),
     /"keepLocal": false/,
   );
 });

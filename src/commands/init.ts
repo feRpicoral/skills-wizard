@@ -446,7 +446,7 @@ export async function runInit(
     notify({
       ctx,
       prompting,
-      message: `${displayPath({ path: ctx.paths.localBin, home: ctx.paths.home })} is not on your PATH; add it to run agents-config from any directory.`,
+      message: `${displayPath({ path: ctx.paths.localBin, home: ctx.paths.home })} is not on your PATH; add it to run skills-wizard from any directory.`,
       level: 'warn',
     });
   }

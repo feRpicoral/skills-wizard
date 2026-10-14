@@ -76,14 +76,14 @@ export async function resolveDoctorSkills(
   if (unknownSkills.length > 0) {
     findings.push({
       level: 'warn',
-      message: `Skills no longer in catalog.yaml or skills/: ${unknownSkills.join(', ')}; agents-config sync will remove them`,
+      message: `Skills no longer in catalog.yaml or skills/: ${unknownSkills.join(', ')}; skills-wizard sync will remove them`,
     });
   }
 
   if (outOfScopeSkills.length > 0 && scope !== undefined) {
     findings.push({
       level: 'warn',
-      message: `Skills no longer available for ${scope} scope: ${outOfScopeSkills.join(', ')}; agents-config sync will remove them`,
+      message: `Skills no longer available for ${scope} scope: ${outOfScopeSkills.join(', ')}; skills-wizard sync will remove them`,
     });
   }
 

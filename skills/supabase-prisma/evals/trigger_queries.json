@@ -72,7 +72,7 @@
     "should_trigger": false
   },
   {
-    "query": "Create a new first-party skill in skills/drizzle-migrations using yarn agents-config skill new.",
+    "query": "Create a new first-party skill in skills/drizzle-migrations using yarn skills-wizard skill new.",
     "should_trigger": false
   },
   {

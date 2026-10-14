@@ -1,7 +1,7 @@
 import * as clack from '@clack/prompts';
 
 import type { Context } from '../context.ts';
-import { AgentsConfigError, isSystemError } from '../errors.ts';
+import { isSystemError, SkillsWizardError } from '../errors.ts';
 import { applyPlan } from '../install/apply.ts';
 import {
   conflicts,
@@ -46,7 +46,7 @@ async function trackProject(
       await forgetProject(ctx.paths, plan.projectDir);
     }
   } catch (error) {
-    if (!(error instanceof AgentsConfigError) && !isSystemError(error)) {
+    if (!(error instanceof SkillsWizardError) && !isSystemError(error)) {
       throw error;
     }
 

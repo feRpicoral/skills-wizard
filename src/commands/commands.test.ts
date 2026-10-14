@@ -214,7 +214,7 @@ test('adopt asks for a system-wide init first and writes nothing without one', a
     runAdopt(ctx, { names: ['pretty-mermaid'], yes: true, dryRun: false }),
     (error: unknown) =>
       error instanceof UsageError &&
-      /run agents-config init --global first/.test(error.message),
+      /run skills-wizard init --global first/.test(error.message),
   );
 
   assert.match(

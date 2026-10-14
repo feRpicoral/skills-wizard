@@ -9,8 +9,8 @@ import {
   upsertRegion,
 } from './managed-region.ts';
 
-const BEGIN = '<!-- BEGIN:agents-config -->';
-const END = '<!-- END:agents-config -->';
+const BEGIN = '<!-- BEGIN:skills-wizard -->';
+const END = '<!-- END:skills-wizard -->';
 
 test('upsertRegion creates a file with the preamble and region', () => {
   const content = upsertRegion({
@@ -91,7 +91,7 @@ test('exclude markers are scoped to one project', () => {
 
   assert.equal(
     both,
-    '*.log\n\n# BEGIN:agents-config app\n/app/AGENTS.md\n# END:agents-config app\n\n# BEGIN:agents-config web\n/web/AGENTS.md\n# END:agents-config web\n',
+    '*.log\n\n# BEGIN:skills-wizard app\n/app/AGENTS.md\n# END:skills-wizard app\n\n# BEGIN:skills-wizard web\n/web/AGENTS.md\n# END:skills-wizard web\n',
   );
 });
 

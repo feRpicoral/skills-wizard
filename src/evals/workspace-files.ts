@@ -308,7 +308,7 @@ export async function prepareComparedSkillSetups(
   for (const [name, item] of compareSkillsByName) {
     if (!item.setup) continue;
 
-    const tempRoot = await mkdtemp(join(tmpdir(), 'agents-config-compare-'));
+    const tempRoot = await mkdtemp(join(tmpdir(), 'skills-wizard-compare-'));
 
     tempDirs.push(tempRoot);
     const preparedDir = join(tempRoot, item.skillName);

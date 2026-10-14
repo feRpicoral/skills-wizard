@@ -4,3 +4,4 @@ coverage/
 yarn.lock
 blocks/
 **/evals/files/
+dist/

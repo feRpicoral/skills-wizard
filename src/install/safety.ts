@@ -43,9 +43,9 @@ export interface TargetLabel {
 
 export const NONE: Change = { type: 'none' };
 export const REMOVAL_LABEL = 'no longer selected';
-export const CHANGED_OUTSIDE = 'changed outside agents-config, left in place';
+export const CHANGED_OUTSIDE = 'changed outside skills-wizard, left in place';
 export const NOTHING_LEFT = 'nothing left to remove';
-export const NOT_MANAGED = 'exists and is not managed by agents-config';
+export const NOT_MANAGED = 'exists and is not managed by skills-wizard';
 export const SOURCE_UNAVAILABLE = 'source unavailable, left as it is';
 
 const LOCATION_PROBLEMS = {

@@ -229,7 +229,7 @@ test('a target that is not a regular file is a conflict', async (t) => {
 test('a manifest that cannot be written names the changes it could not record', async (t) => {
   const paths = await tempPaths(t);
   await writeFiles(paths.home, {
-    '.agents/agents-config': 'not a directory\n',
+    '.agents/skills-wizard': 'not a directory\n',
   });
 
   await assert.rejects(installGlobal(paths, ['copilot']), {

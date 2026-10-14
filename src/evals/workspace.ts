@@ -174,7 +174,7 @@ async function initWorkspaceGit({
     args: [
       ...WORKSPACE_GIT_CONFIG,
       '-c',
-      'user.name=agents-config',
+      'user.name=skills-wizard',
       '-c',
       'user.email=eval@example.com',
       '-c',
