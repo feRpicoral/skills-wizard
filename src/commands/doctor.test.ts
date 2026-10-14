@@ -22,6 +22,7 @@ test('init installs and doctor then finds no problems', async (t) => {
   const installCode = await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -39,6 +40,7 @@ test('doctor warns that sync will drop blocks that left the library', async (t) 
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -58,6 +60,7 @@ test('doctor reports a variable a block gained without crashing', async (t) => {
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -79,6 +82,7 @@ test('doctor still reports conflicts when a gained variable has no value', async
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -104,6 +108,7 @@ test('doctor says sync will record a gained variable it can look up', async (t) 
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -127,6 +132,7 @@ test('doctor warns about every extra Gemini file Antigravity loads', async (t) =
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['antigravity'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -155,6 +161,7 @@ test('doctor warns Gemini CLI users only about ~/.gemini/GEMINI.md', async (t) =
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['gemini-cli'] satisfies ToolId[],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -245,6 +252,7 @@ test('doctor counts lines accurately when a file has no trailing newline', async
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['claude-code'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,

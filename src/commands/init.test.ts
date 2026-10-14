@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, readFile, rm, symlink } from 'node:fs/promises';
+import { lstat, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 
@@ -13,6 +13,10 @@ import {
 import { tempDir } from '../test-support/fixtures.ts';
 import { runInit } from './init.ts';
 
+function projectsPath(home: string): string {
+  return join(home, '.agents', 'agents-config', 'projects.json');
+}
+
 test('init --dry-run prints the plan and writes nothing', async (t) => {
   const { home, createCtx } = await commandSandbox(t);
   const { ctx, output } = createCtx();
@@ -20,6 +24,7 @@ test('init --dry-run prints the plan and writes nothing', async (t) => {
   const code = await runInit(ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: true,
@@ -37,6 +42,7 @@ test('init without a terminal and without --yes writes nothing', async (t) => {
   const code = await runInit(ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: false,
     dryRun: false,
@@ -54,6 +60,7 @@ test('init warns when ~/.local/bin is not on PATH after linking the command', as
   const code = await runInit(ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     linkCommand: true,
     yes: true,
@@ -73,6 +80,7 @@ test('init accepts ~/.local/bin on PATH written with a trailing slash', async (t
   const code = await runInit(ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     linkCommand: true,
     yes: true,
@@ -88,6 +96,7 @@ test('an empty tool list removes everything that was installed', async (t) => {
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -113,6 +122,7 @@ test('init drops recorded blocks that left the library and still installs', asyn
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -215,4 +225,30 @@ test('init drops keep-local with a notice once the project leaves git', async (t
     await readFile(join(project, '.agents', 'agents-config.json'), 'utf8'),
     /"keepLocal": false/,
   );
+});
+
+test('a project install is recorded and removing it drops the record', async (t) => {
+  const { home, createCtx } = await commandSandbox(t);
+  const project = await realpath(await tempDir(t));
+  await runInit(createCtx().ctx, {
+    scope: 'project',
+    projectDir: project,
+    tools: ['codex'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  const recorded = await readFile(projectsPath(home), 'utf8');
+
+  await runInit(createCtx().ctx, {
+    scope: 'project',
+    projectDir: project,
+    tools: [],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+
+  assert.deepEqual(JSON.parse(recorded), { version: 1, projects: [project] });
+  await assert.rejects(lstat(projectsPath(home)), { code: 'ENOENT' });
 });

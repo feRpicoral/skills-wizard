@@ -6,6 +6,8 @@ import { EnvironmentError } from './errors.ts';
 export interface Paths {
   home: string;
   stateDir: string;
+  skillsDir: string;
+  sourcesDir: string;
   claudeHome: string;
   codexHome: string;
   geminiHome: string;
@@ -14,7 +16,7 @@ export interface Paths {
   applicationsDir: string;
 }
 
-type Environment = Readonly<Record<string, string | undefined>>;
+export type Environment = Readonly<Record<string, string | undefined>>;
 
 function directory(env: Environment, name: string): string | undefined {
   const value = env[name]?.trim();
@@ -29,10 +31,13 @@ function directory(env: Environment, name: string): string | undefined {
 
 export function resolvePaths(env: Environment = process.env): Paths {
   const home = directory(env, 'HOME') ?? homedir();
+  const cache = directory(env, 'XDG_CACHE_HOME') ?? join(home, '.cache');
 
   return {
     home,
     stateDir: join(home, '.agents', 'agents-config'),
+    skillsDir: join(home, '.agents', 'skills'),
+    sourcesDir: join(cache, 'agents-config', 'sources'),
     claudeHome: directory(env, 'CLAUDE_CONFIG_DIR') ?? join(home, '.claude'),
     codexHome: directory(env, 'CODEX_HOME') ?? join(home, '.codex'),
     geminiHome: join(home, '.gemini'),
@@ -44,4 +49,43 @@ export function resolvePaths(env: Environment = process.env): Paths {
 
 export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
+}
+
+// What `git rev-parse --local-env-vars` lists, plus GIT_NAMESPACE and the
+// GIT_CONFIG_KEY_n/VALUE_n pairs. This also drops `-c` settings a caller
+// passed (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT); put settings the cache
+// needs, such as proxies or extra headers, in the global git config instead.
+// User-level settings such as GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM are
+// kept.
+const REPOSITORY_GIT_VARIABLES = new Set([
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_CONFIG',
+  'GIT_CONFIG_COUNT',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_DIR',
+  'GIT_GRAFT_FILE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_NAMESPACE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_PREFIX',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_SHALLOW_FILE',
+  'GIT_WORK_TREE',
+]);
+const REPOSITORY_GIT_PATTERN = /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/;
+
+function isRepositoryGitVariable(name: string): boolean {
+  return (
+    REPOSITORY_GIT_VARIABLES.has(name) || REPOSITORY_GIT_PATTERN.test(name)
+  );
+}
+
+export function gitEnvironment(env: Environment = process.env): Environment {
+  const kept = Object.entries(env).filter(
+    ([name]) => !isRepositoryGitVariable(name),
+  );
+  return { ...Object.fromEntries(kept), GIT_TERMINAL_PROMPT: '0' };
 }

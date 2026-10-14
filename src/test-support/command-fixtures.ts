@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { type Context, createContext } from '../context.ts';
 import type { Paths } from '../env.ts';
 import { tempPaths, tempSearchPath } from './fixtures.ts';
+import { isolatedGitEnv } from './git.ts';
 
 export const run = promisify(execFile);
 export const REPO_ROOT = join(import.meta.dirname, '..', '..');
@@ -39,6 +40,10 @@ export async function commandSandbox(t: TestContext): Promise<CommandSandbox> {
         interactive: false,
         paths,
         searchPath,
+        sources: {
+          url: () => 'file:///nowhere.git',
+          env: isolatedGitEnv(paths.home),
+        },
         print: (line = '') => {
           lines.push(line);
         },

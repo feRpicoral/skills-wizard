@@ -3,25 +3,40 @@ import { join, relative } from 'node:path';
 import { composeGlobal, composeProject } from '../blocks/compose.ts';
 import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
+import type { SkillMode, SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
 import {
   orderedTools,
   type ToolDefinition,
   type ToolId,
 } from '../tools/registry.ts';
+import {
+  globalSkillTargets,
+  projectSkillTargets,
+  skillFolders,
+} from './skill-targets.ts';
+
+export { skillFolders };
 
 export interface Selection {
   tools: ToolId[];
   blocks: string[];
+  skills: string[];
   variables: Record<string, string>;
   linkCommand: boolean;
   keepLocal: boolean;
+  skillMode: SkillMode;
 }
 
 export interface ProjectContext {
   dir: string;
   title: string;
   git?: { root: string; excludePath: string };
+}
+
+export interface Adoption {
+  names: ReadonlySet<string>;
+  backupDir: string;
 }
 
 export interface PlanInput {
@@ -33,6 +48,8 @@ export interface PlanInput {
   previous: Manifest | null;
   manifestPath: string;
   project?: ProjectContext;
+  skillSources?: ReadonlyMap<string, SkillSource>;
+  adopt?: Adoption;
 }
 
 export interface RegionTarget {
@@ -72,6 +89,18 @@ export interface SymlinkTarget {
   path: string;
   target: string;
   label: string;
+  skill?: string;
+  backup?: string;
+}
+
+export interface SkillTarget {
+  kind: 'skill';
+  path: string;
+  name: string;
+  label: string;
+  source: SkillSource | null;
+  mode: SkillMode;
+  backup?: string;
 }
 
 export type Target =
@@ -79,9 +108,10 @@ export type Target =
   | ExcludeRegionTarget
   | LineTarget
   | JsonArrayTarget
-  | SymlinkTarget;
+  | SymlinkTarget
+  | SkillTarget;
 
-export type FileTarget = Exclude<Target, SymlinkTarget>;
+export type FileTarget = Exclude<Target, SymlinkTarget | SkillTarget>;
 
 interface TargetKey {
   kind: string;
@@ -129,17 +159,13 @@ function globalSettingTargets(
   });
 }
 
-type GlobalTargetsParams = Pick<
-  PlanInput,
-  'selection' | 'paths' | 'library' | 'repoRoot'
->;
-
 function globalTargets({
   selection,
   paths,
   library,
   repoRoot,
-}: GlobalTargetsParams): Target[] {
+  ...rest
+}: PlanInput): Target[] {
   const tools = orderedTools(selection.tools);
   const targets: Target[] = [];
 
@@ -148,6 +174,7 @@ function globalTargets({
     targets.push(
       ...globalInstructionTargets(tools, body, paths),
       ...globalSettingTargets(tools, paths),
+      ...globalSkillTargets({ selection, paths, library, repoRoot, ...rest }),
     );
   }
 
@@ -225,17 +252,13 @@ function gitExcludeTarget({
   };
 }
 
-type ProjectTargetsParams = Pick<
-  PlanInput,
-  'selection' | 'library' | 'project' | 'manifestPath'
->;
-
 function projectTargets({
   selection,
   library,
   project,
   manifestPath,
-}: ProjectTargetsParams): Target[] {
+  ...rest
+}: PlanInput): Target[] {
   const tools = orderedTools(selection.tools);
   if (!project || tools.length === 0) return [];
 
@@ -253,6 +276,10 @@ function projectTargets({
       projectDir: project.dir,
       instructionsPath,
     }),
+    ...projectSkillTargets(
+      { selection, library, project, manifestPath, ...rest },
+      project,
+    ),
   ];
 
   if (selection.keepLocal && project.git) {
@@ -269,21 +296,8 @@ function projectTargets({
   return targets;
 }
 
-export function targetsForPlan({
-  scope,
-  selection,
-  library,
-  paths,
-  repoRoot,
-  manifestPath,
-  project,
-}: PlanInput): Target[] {
+export function targetsForPlan({ scope, ...rest }: PlanInput): Target[] {
   return scope === 'global'
-    ? globalTargets({ selection, paths, library, repoRoot })
-    : projectTargets({
-        selection,
-        library,
-        manifestPath,
-        ...(project ? { project } : {}),
-      });
+    ? globalTargets({ scope, ...rest })
+    : projectTargets({ scope, ...rest });
 }

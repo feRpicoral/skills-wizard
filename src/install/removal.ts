@@ -1,3 +1,5 @@
+import { dirname } from 'node:path';
+
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import { readSymlink } from './fs.ts';
@@ -17,15 +19,23 @@ import {
   CHANGED_OUTSIDE,
   conflict,
   inspectTargetFile,
+  leftInPlace,
+  locationProblem,
   NONE,
   NOTHING_LEFT,
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
+import {
+  installedState,
+  SHARED_FOLDER,
+  sharesSkillsFolder,
+  type SkillEntry,
+} from './skill-actions.ts';
 import type { StagedContents } from './staged.ts';
 
 type SymlinkEntry = Extract<ManifestEntry, { kind: 'symlink' }>;
-type FileEntry = Exclude<ManifestEntry, SymlinkEntry>;
+type FileEntry = Exclude<ManifestEntry, SymlinkEntry | SkillEntry>;
 type RegionEntry = Extract<FileEntry, { kind: 'region' | 'exclude-region' }>;
 type LineEntry = Extract<FileEntry, { kind: 'line' }>;
 type JsonArrayEntry = Extract<FileEntry, { kind: 'json-array' }>;
@@ -99,6 +109,17 @@ async function planSymlinkRemoval(entry: SymlinkEntry): Promise<PlannedAction> {
     return removal({ entry, change: { type: 'delete' } });
   }
   return removal({ entry, change: NONE, reason: CHANGED_OUTSIDE });
+}
+
+async function planSkillRemoval(entry: SkillEntry): Promise<PlannedAction> {
+  const state = await installedState(entry.path, entry);
+  if (state === 'missing') {
+    return removal({ entry, change: NONE, reason: 'already gone' });
+  }
+  if (state !== 'owned') {
+    return removal({ entry, change: NONE, reason: CHANGED_OUTSIDE });
+  }
+  return removal({ entry, change: { type: 'delete-tree' } });
 }
 
 interface ResolveRemovalFileParams {
@@ -245,7 +266,24 @@ export async function planRemoval({
       reason: `the same file is still used for ${sharedWith}`,
     });
   }
-  if (entry.kind === 'symlink') {
+  if (entry.kind === 'symlink' || entry.kind === 'skill') {
+    if (boundary !== undefined) {
+      const problem = await locationProblem({
+        path: dirname(entry.path),
+        boundary,
+      });
+      if (problem) {
+        return conflict({
+          target: { path: entry.path, label: REMOVAL_LABEL },
+          previous: entry,
+          reason: leftInPlace(problem),
+        });
+      }
+    }
+    if (entry.kind === 'skill') return planSkillRemoval(entry);
+    if (await sharesSkillsFolder(entry)) {
+      return removal({ entry, change: NONE, reason: SHARED_FOLDER });
+    }
     return planSymlinkRemoval(entry);
   }
   const resolved = await resolveRemovalFile({

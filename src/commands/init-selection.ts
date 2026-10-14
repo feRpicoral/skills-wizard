@@ -14,19 +14,29 @@ import {
   promptBlocks,
   promptKeepLocal,
   promptLinkCommand,
+  promptSkillMode,
+  promptSkills,
   promptTools,
   promptVariables,
 } from '../prompts/selection.ts';
+import { DEFAULT_SKILL_MODE, type SkillMode } from '../skills/install.ts';
+import {
+  defaultSkillNames,
+  findSkill,
+  type SkillLibrary,
+} from '../skills/library.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { detectTools } from '../tools/detect.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
+  dropUnknownSkills,
   type Location,
   notify,
   notifyLeftGit,
   notifyReconciledBlocks,
   type ReconciledManifest,
 } from './shared.ts';
+import { checkExplicitSkills } from './skill-shared.ts';
 
 function checkExplicitBlocks(
   library: BlockLibrary,
@@ -222,4 +232,56 @@ export async function resolveInstallOptions({
         (prompting ? await promptKeepLocal(previousLocal) : previousLocal))
       : false;
   return { linkCommand, keepLocal };
+}
+
+export interface ResolveSkillsSelectionParams {
+  ctx: Context;
+  skillLibrary: SkillLibrary;
+  scope: Scope;
+  prompting: boolean;
+  requestedSkills?: string[];
+  requestedSkillMode?: SkillMode;
+  previous: Manifest | null;
+}
+
+export async function resolveSkillsSelection({
+  ctx,
+  skillLibrary,
+  scope,
+  prompting,
+  requestedSkills,
+  requestedSkillMode,
+  previous,
+}: ResolveSkillsSelectionParams): Promise<{
+  skills: string[];
+  skillMode: SkillMode;
+}> {
+  if (requestedSkills) {
+    checkExplicitSkills(skillLibrary, requestedSkills, scope);
+  }
+  const initialSkills =
+    requestedSkills ??
+    (previous
+      ? dropUnknownSkills({
+          ctx,
+          prompting,
+          library: skillLibrary,
+          names: previous.skills,
+        })
+      : defaultSkillNames(skillLibrary, scope));
+  const skills = prompting
+    ? await promptSkills(skillLibrary, scope, initialSkills)
+    : initialSkills;
+  const previousMode = previous?.options.skillMode ?? DEFAULT_SKILL_MODE;
+  const firstParty = skills.some(
+    (name) => findSkill(skillLibrary, name)?.origin.type === 'local',
+  );
+  const skillMode =
+    scope === 'global'
+      ? (requestedSkillMode ??
+        (prompting && firstParty
+          ? await promptSkillMode(previousMode)
+          : previousMode))
+      : DEFAULT_SKILL_MODE;
+  return { skills, skillMode };
 }

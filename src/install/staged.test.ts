@@ -51,3 +51,52 @@ test('staging a file deletion makes later reads see it gone', async (t) => {
 
   assert.equal(current, null);
 });
+
+test('removing a skill folder or its link stages nothing under the skill folder', async (t) => {
+  const dir = await realpath(await tempDir(t));
+  const folder = join(dir, '.agents', 'skills', 'notes');
+  const link = join(dir, '.claude', 'skills', 'notes');
+  await writeFiles(dir, {
+    '.agents/skills/notes/SKILL.md': 'notes\n',
+    '.claude/skills/.keep': '',
+  });
+  await symlink(folder, link);
+  const staged: StagedContents = new Map();
+  const skill = {
+    kind: 'skill',
+    path: folder,
+    name: 'notes',
+    source: { type: 'local', path: 'skills/notes' },
+    install: { mode: 'copy', hash: 'sha256:0' },
+  } as const;
+
+  await stageAction({
+    staged,
+    action: {
+      path: link,
+      label: 'no longer selected',
+      status: 'remove',
+      change: { type: 'delete' },
+      entry: null,
+      previous: { kind: 'symlink', path: link, target: folder },
+    },
+  });
+  await stageAction({
+    staged,
+    action: {
+      path: folder,
+      label: 'no longer selected',
+      status: 'remove',
+      change: { type: 'delete-tree' },
+      entry: null,
+      previous: skill,
+    },
+  });
+
+  assert.deepEqual([...staged.keys()], [link]);
+  const { current } = await readStaged({
+    staged,
+    path: join(folder, 'SKILL.md'),
+  });
+  assert.equal(current, 'notes\n');
+});

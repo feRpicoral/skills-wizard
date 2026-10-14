@@ -1,5 +1,3 @@
-import { styleText } from 'node:util';
-
 import type { BlockLibrary } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath, planPath } from '../install/describe.ts';
@@ -9,7 +7,8 @@ import {
   readTextIfExists,
   statIfExists,
 } from '../install/fs.ts';
-import { buildPlan } from '../install/plan.ts';
+import { buildPlan, type PlannedAction } from '../install/plan.ts';
+import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
 import type { Manifest } from '../state/manifest.ts';
 import { orderedTools, type ToolDefinition } from '../tools/registry.ts';
 import {
@@ -24,12 +23,6 @@ export interface Finding {
   level: Level;
   message: string;
 }
-
-const LEVEL_LABEL: Record<Level, string> = {
-  error: styleText('red', 'error'),
-  warn: styleText('yellow', 'warn '),
-  note: styleText('dim', 'note '),
-};
 
 export async function symlinkFindings(
   ctx: Context,
@@ -150,6 +143,13 @@ export async function globalFindings(
   ];
 }
 
+// Skill folders and links never contain block variables, so a placeholder
+// cannot make them look out of date.
+function rendersBlocks(action: PlannedAction): boolean {
+  const kind = (action.entry ?? action.previous)?.kind;
+  return kind !== 'skill' && kind !== 'symlink';
+}
+
 export interface PlanFindingsParams {
   ctx: Context;
   location: Location;
@@ -157,6 +157,8 @@ export interface PlanFindingsParams {
   library: BlockLibrary;
   blocks: string[];
   variables: Record<string, string>;
+  skills: string[];
+  skillSources: ReadonlyMap<string, SkillSource>;
   keepLocal: boolean;
   reportOutdated: boolean;
 }
@@ -168,6 +170,8 @@ export async function planFindings({
   library,
   blocks,
   variables,
+  skills,
+  skillSources,
   keepLocal,
   reportOutdated,
 }: PlanFindingsParams): Promise<Finding[]> {
@@ -178,9 +182,11 @@ export async function planFindings({
     selection: {
       tools: manifest.tools,
       blocks,
+      skills,
       variables,
       linkCommand: manifest.options.linkCommand ?? false,
       keepLocal,
+      skillMode: manifest.options.skillMode ?? DEFAULT_SKILL_MODE,
     },
     library,
     paths: ctx.paths,
@@ -188,6 +194,7 @@ export async function planFindings({
     previous: manifest,
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
+    skillSources,
   });
 
   for (const action of plan.actions) {
@@ -200,7 +207,10 @@ export async function planFindings({
             : 'warn',
         message: `${where}: ${action.reason ?? 'conflict'}`,
       });
-    } else if (reportOutdated && action.change.type !== 'none') {
+    } else if (
+      action.change.type !== 'none' &&
+      (reportOutdated || !rendersBlocks(action))
+    ) {
       findings.push({
         level: 'warn',
         message: `${where} is out of date; run agents-config sync`,
@@ -214,12 +224,14 @@ export interface ManifestFindingsParams {
   ctx: Context;
   location: Location;
   reconciled: ReconciledManifest;
+  skillResolutionFindings?: readonly Finding[];
 }
 
 export function manifestFindings({
   ctx,
   location,
   reconciled,
+  skillResolutionFindings = [],
 }: ManifestFindingsParams): Finding[] {
   const findings: Finding[] = [];
   const { scope } = location;
@@ -251,6 +263,7 @@ export function manifestFindings({
       message: `Required blocks missing from the install: ${addedBlocks.join(', ')}; agents-config sync will add them`,
     });
   }
+  findings.push(...skillResolutionFindings);
   if (leftGit && location.project) {
     findings.push({
       level: 'warn',
@@ -272,21 +285,4 @@ export function manifestFindings({
     });
   }
   return findings;
-}
-
-export function printDoctorReport(
-  ctx: Context,
-  findings: readonly Finding[],
-): number {
-  for (const finding of findings) {
-    ctx.print(`${LEVEL_LABEL[finding.level]}  ${finding.message}`);
-  }
-  const problems = findings.filter((finding) => finding.level !== 'note');
-  const errors = problems.filter((finding) => finding.level === 'error');
-  ctx.print(
-    problems.length === 0
-      ? 'No problems found.'
-      : `${problems.length} problem${problems.length === 1 ? '' : 's'} found.`,
-  );
-  return errors.length > 0 ? 1 : 0;
 }

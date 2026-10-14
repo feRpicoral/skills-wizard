@@ -6,20 +6,25 @@ import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
 import { promptProjectDir, promptScope } from '../prompts/selection.ts';
+import type { SkillMode } from '../skills/install.ts';
+import { loadSkillLibrary } from '../skills/library.ts';
 import type { ToolId } from '../tools/registry.ts';
 import {
   resolveBlocksSelection,
   resolveInstallOptions,
+  resolveSkillsSelection,
   resolveToolsSelection,
   resolveVariablesSelection,
 } from './init-selection.ts';
 import {
   confirmAndApply,
+  fetchSkills,
   loadLibrary,
   notify,
   readLocationManifest,
   reconcileManifest,
   resolveLocation,
+  warnLockedSkills,
   warnTrackedFiles,
 } from './shared.ts';
 
@@ -28,6 +33,8 @@ interface InitOptions {
   projectDir?: string;
   tools?: ToolId[];
   blocks?: string[];
+  skills?: string[];
+  skillMode?: SkillMode;
   variables: Record<string, string>;
   linkCommand?: boolean;
   keepLocal?: boolean;
@@ -42,17 +49,21 @@ function isOnSearchPath(ctx: Context, dir: string): boolean {
 
 interface ScopeSpecificOptions {
   linkCommand?: boolean | undefined;
+  skillMode?: SkillMode | undefined;
   keepLocal?: boolean | undefined;
 }
 
 function checkScopeOptions(
   scope: Scope,
-  { linkCommand, keepLocal }: ScopeSpecificOptions,
+  { linkCommand, skillMode, keepLocal }: ScopeSpecificOptions,
 ): void {
   if (scope === 'project' && linkCommand !== undefined) {
     throw new UsageError(
       '--link-command only applies to system-wide installs.',
     );
+  }
+  if (scope === 'project' && skillMode !== undefined) {
+    throw new UsageError('--skill-mode only applies to system-wide installs.');
   }
   if (scope === 'global' && keepLocal !== undefined) {
     throw new UsageError('--local only applies to project installs.');
@@ -66,6 +77,8 @@ export async function runInit(
     projectDir: requestedProjectDir,
     tools: requestedTools,
     blocks: requestedBlocks,
+    skills: requestedSkills,
+    skillMode: requestedSkillMode,
     variables: givenVariables,
     linkCommand: requestedLinkCommand,
     keepLocal: requestedKeepLocal,
@@ -77,6 +90,7 @@ export async function runInit(
   if (!scope) throw new UsageError('Pass --global or --project <dir>.');
   checkScopeOptions(scope, {
     linkCommand: requestedLinkCommand,
+    skillMode: requestedSkillMode,
     keepLocal: requestedKeepLocal,
   });
 
@@ -125,6 +139,16 @@ export async function runInit(
     previous,
     reconciled,
   });
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const { skills, skillMode } = await resolveSkillsSelection({
+    ctx,
+    skillLibrary,
+    scope,
+    prompting,
+    ...(requestedSkills ? { requestedSkills } : {}),
+    ...(requestedSkillMode ? { requestedSkillMode } : {}),
+    previous,
+  });
   const { linkCommand, keepLocal } = await resolveInstallOptions({
     ctx,
     scope,
@@ -136,15 +160,32 @@ export async function runInit(
     reconciled,
   });
 
+  const installing = tools.length > 0 ? skills : [];
+  if (scope === 'global') await warnLockedSkills(ctx, prompting, installing);
+  const skillSources = await fetchSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: installing,
+  });
   const plan = await buildPlan({
     scope,
-    selection: { tools, blocks, variables, linkCommand, keepLocal },
+    selection: {
+      tools,
+      blocks,
+      skills,
+      variables,
+      linkCommand,
+      keepLocal,
+      skillMode,
+    },
     library,
     paths: ctx.paths,
     repoRoot: ctx.repoRoot,
     previous,
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
+    skillSources,
   });
   if (keepLocal) {
     await warnTrackedFiles({
