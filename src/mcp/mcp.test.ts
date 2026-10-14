@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import type { BlockLibrary } from '../blocks/library.ts';
-import { JsonMergeError, ManagedRegionError, McpError } from '../errors.ts';
+import { JsonMergeError, ManagedRegionError } from '../errors.ts';
 import { applyPlan } from '../install/apply.ts';
 import { buildPlan } from '../install/plan.ts';
 import {
@@ -21,19 +21,16 @@ import {
   upsertMcpTomlServers,
 } from './install.ts';
 import {
-  allServerSecrets,
   loadMcpCatalog,
   type McpCatalog,
   mcpCatalogPath,
   type McpServerDefinition,
-  requiredServerSecrets,
 } from './model.ts';
 import {
   claudeDeniedToolPermissions,
   renderMcpJsonServers,
   renderMcpTomlServers,
 } from './render.ts';
-import { deriveShortServerName, searchMcpRegistry } from './search.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 
@@ -150,7 +147,7 @@ test('renderMcpJsonServers formats per-tool server definitions and handles Antig
   ]);
 });
 
-test('renderMcpTomlServers formats Codex TOML tables and skips SSE servers with a warning', async () => {
+test('renderMcpTomlServers formats Codex TOML tables, escapes DEL control characters, and skips SSE servers with a warning', async () => {
   const catalog = await loadMcpCatalog(mcpCatalogPath(REPO_ROOT));
   const sseServer: McpServerDefinition = {
     name: 'legacy-sse',
@@ -168,7 +165,7 @@ test('renderMcpTomlServers formats Codex TOML tables and skips SSE servers with 
     defaults: [],
     transport: 'stdio',
     command: 'node',
-    args: ['server.js'],
+    args: ['server.js', 'del-\u007f-char'],
     env: {
       SECRET_TOKEN: { secret: 'SECRET_TOKEN' },
       MODE: 'readonly',
@@ -207,11 +204,11 @@ test('renderMcpTomlServers formats Codex TOML tables and skips SSE servers with 
   );
   assert.match(
     rendered.body,
-    /\[mcp_servers\.stdio-env\]\ncommand = "node"\nargs = \["server\.js"\]\nenv_vars = \["SECRET_TOKEN"\]\nenabled_tools = \["ping"\]\ndisabled_tools = \["exec"\]\n\n\[mcp_servers\.stdio-env\.env\]\nMODE = "readonly"/,
+    /\[mcp_servers\.stdio-env\]\ncommand = "node"\nargs = \["server\.js", "del-\\u007f-char"\]\nenv_vars = \["SECRET_TOKEN"\]\nenabled_tools = \["ping"\]\ndisabled_tools = \["exec"\]\n\n\[mcp_servers\.stdio-env\.env\]\nMODE = "readonly"/,
   );
 });
 
-test('ensureMcpJsonServers and removeMcpJsonServers preserve existing keys, unmanaged servers, BOM, and CRLF', () => {
+test('ensureMcpJsonServers and removeMcpJsonServers preserve existing keys, unmanaged servers, key-order invariance, BOM, and CRLF', () => {
   const existing =
     '\uFEFF{\r\n    "$schema": "https://example.com/schema.json",\r\n    "mcpServers": {\r\n        "custom": {\r\n            "command": "custom-bin"\r\n        }\r\n    }\r\n}\r\n';
 
@@ -221,6 +218,13 @@ test('ensureMcpJsonServers and removeMcpJsonServers preserve existing keys, unma
       fetcher: { command: 'npx', args: ['-y', 'fetcher-mcp@0.2.1'] },
     },
     ownedServers: [],
+  });
+  const reorderedNoOp = ensureMcpJsonServers({
+    existing: added.content,
+    servers: {
+      fetcher: { args: ['-y', 'fetcher-mcp@0.2.1'], command: 'npx' },
+    },
+    ownedServers: ['fetcher'],
   });
   const removed = removeMcpJsonServers({
     existing: added.content,
@@ -238,14 +242,18 @@ test('ensureMcpJsonServers and removeMcpJsonServers preserve existing keys, unma
   assert.equal(added.content.startsWith('\uFEFF{\r\n'), true);
   assert.equal(added.content.includes('"custom": {\r\n'), true);
   assert.equal(added.content.includes('"fetcher": {\r\n'), true);
+  assert.equal(reorderedNoOp.content, added.content);
   assert.equal(removed, existing);
   assert.throws(conflictAttempt, JsonMergeError);
 });
 
-test('upsertMcpTomlServers and removeMcpTomlServers preserve outside TOML and reject unmanaged server collisions', () => {
+test('upsertMcpTomlServers and removeMcpTomlServers preserve outside TOML, ignore multiline string contents, and reject unmanaged server collisions', () => {
   const existing = [
     'model = "gpt-5"',
     '# [mcp_servers.context7]',
+    'notes = """',
+    '[mcp_servers.context7]',
+    '"""',
     '',
     '[mcp_servers.custom]',
     'command = "my-mcp"',
@@ -282,6 +290,12 @@ test('upsertMcpTomlServers and removeMcpTomlServers preserve outside TOML and re
       body: '[mcp_servers.custom]\ncommand = "other"',
       serverNames: ['custom'],
     });
+  const collideSyntaxError = () =>
+    upsertMcpTomlServers({
+      existing: 'broken = [\n',
+      body: '[mcp_servers.custom]\ncommand = "other"',
+      serverNames: ['custom'],
+    });
 
   assert.equal(upserted.includes(MCP_TOML_MARKERS.begin), true);
   assert.equal(upserted.includes('[mcp_servers.custom]'), true);
@@ -290,6 +304,7 @@ test('upsertMcpTomlServers and removeMcpTomlServers preserve outside TOML and re
   assert.throws(collideQuoted, ManagedRegionError);
   assert.throws(collideDotted, ManagedRegionError);
   assert.throws(collideInline, ManagedRegionError);
+  assert.throws(collideSyntaxError, ManagedRegionError);
 });
 
 test('buildPlan and applyPlan share Antigravity mcp_config.json, share project .mcp.json, and coexist in Gemini settings.json', async (t) => {
@@ -580,130 +595,6 @@ test('buildPlan and applyPlan remove stale Claude permissions.deny entries when 
   assert.equal(geminiAfterRemoveAll, '  \n');
 });
 
-test('searchMcpRegistry converts npm, pypi, and remote servers and enforces response bounds', async () => {
-  const requestedUrls: string[] = [];
-  const payload = {
-    servers: [
-      {
-        server: {
-          name: 'io.github.upstash/context7-mcp',
-          description: 'Upstash Context7\nserver\twith   newlines',
-          version: '1.2.0',
-          packages: [
-            {
-              registryType: 'npm',
-              identifier: '--eval=malicious',
-            },
-            {
-              registryType: 'npm',
-              identifier: '@upstash/context7-mcp',
-              packageArguments: [
-                { type: 'named', name: 'transport', default: 'stdio' },
-                { type: 'positional', value: 'bad\u0000arg' },
-              ],
-              environmentVariables: [
-                { name: 'CONTEXT7_API_KEY', isSecret: true, isRequired: false },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        server: {
-          name: 'io.github.example/py-inspector',
-          description: 'Python MCP inspector',
-          version: '0.4.0',
-          packages: [
-            {
-              registryType: 'pypi',
-              identifier: 'mcp-py-inspector',
-              environmentVariables: [
-                { name: 'INSPECTOR_MODE', default: 'fast' },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        name: 'com.sentry/sentry-mcp',
-        description: 'Sentry remote MCP server',
-        remotes: [
-          {
-            type: 'streamable-http',
-            url: 'https://mcp.sentry.dev/mcp',
-            headers: [
-              { name: 'Authorization', isSecret: true, isRequired: true },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-
-  const candidates = await searchMcpRegistry({
-    query: 'mcp',
-    official: true,
-    limit: 5,
-    fetchFn: (input) => {
-      requestedUrls.push(
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url,
-      );
-      return Promise.resolve(
-        new Response(JSON.stringify(payload), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      );
-    },
-  });
-  const npmServer = candidates[0]?.server;
-  const pypiServer = candidates[1]?.server;
-  const remoteServer = candidates[2]?.server;
-  const oversizedAttempt = searchMcpRegistry({
-    query: 'huge',
-    fetchFn: () =>
-      Promise.resolve(
-        new Response('{"servers":[]}', {
-          status: 200,
-          headers: { 'content-length': String(10 * 1024 * 1024) },
-        }),
-      ),
-  });
-
-  assert.equal(
-    requestedUrls[0],
-    'https://registry.modelcontextprotocol.io/v0.1/servers?search=mcp&version=latest&limit=5',
-  );
-  assert.equal(
-    deriveShortServerName('io.github.upstash/@context7_mcp'),
-    'context7-mcp',
-  );
-  assert.equal(candidates.length, 3);
-  assert.ok(npmServer);
-  assert.equal(npmServer.description, 'Upstash Context7 server with newlines');
-  assert.equal(npmServer.transport, 'stdio');
-  assert.deepEqual(npmServer.args, [
-    '-y',
-    '@upstash/context7-mcp@1.2.0',
-    '--transport',
-    'stdio',
-  ]);
-  assert.deepEqual(requiredServerSecrets(npmServer), []);
-  assert.deepEqual(allServerSecrets(npmServer), ['CONTEXT7_API_KEY']);
-  assert.equal(pypiServer?.transport, 'stdio');
-  assert.equal(pypiServer?.command, 'uvx');
-  assert.ok(remoteServer);
-  assert.equal(remoteServer.transport, 'http');
-  assert.deepEqual(requiredServerSecrets(remoteServer), [
-    'SENTRY_MCP_AUTH_TOKEN',
-  ]);
-  await assert.rejects(oversizedAttempt, McpError);
-});
-
 test('buildPlan and applyPlan coalesce aliased mcp-json targets and restore non-canonical empty JSON formatting on co-owned files', async (t) => {
   const paths = await tempPaths(t);
   const projectDir = await realpath(await tempDir(t));
@@ -927,131 +818,4 @@ test('buildPlan emits tool filter warnings, suppresses Claude permissions.deny o
   );
   assert.deepEqual(claudeCopilotManifest?.manifest.mcp, []);
   assert.deepEqual(codexSsePlan.manifest.mcp, []);
-});
-
-test('searchMcpRegistry handles digit-leading names, package fallback, isLatest prioritization, slug disambiguation, and default optional secrets', async () => {
-  const payload = {
-    servers: [
-      {
-        server: {
-          name: 'io.github.example/3d-viewer',
-          description: '3D model viewer',
-          remotes: [
-            {
-              type: 'http',
-              url: 'https://example.com/3d/mcp',
-              headers: [
-                { name: 'Authorization', isSecret: true },
-                { name: 'X-Tenant-Id' },
-              ],
-            },
-          ],
-        },
-      },
-      {
-        server: {
-          name: 'io.github.example/fallback-pkg',
-          description: 'Fallback package test',
-          packages: [
-            {
-              registryType: 'npm',
-              identifier: '--invalid-pkg',
-            },
-            {
-              registryType: 'npm',
-              identifier: '@example/working',
-              version: '2.0.0',
-              environmentVariables: [{ name: 'OPTIONAL_UNSET_VAR' }],
-            },
-          ],
-        },
-      },
-      {
-        server: {
-          name: 'io.github.acme/versioned-mcp',
-          description: 'Old version',
-          version: '1.0.0',
-          packages: [
-            {
-              registryType: 'npm',
-              identifier: '@acme/versioned-mcp',
-              version: '1.0.0',
-            },
-          ],
-        },
-        _meta: {
-          'io.modelcontextprotocol.registry/official': { isLatest: false },
-        },
-      },
-      {
-        server: {
-          name: 'io.github.acme/versioned-mcp',
-          description: 'Latest version',
-          version: '2.1.0',
-          packages: [
-            {
-              registryType: 'npm',
-              identifier: '@acme/versioned-mcp',
-              version: '2.1.0',
-            },
-          ],
-        },
-        _meta: {
-          'io.modelcontextprotocol.registry/official': { isLatest: true },
-        },
-      },
-      {
-        server: {
-          name: 'io.github.alice/postgres-mcp',
-          description: 'Alice Postgres MCP',
-          packages: [
-            { registryType: 'npm', identifier: '@alice/postgres-mcp' },
-          ],
-        },
-      },
-      {
-        server: {
-          name: 'io.github.bob/postgres-mcp',
-          description: 'Bob Postgres MCP',
-          packages: [{ registryType: 'npm', identifier: '@bob/postgres-mcp' }],
-        },
-      },
-    ],
-  };
-
-  const candidates = await searchMcpRegistry({
-    query: 'mcp',
-    limit: 10,
-    fetchFn: () =>
-      Promise.resolve(
-        new Response(JSON.stringify(payload), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      ),
-  });
-  const viewer = candidates.find((c) => c.name === '3d-viewer');
-  const fallback = candidates.find((c) => c.name === 'fallback-pkg');
-  const versioned = candidates.find((c) => c.name === 'versioned-mcp');
-  const alicePg = candidates.find(
-    (c) => c.fullName === 'io.github.alice/postgres-mcp',
-  );
-  const bobPg = candidates.find(
-    (c) => c.fullName === 'io.github.bob/postgres-mcp',
-  );
-
-  assert.ok(viewer);
-  assert.deepEqual(allServerSecrets(viewer.server), [
-    'MCP_3D_VIEWER_AUTH_TOKEN',
-    'X_TENANT_ID',
-  ]);
-  assert.deepEqual(requiredServerSecrets(viewer.server), []);
-  assert.ok(fallback);
-  assert.equal(fallback.server.transport, 'stdio');
-  assert.deepEqual(fallback.server.args, ['-y', '@example/working@2.0.0']);
-  assert.deepEqual(requiredServerSecrets(fallback.server), []);
-  assert.deepEqual(allServerSecrets(fallback.server), ['OPTIONAL_UNSET_VAR']);
-  assert.equal(versioned?.version, '2.1.0');
-  assert.equal(alicePg?.name, 'postgres-mcp');
-  assert.equal(bobPg?.name, 'bob-postgres-mcp');
 });

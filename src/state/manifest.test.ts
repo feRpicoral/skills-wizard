@@ -316,6 +316,43 @@ test('system-wide manifests cannot record relative symlink targets', async (t) =
   await assert.rejects(readGlobalManifest(file), /must be absolute/);
 });
 
+test('system-wide manifests cannot record relative skill link targets', async (t) => {
+  const dir = await tempDir(t);
+  const file = join(dir, 'manifest.json');
+  await storeRaw(file, [
+    {
+      kind: 'skill',
+      path: join(dir, '.agents/skills/notes'),
+      name: 'notes',
+      source: { type: 'local', path: 'skills/notes' },
+      install: { mode: 'link', target: 'skills/notes' },
+    },
+  ]);
+
+  await assert.rejects(readGlobalManifest(file), /must be absolute/);
+});
+
+test('project manifests cannot record link-mode skill entries', () => {
+  assert.throws(
+    () =>
+      checkSkillEntries({
+        file: 'manifest.json',
+        entries: [
+          {
+            kind: 'skill',
+            path: '/work/app/.agents/skills/notes',
+            name: 'notes',
+            source: { type: 'local', path: 'skills/notes' },
+            install: { mode: 'link', target: '/repo/skills/notes' },
+          },
+        ],
+        folders: projectFolders,
+        scope: 'project',
+      }),
+    /project skills must be installed as copies, not links/,
+  );
+});
+
 test('system-wide manifests with absolute paths are read', async (t) => {
   const dir = await tempDir(t);
   const file = join(dir, 'manifest.json');

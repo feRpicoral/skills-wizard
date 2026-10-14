@@ -6,11 +6,12 @@ import { runAdd } from './add.ts';
 import { runAdopt } from './adopt.ts';
 import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
+import { runMcp } from './mcp.ts';
 import { runSync } from './sync.ts';
 import { runUpdate } from './update.ts';
 
 type MenuChoice =
-  'global' | 'project' | 'add' | 'sync' | 'update' | 'adopt' | 'doctor';
+  'global' | 'project' | 'add' | 'mcp' | 'sync' | 'update' | 'adopt' | 'doctor';
 
 export async function runMenu(ctx: Context): Promise<number> {
   clack.intro('agents-config');
@@ -21,6 +22,7 @@ export async function runMenu(ctx: Context): Promise<number> {
         { value: 'global', label: 'Set up system-wide instructions' },
         { value: 'project', label: 'Set up a project' },
         { value: 'add', label: 'Search and add a third-party skill' },
+        { value: 'mcp', label: 'List curated MCP servers' },
         { value: 'sync', label: 'Sync the system-wide install' },
         { value: 'update', label: 'Update installed third-party skills' },
         { value: 'adopt', label: 'Adopt existing unmanaged skills' },
@@ -40,6 +42,13 @@ export async function runMenu(ctx: Context): Promise<number> {
       });
     case 'add':
       return runAdd(ctx, { yes: false, dryRun: false });
+    case 'mcp':
+      return runMcp(ctx, {
+        subcommand: 'list',
+        args: [],
+        yes: false,
+        dryRun: false,
+      });
     case 'sync':
       return runSync(ctx, { scope: 'global', yes: false, dryRun: false });
     case 'update':

@@ -1,8 +1,8 @@
 import { basename, dirname, join, relative, sep } from 'node:path';
 
 import { FrontmatterError } from '../errors.ts';
-import { parseFrontmatter } from '../frontmatter.ts';
-import { fsErrorReason, readTextIfExists } from '../install/fs.ts';
+import { isRecord, parseFrontmatter } from '../frontmatter.ts';
+import { fsErrorReason, isInside, readTextIfExists } from '../install/fs.ts';
 import { escapingLinks } from './tree.ts';
 
 export const SKILL_FILE = 'SKILL.md';
@@ -21,6 +21,7 @@ const SPEC_FIELDS: ReadonlySet<string> = new Set([
   'allowed-tools',
 ]);
 
+const CODE_SPAN = /```[\s\S]*?```|`[^`\n]+`/g;
 const MARKDOWN_LINK = /\[[^\]]*\]\(([^)\s]+)\)/g;
 const NOT_A_FILE_LINK = /^(?:[a-z][a-z0-9+.-]*:|#|\/)/i;
 const SAYS_WHEN = /\b(?:when|whenever|use (?:\w+ ){0,2}(?:for|to|on|if|in))\b/i;
@@ -58,10 +59,6 @@ function nameProblems(name: string): string[] {
 
 export function isSkillName(value: string): boolean {
   return nameProblems(value).length === 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function optionalString(
@@ -129,14 +126,14 @@ function linkedMarkdown({
   file,
   dir,
 }: LinkedMarkdownParams): string[] {
-  return [...markdown.matchAll(MARKDOWN_LINK)].flatMap((match) => {
+  const prose = markdown.replace(CODE_SPAN, '');
+  return [...prose.matchAll(MARKDOWN_LINK)].flatMap((match) => {
     const target = match[1]?.split('#')[0];
     if (!target || NOT_A_FILE_LINK.test(target) || !target.endsWith('.md')) {
       return [];
     }
     const resolved = join(dirname(file), decodedPath(target));
-    const inside = relative(dir, resolved);
-    return inside === '..' || inside.startsWith(`..${sep}`) ? [] : [resolved];
+    return isInside({ dir, path: resolved }) ? [resolved] : [];
   });
 }
 

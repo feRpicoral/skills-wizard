@@ -1,8 +1,7 @@
 import type { Environment } from '../../env.ts';
 import { RunnerError } from '../../errors.ts';
 import {
-  buildTaskResult,
-  checkRunnerBinary,
+  createCliRunner,
   type EvalRunner,
   extractJsonFromText,
   isRecordObject,
@@ -11,15 +10,9 @@ import {
   normalizeUsage,
   type ParsedGraderOutput,
   type ParsedTaskStream,
-  parseGraderProcess,
   parseJsonDocument,
   parseJsonLines,
-  type RunnerGraderRequest,
-  type RunnerGraderResult,
-  type RunnerTaskRequest,
-  type RunnerTaskResult,
   type RunnerUsage,
-  spawnRunnerProcess,
 } from './types.ts';
 
 export interface BuildGeminiTaskArgsParams {
@@ -214,70 +207,18 @@ export function createGeminiRunner({
   binary,
   env,
 }: CreateGeminiRunnerParams): EvalRunner {
-  const resolvedBin = binary ?? 'gemini';
-  const childEnv = buildGeminiEnv(env);
-
-  return {
+  return createCliRunner({
     name: 'gemini',
+    binary: binary ?? 'gemini',
+    preflightEnv: env,
+    env: buildGeminiEnv(env),
     sandboxSupported: true,
-    async preflight(): Promise<void> {
-      await checkRunnerBinary({ binary: resolvedBin, env });
-    },
-
-    async runTask({
-      prompt,
-      workdir,
-      runDir,
-      skillName,
-      timeoutSeconds,
-      sandbox,
-    }: RunnerTaskRequest): Promise<RunnerTaskResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildGeminiTaskArgs({ prompt, sandbox }),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env: childEnv,
-      });
-      const parsed = parseGeminiStreamJson({
-        stdout: proc.stdout,
-        skillName,
-        fallbackDurationMs: proc.durationMs,
-      });
-      return buildTaskResult({
-        label: 'gemini',
-        proc,
-        parsed,
-        timeoutSeconds,
-      });
-    },
-
-    async runGrader({
-      prompt,
-      workdir,
-      runDir,
-      timeoutSeconds,
-    }: RunnerGraderRequest): Promise<RunnerGraderResult> {
-      const proc = await spawnRunnerProcess({
-        binary: resolvedBin,
-        args: buildGeminiGraderArgs(prompt),
-        cwd: workdir,
-        runDir,
-        timeoutSeconds,
-        env: childEnv,
-        logPrefix: 'grader',
-      });
-      return parseGraderProcess({
-        label: 'gemini grader',
-        proc,
-        timeoutSeconds,
-        parse: () =>
-          parseGeminiGraderJson({
-            stdout: proc.stdout,
-            fallbackDurationMs: proc.durationMs,
-          }),
-      });
-    },
-  };
+    buildTaskArgs: ({ prompt, sandbox }) =>
+      buildGeminiTaskArgs({ prompt, sandbox }),
+    parseTaskStream: ({ stdout, skillName, fallbackDurationMs }) =>
+      parseGeminiStreamJson({ stdout, skillName, fallbackDurationMs }),
+    buildGraderArgs: ({ prompt }) => buildGeminiGraderArgs(prompt),
+    parseGraderOutput: ({ stdout, fallbackDurationMs }) =>
+      parseGeminiGraderJson({ stdout, fallbackDurationMs }),
+  });
 }

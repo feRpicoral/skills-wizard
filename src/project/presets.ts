@@ -4,10 +4,14 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { z } from 'zod';
 
-import type { BlockLibrary } from '../blocks/library.ts';
+import { defaultBlockIds } from '../blocks/compose.ts';
+import type { BlockLibrary, Scope } from '../blocks/library.ts';
 import { PresetError } from '../errors.ts';
+import { isDirectory } from '../install/fs.ts';
+import { promptPreset, promptProjectStyle } from '../prompts/selection.ts';
 import type { SkillLibrary } from '../skills/library.ts';
-import type { DetectedPackageManager } from './detect.ts';
+import type { Manifest } from '../state/manifest.ts';
+import type { DetectedPackageManager, ProjectDetection } from './detect.ts';
 
 export const PRESET_IDS = [
   'nextjs-app',
@@ -20,6 +24,8 @@ export const PRESET_IDS = [
 ] as const;
 
 export type PresetId = (typeof PRESET_IDS)[number];
+
+export type PresetChoice = PresetId | 'none';
 
 export const PROJECT_STYLES = ['lean', 'self-contained'] as const;
 
@@ -67,6 +73,10 @@ export function presetsPath(repoRoot: string): string {
 
 export function isPresetId(value: string): value is PresetId {
   return (PRESET_IDS as readonly string[]).includes(value);
+}
+
+export function isPresetChoice(value: string): value is PresetChoice {
+  return value === 'none' || isPresetId(value);
 }
 
 export function isProjectStyle(value: string): value is ProjectStyle {
@@ -135,6 +145,15 @@ function validatePresetReferences(
   }
 }
 
+/**
+ * Loads and validates all stack preset YAML definitions from `presetsDir` in
+ * canonical `PRESET_IDS` order, optionally cross-checking block and skill
+ * references against `libraries` for existence and `project` scope support.
+ *
+ * Throws `PresetError` if the directory cannot be read, any YAML file is
+ * malformed or fails schema/reference validation, or any preset in `PRESET_IDS`
+ * is missing.
+ */
 export async function loadPresets(
   presetsDir: string,
   libraries: PresetLibraries = {},
@@ -173,13 +192,33 @@ export async function loadPresets(
   return PRESET_IDS.map((id) => byId.get(id)!);
 }
 
+export async function loadPresetsIfAvailable(
+  repoRoot: string,
+  libraries: PresetLibraries,
+): Promise<PresetDefinition[]> {
+  const dir = presetsPath(repoRoot);
+  if (!(await isDirectory(dir))) return [];
+  return loadPresets(dir, libraries);
+}
+
 export function findPreset(
   presets: readonly PresetDefinition[],
-  id: PresetId,
+  id: PresetChoice | undefined,
 ): PresetDefinition | undefined {
+  if (!id || id === 'none') return undefined;
   return presets.find((preset) => preset.id === id);
 }
 
+/**
+ * Resolves the project block and skill selection for a stack `preset`,
+ * `style` (`lean` vs `self-contained`), detected `packageManager` (omitting
+ * `stack/node-yarn` for non-Yarn managers), and additive `detectedBlocks` /
+ * `detectedSkills`.
+ *
+ * Returned `blocks` are ordered according to `blockLibrary.blocks` and filtered
+ * to `project` scope; returned `skills` preserve preset-then-detected order
+ * without duplicates.
+ */
 export function resolvePresetSelection({
   preset,
   style,
@@ -236,4 +275,134 @@ export function resolvePresetSelection({
   }
 
   return { blocks, skills };
+}
+
+export interface ResolveProjectPresetParams {
+  scope: Scope;
+  prompting: boolean;
+  hasGlobalInstall: boolean;
+  presets: readonly PresetDefinition[];
+  detection: ProjectDetection | undefined;
+  previous: Manifest | null;
+  previousPreset: PresetChoice | undefined;
+  requestedPreset: PresetChoice | undefined;
+  requestedStyle: ProjectStyle | undefined;
+}
+
+/**
+ * Determines the effective project `preset` (`PresetId | 'none'`) and `style`
+ * (`lean` | `self-contained`) during `init`, combining explicit CLI flags,
+ * recorded manifest options, interactive prompts, and auto-detection.
+ */
+export async function resolveProjectPresetAndStyle({
+  scope,
+  prompting,
+  hasGlobalInstall,
+  presets,
+  detection,
+  previous,
+  previousPreset,
+  requestedPreset,
+  requestedStyle,
+}: ResolveProjectPresetParams): Promise<{
+  preset: PresetChoice | undefined;
+  style: ProjectStyle | undefined;
+}> {
+  if (scope !== 'project') {
+    return { preset: undefined, style: undefined };
+  }
+
+  let preset: PresetChoice | undefined;
+  if (requestedPreset !== undefined) {
+    preset = requestedPreset;
+  } else if (previous !== null) {
+    preset = previousPreset;
+  } else if (prompting && presets.length > 0) {
+    preset = await promptPreset(presets, detection?.preset);
+  } else if (presets.length > 0) {
+    preset = detection?.preset;
+  }
+
+  const hasAdditive =
+    (detection?.detectedBlocks.length ?? 0) > 0 ||
+    (detection?.detectedSkills.length ?? 0) > 0;
+  const defaultStyle: ProjectStyle = hasGlobalInstall
+    ? 'lean'
+    : 'self-contained';
+  let style: ProjectStyle | undefined;
+  if (requestedStyle !== undefined) {
+    style = requestedStyle;
+  } else if (previous !== null) {
+    style = previous.options.style;
+  } else if (prompting) {
+    style = await promptProjectStyle(defaultStyle);
+  } else if ((preset !== undefined && preset !== 'none') || hasAdditive) {
+    style = defaultStyle;
+  }
+
+  return { preset, style };
+}
+
+export interface ApplyReRunPresetAndStyleParams {
+  library: BlockLibrary;
+  recordedBlocks: readonly string[];
+  previousPresetBlocks?: readonly string[];
+  presetBlocks: readonly string[];
+  requestedStyle: ProjectStyle | undefined;
+}
+
+/**
+ * Updates a previously recorded project block list when `init` is re-run with
+ * `--preset` and/or `--style`, removing blocks that belonged exclusively to a
+ * replaced preset, toggling project-default blocks for `lean` vs
+ * `self-contained`, and preserving custom user-selected blocks in library order.
+ */
+export function applyReRunPresetAndStyle({
+  library,
+  recordedBlocks,
+  previousPresetBlocks = [],
+  presetBlocks,
+  requestedStyle,
+}: ApplyReRunPresetAndStyleParams): string[] {
+  const projectDefaults = new Set(defaultBlockIds(library, 'project'));
+  const wanted = new Set(recordedBlocks);
+  for (const id of previousPresetBlocks) {
+    wanted.delete(id);
+  }
+  if (requestedStyle === 'lean') {
+    for (const id of projectDefaults) {
+      wanted.delete(id);
+    }
+  } else if (requestedStyle === 'self-contained') {
+    for (const id of projectDefaults) {
+      wanted.add(id);
+    }
+  }
+  for (const id of presetBlocks) {
+    wanted.add(id);
+  }
+  return library.blocks
+    .filter((block) => block.scopes.includes('project') && wanted.has(block.id))
+    .map((block) => block.id);
+}
+
+export interface ApplyReRunPresetSkillsParams {
+  recordedSkills: readonly string[];
+  previousPresetSkills?: readonly string[];
+  presetSkills: readonly string[];
+}
+
+/**
+ * Updates a previously recorded project skill list when `init` is re-run with a
+ * new `--preset`, removing skills from the replaced preset while preserving any
+ * custom skills the user selected.
+ */
+export function applyReRunPresetSkills({
+  recordedSkills,
+  previousPresetSkills = [],
+  presetSkills,
+}: ApplyReRunPresetSkillsParams): string[] {
+  const removed = new Set(previousPresetSkills);
+  const kept = recordedSkills.filter((skill) => !removed.has(skill));
+  return [...new Set([...kept, ...presetSkills])];
 }

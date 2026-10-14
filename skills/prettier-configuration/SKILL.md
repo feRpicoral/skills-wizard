@@ -5,6 +5,12 @@ compatibility: Requires Node.js. scripts/check-version.mjs reads the project's p
 metadata:
   docs-version: '3.9.10'
   docs-source: https://github.com/prettier/prettier/tree/3.9.10/docs
+  package: prettier
+  display-name: Prettier
+  older-reference: references/version-differences.md
+  older-risk: options, CLI flags and formatting output in the other references may differ or not exist
+  release-notes: https://github.com/prettier/prettier/blob/main/CHANGELOG.md
+  docs-url-template: https://github.com/prettier/prettier/tree/{version}/docs
 ---
 
 # Prettier configuration

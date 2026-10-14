@@ -24,6 +24,33 @@ interface SizeLimits {
   bytes?: number;
 }
 
+export type ToolMcpClient =
+  'antigravity' | 'claude-code' | 'gemini-cli' | 'copilot';
+
+export type GlobalToolMcpConfig =
+  | {
+      format: 'json';
+      client: ToolMcpClient;
+      file: (paths: Paths) => string;
+      permissionsFile?: (paths: Paths) => string;
+    }
+  | {
+      format: 'toml';
+      file: (paths: Paths) => string;
+    };
+
+export type ProjectToolMcpConfig =
+  | {
+      format: 'json';
+      client: ToolMcpClient;
+      file: string;
+      permissionsFile?: string;
+    }
+  | {
+      format: 'toml';
+      file: string;
+    };
+
 export interface ToolDefinition {
   id: ToolId;
   label: string;
@@ -33,6 +60,7 @@ export interface ToolDefinition {
     skills?: (paths: Paths) => string;
     extraSkills?: (paths: Paths) => string[];
     settings?: (paths: Paths) => ArraySetting;
+    mcp?: GlobalToolMcpConfig;
     shadowedBy?: (paths: Paths) => string;
     alsoLoads?: (paths: Paths) => string[];
     limits?: SizeLimits;
@@ -40,6 +68,7 @@ export interface ToolDefinition {
   project: {
     importLine?: { file: string; line: string };
     settings?: ArraySetting;
+    mcp?: ProjectToolMcpConfig;
     skills?: string;
   };
 }
@@ -59,6 +88,18 @@ const antigravityExtraFiles = (paths: Paths) => [
   join(paths.geminiHome, 'config', 'GEMINI.md'),
 ];
 
+const antigravityGlobalMcp: GlobalToolMcpConfig = {
+  format: 'json',
+  client: 'antigravity',
+  file: (paths) => join(paths.geminiHome, 'config', 'mcp_config.json'),
+};
+
+const antigravityProjectMcp: ProjectToolMcpConfig = {
+  format: 'json',
+  client: 'antigravity',
+  file: join('.agents', 'mcp_config.json'),
+};
+
 export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
   antigravity: {
     id: 'antigravity',
@@ -66,17 +107,20 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     detect: {
       dirs: (paths) => [
         join(paths.geminiHome, 'antigravity'),
-        '/Applications/Antigravity.app',
+        join(paths.applicationsDir, 'Antigravity.app'),
       ],
       bins: [],
     },
     global: {
       instructions: sharedGeminiInstructions,
       skills: (paths) => join(paths.geminiHome, 'config', 'skills'),
+      mcp: antigravityGlobalMcp,
       alsoLoads: antigravityExtraFiles,
       limits: ANTIGRAVITY_RULE_LIMITS,
     },
-    project: {},
+    project: {
+      mcp: antigravityProjectMcp,
+    },
   },
   'antigravity-cli': {
     id: 'antigravity-cli',
@@ -88,10 +132,13 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     global: {
       instructions: sharedGeminiInstructions,
       skills: (paths) => join(paths.geminiHome, 'antigravity-cli', 'skills'),
+      mcp: antigravityGlobalMcp,
       alsoLoads: antigravityExtraFiles,
       limits: ANTIGRAVITY_RULE_LIMITS,
     },
-    project: {},
+    project: {
+      mcp: antigravityProjectMcp,
+    },
   },
   'gemini-cli': {
     id: 'gemini-cli',
@@ -106,12 +153,22 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
         key: 'context.fileName',
         values: GEMINI_CONTEXT_FILES,
       }),
+      mcp: {
+        format: 'json',
+        client: 'gemini-cli',
+        file: (paths) => join(paths.geminiHome, 'settings.json'),
+      },
     },
     project: {
       settings: {
         file: join('.gemini', 'settings.json'),
         key: 'context.fileName',
         values: GEMINI_CONTEXT_FILES,
+      },
+      mcp: {
+        format: 'json',
+        client: 'gemini-cli',
+        file: join('.gemini', 'settings.json'),
       },
     },
   },
@@ -122,11 +179,23 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     global: {
       instructions: (paths) => join(paths.claudeHome, 'CLAUDE.md'),
       skills: (paths) => join(paths.claudeHome, 'skills'),
+      mcp: {
+        format: 'json',
+        client: 'claude-code',
+        file: (paths) => join(paths.home, '.claude.json'),
+        permissionsFile: (paths) => join(paths.claudeHome, 'settings.json'),
+      },
       limits: { lines: 200 },
     },
     project: {
       importLine: { file: 'CLAUDE.md', line: '@AGENTS.md' },
       skills: join('.claude', 'skills'),
+      mcp: {
+        format: 'json',
+        client: 'claude-code',
+        file: '.mcp.json',
+        permissionsFile: join('.claude', 'settings.json'),
+      },
     },
   },
   codex: {
@@ -135,9 +204,18 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
     detect: { dirs: (paths) => [paths.codexHome], bins: ['codex'] },
     global: {
       instructions: (paths) => join(paths.codexHome, 'AGENTS.md'),
+      mcp: {
+        format: 'toml',
+        file: (paths) => join(paths.codexHome, 'config.toml'),
+      },
       shadowedBy: (paths) => join(paths.codexHome, 'AGENTS.override.md'),
     },
-    project: {},
+    project: {
+      mcp: {
+        format: 'toml',
+        file: join('.codex', 'config.toml'),
+      },
+    },
   },
   copilot: {
     id: 'copilot',
@@ -147,8 +225,19 @@ export const TOOLS: Readonly<Record<ToolId, ToolDefinition>> = {
       instructions: (paths) =>
         join(paths.copilotHome, 'copilot-instructions.md'),
       extraSkills: (paths) => [join(paths.copilotHome, 'skills')],
+      mcp: {
+        format: 'json',
+        client: 'copilot',
+        file: (paths) => join(paths.copilotHome, 'mcp-config.json'),
+      },
     },
-    project: {},
+    project: {
+      mcp: {
+        format: 'json',
+        client: 'copilot',
+        file: '.mcp.json',
+      },
+    },
   },
 };
 

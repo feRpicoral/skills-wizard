@@ -12,14 +12,23 @@ export interface RunSetupParams {
   dir: string;
   command: string;
   timeoutMs?: number;
+  deferSignal?: boolean;
 }
 
 interface SetupFailure extends Error {
   stderr: string;
+  signal?: NodeJS.Signals;
 }
 
-function setupFailure(message: string, stderr: string): SetupFailure {
-  return Object.assign(new Error(message), { stderr });
+function setupFailure(
+  message: string,
+  stderr: string,
+  signal?: NodeJS.Signals,
+): SetupFailure {
+  return Object.assign(new Error(message), {
+    stderr,
+    ...(signal ? { signal } : {}),
+  });
 }
 
 function isGone(error: unknown): boolean {
@@ -38,34 +47,46 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
 }
 
 // A detached group no longer receives the terminal's Ctrl+C, so stop it when
-// this process is interrupted, then let the signal end this process as usual.
-// The group gets SIGTERM because a non-interactive shell's background jobs
-// ignore SIGINT.
-function forwardSignals(pid: number | undefined): () => void {
+// this process is interrupted. The group gets SIGTERM because a non-interactive
+// shell's background jobs ignore SIGINT.
+function forwardSignals(
+  pid: number | undefined,
+  onSignal: (signal: NodeJS.Signals) => void,
+): () => void {
   function stop(): void {
     for (const signal of FORWARDED_SIGNALS) process.off(signal, forward);
   }
   function forward(signal: NodeJS.Signals): void {
+    onSignal(signal);
     killGroup(pid, 'SIGTERM');
-    stop();
-    process.kill(process.pid, signal);
   }
   for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);
   return stop;
+}
+
+interface ExecuteSetupParams {
+  dir: string;
+  command: string;
+  timeoutMs: number;
+  deferSignal: boolean;
 }
 
 function execute({
   dir,
   command,
   timeoutMs,
-}: Required<RunSetupParams>): Promise<void> {
+  deferSignal,
+}: ExecuteSetupParams): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(SHELL, ['-c', command], {
       cwd: dir,
       stdio: ['ignore', 'ignore', 'pipe'],
       detached: true,
     });
-    const stopForwarding = forwardSignals(child.pid);
+    let interruptedBy: NodeJS.Signals | undefined;
+    const stopForwarding = forwardSignals(child.pid, (signal) => {
+      interruptedBy ??= signal;
+    });
     let stderr = '';
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -86,7 +107,15 @@ function execute({
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       stopForwarding();
-      if (timedOut) {
+      if (interruptedBy !== undefined && !deferSignal) {
+        process.kill(process.pid, interruptedBy);
+        return;
+      }
+      if (interruptedBy !== undefined) {
+        reject(
+          setupFailure(`stopped by ${interruptedBy}`, stderr, interruptedBy),
+        );
+      } else if (timedOut) {
         reject(setupFailure(`timed out after ${timeoutMs / 1000} seconds`, ''));
       } else if (code === 0) {
         resolve();
@@ -104,12 +133,20 @@ export async function runSetup({
   dir,
   command,
   timeoutMs = SETUP_TIMEOUT_MS,
+  deferSignal = false,
 }: RunSetupParams): Promise<void> {
   try {
-    await execute({ dir, command, timeoutMs });
+    await execute({ dir, command, timeoutMs, deferSignal });
   } catch (error) {
+    const signal =
+      error instanceof Error &&
+      'signal' in error &&
+      typeof error.signal === 'string'
+        ? (error.signal as NodeJS.Signals)
+        : undefined;
     throw new SetupError(`"${command}" failed: ${failureDetail(error)}`, {
       cause: error,
+      ...(signal ? { signal } : {}),
     });
   }
 }

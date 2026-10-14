@@ -214,7 +214,7 @@ test('searchSkillsSh queries /api/search, validates payload, and sorts by instal
     limit: 20,
   });
 
-  assert.deepEqual(requests, ['/api/search?q=tanstack%20query&limit=20']);
+  assert.deepEqual(requests, ['/api/search?q=tanstack+query&limit=20']);
   assert.deepEqual(results, [
     {
       sourceType: 'skills-sh',
@@ -489,6 +489,14 @@ test('resolveGithubPathTarget resolves slash-containing refs and locateSkillsInR
     path: parsed.path,
     rawSegments: parsed.rawSegments,
   });
+  const resolvedWithExplicitRef = await resolveGithubPathTarget({
+    cache,
+    repo: parsed.repo,
+    ref: parsed.ref,
+    path: parsed.path,
+    rawSegments: parsed.rawSegments,
+    explicitRef: 'feat/skills',
+  });
   const located = await locateSkillsInRepo({
     cache,
     repo: 'owner/pinned-repo',
@@ -498,6 +506,8 @@ test('resolveGithubPathTarget resolves slash-containing refs and locateSkillsInR
   assert.equal(resolvedUrl.ref, 'feat/skills');
   assert.equal(resolvedUrl.path, 'skills/branch-skill');
   assert.equal(resolvedUrl.isDefaultBranch, false);
+  assert.equal(resolvedWithExplicitRef.ref, 'feat/skills');
+  assert.equal(resolvedWithExplicitRef.path, 'skills/branch-skill');
   assert.deepEqual(
     located.map((item) => item.name),
     ['pinned-skill'],

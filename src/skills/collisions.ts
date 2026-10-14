@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import type { Paths } from '../env.ts';
 import { FrontmatterError } from '../errors.ts';
-import { parseFrontmatter } from '../frontmatter.ts';
+import { isRecord, parseFrontmatter } from '../frontmatter.ts';
 import {
   fsErrorReason,
   lstatIfExists,
@@ -35,7 +35,7 @@ export interface SkillScan {
   skipped: string[];
 }
 
-interface SkillRoot {
+export interface SkillRoot {
   dir: string;
   kind: 'canonical' | 'tool' | 'external' | 'plugin';
 }
@@ -48,10 +48,6 @@ interface RawEntry {
   real: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 async function locate(path: string): Promise<string> {
   try {
     return (await realLocation(path)) ?? path;
@@ -61,7 +57,7 @@ async function locate(path: string): Promise<string> {
   }
 }
 
-async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
+export async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
   const roots: SkillRoot[] = [];
   const seen = new Set<string>();
   const add = async (root: SkillRoot) => {
@@ -81,18 +77,26 @@ async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
       await add({ dir, kind: 'external' });
     }
   }
+  await add({ dir: join(paths.codexHome, 'skills'), kind: 'external' });
 
-  const pluginsDir = join(paths.geminiHome, 'config', 'plugins');
-  let plugins;
-  try {
-    plugins = await readDirIfExists(pluginsDir);
-  } catch (error) {
-    if (fsErrorReason(error) === undefined) throw error;
-    plugins = null;
-  }
-  for (const entry of plugins ?? []) {
-    if (entry.name.startsWith('.')) continue;
-    await add({ dir: join(pluginsDir, entry.name, 'skills'), kind: 'plugin' });
+  for (const pluginsDir of [
+    join(paths.geminiHome, 'config', 'plugins'),
+    join(paths.geminiHome, 'antigravity-cli', 'plugins'),
+  ]) {
+    let plugins;
+    try {
+      plugins = await readDirIfExists(pluginsDir);
+    } catch (error) {
+      if (fsErrorReason(error) === undefined) throw error;
+      plugins = null;
+    }
+    for (const entry of plugins ?? []) {
+      if (entry.name.startsWith('.')) continue;
+      await add({
+        dir: join(pluginsDir, entry.name, 'skills'),
+        kind: 'plugin',
+      });
+    }
   }
   return roots;
 }
@@ -167,6 +171,16 @@ async function scanRoot(
   return entries;
 }
 
+/**
+ * Scans all canonical, tool, external, and plugin skill directories under
+ * `paths` to discover installed skills, unmanaged skills, and name collisions.
+ *
+ * Deduplicates skills that resolve to the same `realLocation` across distinct
+ * roots (such as a tool skill symlink pointing into the canonical `.agents/skills`
+ * folder), while treating two entries within the same root or distinct real
+ * folders declaring the same `SKILL.md` frontmatter `name` as separate entries
+ * so collisions are surfaced.
+ */
 export async function scanInstalledSkills(
   paths: Paths,
   manifest: Manifest | null,

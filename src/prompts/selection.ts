@@ -8,8 +8,8 @@ import { displayPath } from '../install/describe.ts';
 import type { McpCatalog } from '../mcp/model.ts';
 import type { McpSearchCandidate } from '../mcp/search.ts';
 import type {
+  PresetChoice,
   PresetDefinition,
-  PresetId,
   ProjectStyle,
 } from '../project/presets.ts';
 import type {
@@ -50,10 +50,11 @@ export async function promptProjectDir(cwd: string): Promise<string> {
 
 export async function promptPreset(
   presets: readonly PresetDefinition[],
-  detected?: PresetId,
-): Promise<PresetId | undefined> {
-  const choice = unwrap(
-    await clack.select<PresetId | 'none'>({
+  initial?: PresetChoice,
+  detected?: PresetChoice,
+): Promise<PresetChoice> {
+  return unwrap(
+    await clack.select<PresetChoice>({
       message: 'Which stack preset fits this project?',
       options: [
         ...presets.map((preset) => ({
@@ -70,10 +71,9 @@ export async function promptPreset(
           hint: 'pick blocks and skills manually',
         },
       ],
-      initialValue: detected ?? 'none',
+      initialValue: initial ?? detected ?? 'none',
     }),
   );
-  return choice === 'none' ? undefined : choice;
 }
 
 export async function promptProjectStyle(
@@ -99,11 +99,17 @@ export async function promptProjectStyle(
   );
 }
 
-export async function promptTools(
-  scope: Scope,
-  initial: readonly ToolId[],
-  paths: Paths,
-): Promise<ToolId[]> {
+interface PromptToolsParams {
+  scope: Scope;
+  initial: readonly ToolId[];
+  paths: Paths;
+}
+
+export async function promptTools({
+  scope,
+  initial,
+  paths,
+}: PromptToolsParams): Promise<ToolId[]> {
   return unwrap(
     await clack.multiselect<ToolId>({
       message: 'Which tools should get these instructions?',
@@ -124,11 +130,17 @@ export async function promptTools(
   );
 }
 
-export async function promptBlocks(
-  library: BlockLibrary,
-  scope: Scope,
-  initial: readonly string[],
-): Promise<string[]> {
+interface PromptBlocksParams {
+  library: BlockLibrary;
+  scope: Scope;
+  initial: readonly string[];
+}
+
+export async function promptBlocks({
+  library,
+  scope,
+  initial,
+}: PromptBlocksParams): Promise<string[]> {
   const groups: Record<
     string,
     { value: string; label: string; hint: string }[]

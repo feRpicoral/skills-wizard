@@ -19,6 +19,12 @@ export interface AgySettings {
   extraArgs: () => string[];
 }
 
+export interface DiscoverySettings {
+  skillsShUrl?: string | (() => string);
+  mcpRegistryUrl?: string | ((options?: { official?: boolean }) => string);
+  fetch?: typeof globalThis.fetch;
+}
+
 export interface Context {
   paths: Paths;
   repoRoot: string;
@@ -26,6 +32,7 @@ export interface Context {
   searchPath: string[];
   interactive: boolean;
   sources: SourceSettings;
+  discovery?: DiscoverySettings;
   agy?: AgySettings;
   hasEnvVar?: (name: string) => boolean;
   print: (line?: string) => void;
@@ -35,37 +42,57 @@ interface CreateContextParams {
   repoRoot: string;
   cwd: string;
   interactive: boolean;
+  paths?: Paths;
+  searchPath?: string[];
+  sources?: Partial<SourceSettings>;
+  discovery?: Partial<DiscoverySettings>;
+  print?: (line?: string) => void;
 }
 
 export function createContext({
   repoRoot,
   cwd,
   interactive,
+  paths = resolvePaths(),
+  searchPath = resolveSearchPath(),
+  sources,
+  discovery,
+  print = (line = '') => {
+    process.stdout.write(`${line}\n`);
+  },
 }: CreateContextParams): Context {
-  const sources: SourceSettings = {
-    url: githubUrl,
-    env: gitEnvironment(),
-    now: () => new Date(),
-    skillsShUrl: () => resolveSkillsShUrl(),
-    mcpRegistryUrl: ({ official } = {}) =>
+  const env = sources?.env ?? gitEnvironment();
+  const mcpRegistryUrl =
+    discovery?.mcpRegistryUrl ??
+    sources?.mcpRegistryUrl ??
+    (({ official } = {}) =>
       resolveMcpRegistryUrl({
         ...(official !== undefined ? { official } : {}),
-      }),
+      }));
+  const sourcesSettings: SourceSettings = {
+    url: sources?.url ?? githubUrl,
+    env,
+    now: sources?.now ?? (() => new Date()),
+    mcpRegistryUrl,
+    ...(sources?.fetch !== undefined ? { fetch: sources.fetch } : {}),
   };
   return {
-    paths: resolvePaths(),
+    paths,
     repoRoot,
     cwd,
-    searchPath: resolveSearchPath(),
+    searchPath,
     interactive,
-    sources,
+    sources: sourcesSettings,
+    discovery: {
+      skillsShUrl: discovery?.skillsShUrl ?? (() => resolveSkillsShUrl()),
+      mcpRegistryUrl,
+      ...(discovery?.fetch !== undefined ? { fetch: discovery.fetch } : {}),
+    },
     agy: {
       bin: () => resolveAgyBin(),
       extraArgs: () => resolveAgyExtraArgs(),
     },
-    hasEnvVar: (name) => hasEnvVar(name, sources.env),
-    print: (line = '') => {
-      process.stdout.write(`${line}\n`);
-    },
+    hasEnvVar: (name) => hasEnvVar(name, sourcesSettings.env ?? env),
+    print,
   };
 }

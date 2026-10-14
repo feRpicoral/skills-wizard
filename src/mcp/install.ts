@@ -1,5 +1,14 @@
+import { isDeepStrictEqual } from 'node:util';
+
+import { parse as parseToml } from 'smol-toml';
+
 import { JsonMergeError, ManagedRegionError } from '../errors.ts';
-import { isEmptyJsonObject, parseJsonObject } from '../install/json-merge.ts';
+import {
+  DEFAULT_INDENT,
+  isEmptyJsonObject,
+  isObject,
+  parseJsonObject,
+} from '../install/json-merge.ts';
 import {
   rawJson,
   removeJsonProperty,
@@ -13,12 +22,6 @@ export const MCP_TOML_MARKERS = {
   begin: '# BEGIN:agents-config-mcp',
   end: '# END:agents-config-mcp',
 } as const;
-
-const DEFAULT_INDENT = 2;
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export interface EnsureMcpJsonParams {
   existing: string | null;
@@ -36,6 +39,17 @@ export interface EnsureMcpJsonResult {
   original?: string;
 }
 
+/**
+ * Losslessly merges managed MCP server entries under `mcpServers` in a JSON document.
+ *
+ * Preserves existing formatting, indentation, line endings, UTF-8 BOM, and any
+ * unmanaged server keys. Removes previously owned servers that are no longer in
+ * `servers` unless they are listed in `retainedServers` (used when multiple tools
+ * share the same physical JSON file).
+ *
+ * @throws {JsonMergeError} If the document is not a plain JSON object, `mcpServers`
+ *   is not an object, or an unmanaged server with the same name already exists.
+ */
 export function ensureMcpJsonServers({
   existing,
   servers,
@@ -99,7 +113,7 @@ export function ensureMcpJsonServers({
   for (const [name, config] of Object.entries(servers)) {
     const unchanged =
       Object.hasOwn(currentServers, name) &&
-      JSON.stringify(currentServers[name]) === JSON.stringify(config);
+      isDeepStrictEqual(currentServers[name], config);
     if (!unchanged) {
       content = keepBom(content, (text) =>
         setJsonValue({ text, keys: ['mcpServers', name], value: config }),
@@ -124,6 +138,16 @@ export interface RemoveMcpJsonParams {
   retainedServers?: ReadonlySet<string>;
 }
 
+/**
+ * Removes managed MCP server entries from `mcpServers` in a JSON document,
+ * skipping any server names present in `retainedServers`.
+ *
+ * If `mcpServers` becomes empty after removal, prunes the `mcpServers` key when
+ * `createdMcpServers` is true or restores the pre-install `original` raw JSON text.
+ *
+ * @throws {JsonMergeError} If the document is not a plain JSON object or `mcpServers`
+ *   is not an object.
+ */
 export function removeMcpJsonServers({
   existing,
   servers,
@@ -181,44 +205,28 @@ interface UnmanagedTomlCheckParams {
   name: string;
 }
 
+/**
+ * Checks whether `text` defines `mcp_servers.<name>` (via table header, dotted key,
+ * inline table, or key inside `[mcp_servers]`).
+ *
+ * @throws {ManagedRegionError} If `text` is not valid TOML.
+ */
 export function hasUnmanagedTomlServer({
   text,
   name,
 }: UnmanagedTomlCheckParams): boolean {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const nameToken = `(?:${escaped}|"${escaped}"|'${escaped}')`;
-  const tableHeaderPattern = new RegExp(
-    `^[ \\t]*\\[\\[?\\s*mcp_servers\\s*\\.\\s*${nameToken}(?:\\s*\\.[^\\]]*)?\\s*\\]\\]?`,
-    'm',
-  );
-  if (tableHeaderPattern.test(text)) return true;
-
-  const dottedKeyPattern = new RegExp(
-    `^[ \\t]*mcp_servers\\s*\\.\\s*${nameToken}(?:\\s*\\.[^=\\r\\n]+)?\\s*=`,
-    'm',
-  );
-  if (dottedKeyPattern.test(text)) return true;
-
-  const sectionHeaderPattern =
-    /^[ \t]*\[\[?\s*([^\]]+?)\s*\]\]?[ \t]*(?:#.*)?$/;
-  const memberKeyPattern = new RegExp(
-    `^[ \\t]*${nameToken}(?:\\s*\\.[^=\\r\\n]+)?\\s*=`,
-  );
-  let inMcpServersSection = false;
-  for (const line of text.split(/\r?\n/)) {
-    const headerMatch = sectionHeaderPattern.exec(line);
-    if (headerMatch) {
-      const tableName = (headerMatch[1] ?? '')
-        .trim()
-        .replace(/^['"]|['"]$/g, '');
-      inMcpServersSection = tableName === 'mcp_servers';
-      continue;
-    }
-    if (inMcpServersSection && memberKeyPattern.test(line)) {
-      return true;
-    }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parseToml(text);
+  } catch (error) {
+    throw new ManagedRegionError(
+      'config.toml is not valid TOML; edit it by hand',
+      { cause: error },
+    );
   }
-  return false;
+  return (
+    isObject(parsed.mcp_servers) && Object.hasOwn(parsed.mcp_servers, name)
+  );
 }
 
 export interface UpsertMcpTomlParams {
@@ -227,6 +235,15 @@ export interface UpsertMcpTomlParams {
   serverNames: readonly string[];
 }
 
+/**
+ * Upserts the `# BEGIN:agents-config-mcp` managed region in a Codex `config.toml`
+ * document after verifying that none of `serverNames` are defined outside the
+ * managed region.
+ *
+ * @throws {ManagedRegionError} If markers are malformed, `config.toml` is invalid
+ *   TOML, or an unmanaged server with the same name already exists outside the
+ *   managed region.
+ */
 export function upsertMcpTomlServers({
   existing,
   body,
