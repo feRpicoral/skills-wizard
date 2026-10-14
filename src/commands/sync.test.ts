@@ -22,6 +22,7 @@ test('sync reapplies a recorded install after a file was edited', async (t) => {
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -47,6 +48,7 @@ test('sync drops recorded blocks that left the library and still applies', async
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -73,6 +75,7 @@ test('sync stops with the init command when a block gains a variable it cannot l
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,
@@ -94,6 +97,7 @@ test('sync looks up a variable a block gained and records it', async (t) => {
   await runInit(createCtx().ctx, {
     scope: 'global',
     tools: ['codex'],
+    skills: [],
     variables: { githubUsername: 'octocat' },
     yes: true,
     dryRun: false,

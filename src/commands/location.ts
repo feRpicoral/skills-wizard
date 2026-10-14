@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
+import type { Environment } from '../env.ts';
 import { UsageError } from '../errors.ts';
 import {
   isDirectory,
@@ -14,7 +15,9 @@ import {
   statIfExists,
 } from '../install/fs.ts';
 import type { Plan, ProjectContext } from '../install/plan.ts';
+import { skillFolders } from '../install/targets.ts';
 import {
+  checkSkillEntries,
   globalManifestPath,
   type Manifest,
   projectManifestPath,
@@ -53,22 +56,39 @@ async function projectTitle(projectDir: string): Promise<string> {
   }
 }
 
-async function git(projectDir: string, args: string[]): Promise<string | null> {
+interface GitQueryParams {
+  projectDir: string;
+  args: string[];
+  env: Environment;
+}
+
+async function git({
+  projectDir,
+  args,
+  env,
+}: GitQueryParams): Promise<string | null> {
   try {
-    const { stdout } = await run('git', args, { cwd: projectDir });
+    const { stdout } = await run('git', args, { cwd: projectDir, env });
     return stdout.trim();
   } catch {
     return null;
   }
 }
 
-async function gitContext(projectDir: string): Promise<ProjectContext['git']> {
-  const root = await git(projectDir, ['rev-parse', '--show-toplevel']);
-  const excludePath = await git(projectDir, [
-    'rev-parse',
-    '--git-path',
-    'info/exclude',
-  ]);
+async function gitContext(
+  projectDir: string,
+  env: Environment,
+): Promise<ProjectContext['git']> {
+  const root = await git({
+    projectDir,
+    args: ['rev-parse', '--show-toplevel'],
+    env,
+  });
+  const excludePath = await git({
+    projectDir,
+    args: ['rev-parse', '--git-path', 'info/exclude'],
+    env,
+  });
   if (!root || !excludePath) return undefined;
   return { root, excludePath: resolve(projectDir, excludePath) };
 }
@@ -93,7 +113,7 @@ export async function resolveLocation({
     throw new UsageError(`${requested} is not a directory`);
   }
   const dir = await realpath(requested);
-  const repository = await gitContext(dir);
+  const repository = await gitContext(dir, ctx.sources.env);
   return {
     scope,
     manifestPath: projectManifestPath(dir),
@@ -111,7 +131,7 @@ export interface ReadLocationManifestParams {
   location: Location;
 }
 
-export async function readLocationManifest({
+async function readRecordedManifest({
   ctx,
   prompting,
   location: { manifestPath, project },
@@ -135,6 +155,30 @@ export async function readLocationManifest({
   return result?.manifest ?? null;
 }
 
+export async function readLocationManifest({
+  ctx,
+  prompting,
+  location,
+}: ReadLocationManifestParams): Promise<Manifest | null> {
+  const manifest = await readRecordedManifest({ ctx, prompting, location });
+  const folders = manifest
+    ? skillFolders({
+        scope: location.scope,
+        paths: ctx.paths,
+        ...(location.project ? { project: location.project } : {}),
+      })
+    : null;
+  if (manifest && folders) {
+    checkSkillEntries({
+      file: location.manifestPath,
+      entries: manifest.entries,
+      folders,
+      scope: location.scope,
+    });
+  }
+  return manifest;
+}
+
 export interface WarnTrackedFilesParams {
   ctx: Context;
   prompting: boolean;
@@ -155,7 +199,11 @@ export async function warnTrackedFiles({
     .map((action) => relative(root, action.path));
   if (candidates.length === 0) return;
 
-  const tracked = await git(root, ['ls-files', '--', ...candidates]);
+  const tracked = await git({
+    projectDir: root,
+    args: ['ls-files', '--', ...candidates],
+    env: ctx.sources.env,
+  });
   if (tracked) {
     notify({
       ctx,

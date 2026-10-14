@@ -1,21 +1,18 @@
 import { JsonMergeError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
-import { lstatIfExists, readSymlink, sameFile } from './fs.ts';
+import { sameFile } from './fs.ts';
 import { planLine, planSatisfiedLine } from './import-line.ts';
 import { ensureArrayValues, type EnsureResult } from './json-merge.ts';
 import { planExcludeRegion, planRegion } from './managed-region.ts';
 import {
-  CHANGED_OUTSIDE,
   conflict,
   type FileActionParams,
-  NONE,
   type PlanFileParams,
   type PlannedAction,
   resolveTargetFile,
   writeAction,
 } from './safety.ts';
-import type { StagedContents } from './staged.ts';
-import type { JsonArrayTarget, SymlinkTarget, Target } from './targets.ts';
+import type { JsonArrayTarget } from './targets.ts';
 
 type JsonArrayEntry = Extract<ManifestEntry, { kind: 'json-array' }>;
 
@@ -96,46 +93,7 @@ function planJsonArray({
   }
 }
 
-async function planSymlink(
-  target: SymlinkTarget,
-  previous: ManifestEntry | null,
-): Promise<PlannedAction> {
-  const stats = await lstatIfExists(target.path);
-  const current = await readSymlink(target.path);
-  const entry: ManifestEntry = {
-    kind: 'symlink',
-    path: target.path,
-    target: target.target,
-  };
-  const base = { path: target.path, label: target.label, entry, previous };
-
-  if (current === target.target) {
-    return { ...base, status: 'unchanged', change: NONE };
-  }
-  if (!stats) {
-    return {
-      ...base,
-      status: 'create',
-      change: { type: 'symlink', target: target.target },
-    };
-  }
-  if (previous?.kind === 'symlink' && current === previous.target) {
-    return {
-      ...base,
-      status: 'update',
-      change: { type: 'symlink', target: target.target },
-    };
-  }
-  return conflict({
-    target,
-    previous,
-    reason: previous
-      ? CHANGED_OUTSIDE
-      : 'exists and is not managed by agents-config',
-  });
-}
-
-async function planFile({
+export async function planFile({
   target,
   previous,
   ...rest
@@ -166,28 +124,4 @@ async function planFile({
     case 'json-array':
       return planJsonArray({ target, file, previous });
   }
-}
-
-export interface PlanTargetParams {
-  target: Target;
-  previous: ManifestEntry | null;
-  staged: StagedContents;
-  boundary?: string;
-}
-
-export async function planTarget({
-  target,
-  previous,
-  staged,
-  boundary,
-}: PlanTargetParams): Promise<PlannedAction> {
-  if (target.kind === 'symlink') {
-    return planSymlink(target, previous);
-  }
-  return planFile({
-    target,
-    previous,
-    staged,
-    ...(boundary ? { boundary } : {}),
-  });
 }

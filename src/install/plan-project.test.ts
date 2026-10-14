@@ -161,9 +161,11 @@ test('keep-local marks a conflict instead of crashing buildPlan when a relative 
     selection: {
       tools: ['codex'],
       blocks: ['core/style'],
+      skills: [],
       variables: {},
       linkCommand: false,
       keepLocal: true,
+      skillMode: 'copy',
     },
     library,
     paths,

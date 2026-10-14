@@ -1,26 +1,31 @@
 import { requiredVariables, selectBlocks } from '../blocks/compose.ts';
+import type { Scope } from '../blocks/library.ts';
 import {
+  checkSkillEntries,
   type Manifest,
   MANIFEST_VERSION,
   type ManifestEntry,
   serializeManifest,
 } from '../state/manifest.ts';
-import { planTarget } from './file-actions.ts';
+import { planFile } from './file-actions.ts';
 import { readTextIfExists, realLocation } from './fs.ts';
 import { planRemoval } from './removal.ts';
 import {
   type ActionStatus,
   checkManifestPath,
+  conflict,
   guarded,
   type PlannedAction,
   REMOVAL_LABEL,
 } from './safety.ts';
+import { planSkill, planSymlink } from './skill-actions.ts';
 import { stageAction, type StagedContents } from './staged.ts';
 import {
   keyOf,
   type PlanInput,
   type ProjectContext,
   type Selection,
+  skillFolders,
   type Target,
   targetsForPlan,
 } from './targets.ts';
@@ -35,6 +40,32 @@ export interface Plan {
   manifestPath: string;
   manifestStatus: ManifestStatus;
   projectDir?: string;
+}
+
+interface DispatchTargetParams {
+  target: Target;
+  previous: ManifestEntry | null;
+  scope: Scope;
+  staged: StagedContents;
+  boundary?: string;
+}
+
+function dispatchTarget({
+  target,
+  previous,
+  scope,
+  staged,
+  boundary,
+}: DispatchTargetParams): Promise<PlannedAction> {
+  const location = boundary ? { boundary } : {};
+  switch (target.kind) {
+    case 'symlink':
+      return planSymlink({ target, previous, ...location });
+    case 'skill':
+      return planSkill({ target, previous, scope, ...location });
+    default:
+      return planFile({ target, previous, staged, ...location });
+  }
 }
 
 function entryDetail(entry: ManifestEntry): string {
@@ -71,6 +102,7 @@ async function ownersByRealLocation(
 interface PlanTargetActionsParams {
   targets: readonly Target[];
   previousEntries: ReadonlyMap<string, ManifestEntry>;
+  scope: Scope;
   staged: StagedContents;
   boundary?: string;
 }
@@ -78,6 +110,7 @@ interface PlanTargetActionsParams {
 async function planTargetActions({
   targets,
   previousEntries,
+  scope,
   staged,
   boundary,
 }: PlanTargetActionsParams): Promise<{
@@ -86,21 +119,38 @@ async function planTargetActions({
 }> {
   const actions: PlannedAction[] = [];
   const plannedKeys = new Set<string>();
+  const blockedSkills = new Set<string>();
   for (const target of targets) {
     const key = keyOf(target);
     plannedKeys.add(key);
     const previous = previousEntries.get(key) ?? null;
+    if (target.kind === 'symlink' && target.skill !== undefined) {
+      if (blockedSkills.has(target.skill)) {
+        actions.push(
+          conflict({
+            target,
+            previous,
+            reason: `waits for the ${target.skill} skill folder`,
+          }),
+        );
+        continue;
+      }
+    }
     const action = await guarded({
       target,
       previous,
       plan: () =>
-        planTarget({
+        dispatchTarget({
           target,
           previous,
+          scope,
           staged,
           ...(boundary ? { boundary } : {}),
         }),
     });
+    if (target.kind === 'skill' && action.status === 'conflict') {
+      blockedSkills.add(target.name);
+    }
     await stageAction({ staged, action });
     actions.push(action);
   }
@@ -167,10 +217,14 @@ function composeManifestMetadata({
     scope,
     tools: [...selection.tools],
     blocks: blocks.map((block) => block.id),
+    skills: [...selection.skills],
     variables,
     options:
       scope === 'global'
-        ? { linkCommand: selection.linkCommand }
+        ? {
+            linkCommand: selection.linkCommand,
+            skillMode: selection.skillMode,
+          }
         : { keepLocal: selection.keepLocal },
   };
 }
@@ -215,16 +269,29 @@ export async function buildPlan({
   selection,
   library,
   paths,
-  repoRoot,
   previous,
   manifestPath,
   project,
+  ...rest
 }: PlanInput): Promise<Plan> {
   const boundary = scope === 'project' ? project?.dir : undefined;
   await checkManifestPath({
     manifestPath,
     ...(boundary ? { boundary } : {}),
   });
+  const folders = skillFolders({
+    scope,
+    paths,
+    ...(project ? { project } : {}),
+  });
+  if (previous && folders) {
+    checkSkillEntries({
+      file: manifestPath,
+      entries: previous.entries,
+      folders,
+      scope,
+    });
+  }
 
   const previousEntries = new Map(
     (previous?.entries ?? []).map((entry) => [keyOf(entry), entry]),
@@ -236,12 +303,13 @@ export async function buildPlan({
       selection,
       library,
       paths,
-      repoRoot,
       previous,
       manifestPath,
       ...(project ? { project } : {}),
+      ...rest,
     }),
     previousEntries,
+    scope,
     staged,
     ...(boundary ? { boundary } : {}),
   });

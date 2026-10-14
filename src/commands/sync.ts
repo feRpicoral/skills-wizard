@@ -3,55 +3,17 @@ import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { buildPlan } from '../install/plan.ts';
-import { promptVariables } from '../prompts/selection.ts';
+import { DEFAULT_SKILL_MODE } from '../skills/install.ts';
+import { loadSkillLibrary } from '../skills/library.ts';
 import {
   confirmAndApply,
+  fetchSkills,
   loadLibrary,
-  type Location,
-  notifyLeftGit,
-  notifyReconciledBlocks,
   readLocationManifest,
-  type ReconciledManifest,
-  reconcileManifest,
+  reconcileManifestSelection,
   resolveLocation,
-  setVariablesCommand,
   warnTrackedFiles,
 } from './shared.ts';
-
-interface ResolveVariablesParams {
-  ctx: Context;
-  prompting: boolean;
-  location: Location;
-  recorded: Readonly<Record<string, string>>;
-  reconciled: ReconciledManifest;
-}
-
-// A block edited to use a new variable has no recorded value yet. Look it up
-// (or ask for it) the way init does, and stop with the init command otherwise.
-async function resolveVariables({
-  ctx,
-  prompting,
-  location,
-  recorded,
-  reconciled: { missingVariables, foundVariables, unresolvedVariables },
-}: ResolveVariablesParams): Promise<Record<string, string>> {
-  if (missingVariables.length === 0) return { ...recorded };
-  if (prompting) {
-    return {
-      ...recorded,
-      ...(await promptVariables(missingVariables, foundVariables)),
-    };
-  }
-  if (unresolvedVariables.length > 0) {
-    throw new UsageError(
-      `The blocks now use variables with no recorded value: ${unresolvedVariables.join(', ')}. Set them with ${setVariablesCommand({ ctx, location, names: unresolvedVariables })}`,
-    );
-  }
-  ctx.print(
-    `Using looked-up values for new variables: ${missingVariables.map((name) => `${name}=${foundVariables[name] ?? ''}`).join(', ')}`,
-  );
-  return foundVariables;
-}
 
 interface SyncOptions {
   scope: Scope;
@@ -78,31 +40,31 @@ export async function runSync(
   }
 
   const library = await loadLibrary(ctx);
-  const reconciled = await reconcileManifest({
-    manifest: previous,
-    library,
-    location,
-    lookupEnv: { home: ctx.paths.home, searchPath: ctx.searchPath },
-  });
-  notifyReconciledBlocks({ ctx, prompting, scope, reconciled });
-  const variables = await resolveVariables({
+  const skillLibrary = await loadSkillLibrary(ctx.repoRoot);
+  const reconciled = await reconcileManifestSelection({
     ctx,
     prompting,
     location,
-    recorded: previous.variables,
-    reconciled,
+    previous,
+    library,
+    skillLibrary,
   });
-  if (reconciled.leftGit && location.project) {
-    notifyLeftGit({ ctx, prompting, projectDir: location.project.dir });
-  }
+  const skillSources = await fetchSkills({
+    ctx,
+    prompting,
+    library: skillLibrary,
+    names: previous.tools.length > 0 ? reconciled.skills : [],
+  });
   const plan = await buildPlan({
     scope,
     selection: {
       tools: previous.tools,
       blocks: reconciled.blocks,
-      variables,
+      skills: reconciled.skills,
+      variables: reconciled.variables,
       linkCommand: previous.options.linkCommand ?? false,
       keepLocal: reconciled.keepLocal,
+      skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
     },
     library,
     paths: ctx.paths,
@@ -110,6 +72,7 @@ export async function runSync(
     previous,
     manifestPath: location.manifestPath,
     ...(location.project ? { project: location.project } : {}),
+    skillSources,
   });
   if (reconciled.keepLocal) {
     await warnTrackedFiles({

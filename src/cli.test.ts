@@ -53,6 +53,18 @@ async function sandbox(t: TestContext): Promise<Sandbox> {
   return { home, cli };
 }
 
+const INSTALL = [
+  'init',
+  '--global',
+  '--yes',
+  '--tools',
+  'codex',
+  '--skills',
+  '',
+  '--var',
+  'githubUsername=octocat',
+];
+
 test('rejects unknown tools with a usage error', async (t) => {
   const { cli } = await sandbox(t);
 
@@ -114,4 +126,71 @@ test('isSystemError matches only OS errno exceptions and not Node internal error
 
   assert.equal(isSystemError(typeErr), false);
   assert.equal(isSystemError(fsErr), true);
+});
+
+test('rejects an unknown skill mode', async (t) => {
+  const { cli } = await sandbox(t);
+
+  const result = await cli([...INSTALL, '--skill-mode', 'mirror']);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--skill-mode must be one of copy, link/);
+});
+
+test('rejects skills that are not in the catalog or skills/', async (t) => {
+  const { cli } = await sandbox(t);
+
+  const result = await cli([
+    'init',
+    '--global',
+    '--yes',
+    '--tools',
+    'codex',
+    '--skills',
+    'not-a-skill',
+    '--var',
+    'githubUsername=octocat',
+  ]);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /Unknown skills: not-a-skill/);
+});
+
+test('rejects a skill mode for project installs', async (t) => {
+  const { cli } = await sandbox(t);
+  const project = await tempDir(t);
+
+  const result = await cli([
+    'init',
+    '--project',
+    project,
+    '--yes',
+    '--tools',
+    'codex',
+    '--skill-mode',
+    'link',
+  ]);
+
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--skill-mode only applies to system-wide/);
+});
+
+test('rejects disallowed flags on update, adopt and skill validate', async (t) => {
+  const { home, cli } = await sandbox(t);
+
+  const [updateResult, adoptResult, skillResult] = await Promise.all([
+    cli(['update', '--global']),
+    cli(['adopt', '--project', home]),
+    cli(['skill', 'unknown']),
+  ]);
+
+  assert.equal(updateResult.code, 2);
+  assert.match(updateResult.stderr, /--global does not apply to update/);
+  assert.equal(adoptResult.code, 2);
+  assert.match(adoptResult.stderr, /--project does not apply to adopt/);
+  assert.equal(skillResult.code, 2);
+  assert.match(
+    skillResult.stderr,
+    /Usage: agents-config skill validate \[path\.\.\.\] \[--catalog\]/,
+  );
 });

@@ -1,7 +1,8 @@
-import type { Stats } from 'node:fs';
+import type { Dirent, Stats } from 'node:fs';
 import {
   lstat,
   mkdir,
+  readdir,
   readFile,
   readlink,
   realpath,
@@ -69,6 +70,15 @@ export async function lstatIfExists(path: string): Promise<Stats | null> {
 export async function statIfExists(path: string): Promise<Stats | null> {
   try {
     return await stat(path);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+export async function readDirIfExists(path: string): Promise<Dirent[] | null> {
+  try {
+    return await readdir(path, { withFileTypes: true });
   } catch (error) {
     if (isMissing(error)) return null;
     throw error;

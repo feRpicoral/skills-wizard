@@ -1,8 +1,15 @@
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 
 import { z } from 'zod';
 
-import { SCOPES } from '../blocks/library.ts';
+import { type Scope, SCOPES } from '../blocks/library.ts';
 import type { Paths } from '../env.ts';
 import { ManifestError } from '../errors.ts';
 import {
@@ -12,11 +19,37 @@ import {
   statIfExists,
   writeTextAtomic,
 } from '../install/fs.ts';
+import { SKILL_MODES } from '../skills/install.ts';
+import { isSkillName } from '../skills/validate.ts';
 import { TOOL_IDS } from '../tools/registry.ts';
 
 export const MANIFEST_VERSION = 1;
 
 const pathField = z.string().min(1);
+
+const skillName = z.string().refine(isSkillName, 'must be a valid skill name');
+
+const skillSourceSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('catalog'),
+    repo: z.string().min(1),
+    path: z.string().min(1),
+    ref: z.string().min(1).optional(),
+    commit: z.string().min(1),
+  }),
+  z.object({ type: z.literal('local'), path: z.string().min(1) }),
+]);
+
+export type SkillSourceRecord = z.infer<typeof skillSourceSchema>;
+
+const skillInstallSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('copy'),
+    hash: z.string().min(1),
+    setup: z.boolean().optional(),
+  }),
+  z.object({ mode: z.literal('link'), target: pathField }),
+]);
 
 const entrySchema = z.discriminatedUnion('kind', [
   z.object({
@@ -58,6 +91,13 @@ const entrySchema = z.discriminatedUnion('kind', [
     path: pathField,
     target: pathField,
   }),
+  z.object({
+    kind: z.literal('skill'),
+    path: pathField,
+    name: skillName,
+    source: skillSourceSchema,
+    install: skillInstallSchema,
+  }),
 ]);
 
 export type ManifestEntry = z.infer<typeof entrySchema>;
@@ -67,11 +107,13 @@ const manifestSchema = z.object({
   scope: z.enum(SCOPES),
   tools: z.array(z.enum(TOOL_IDS)),
   blocks: z.array(z.string()),
+  skills: z.array(skillName).default([]),
   variables: z.record(z.string(), z.string()),
   options: z
     .object({
       linkCommand: z.boolean().optional(),
       keepLocal: z.boolean().optional(),
+      skillMode: z.enum(SKILL_MODES).optional(),
     })
     .default({}),
   entries: z.array(entrySchema),
@@ -113,6 +155,61 @@ function resolveProjectEntry(
     throw new ManifestError(`${file}: ${entry.path} is outside the project`);
   }
   return { ...entry, path };
+}
+
+export interface SkillFolders {
+  copies: string;
+  links: readonly string[];
+}
+
+interface CheckSkillEntriesParams {
+  file: string;
+  entries: readonly ManifestEntry[];
+  folders: SkillFolders;
+  scope: Scope;
+}
+
+/**
+ * Validates that every `skill` and `symlink` entry in `entries` points to an
+ * expected canonical or tool skill folder for `scope`.
+ *
+ * Ensures skill entries are recorded at `<folders.copies>/<name>`, rejects
+ * link-mode skill entries in project manifests, and requires project symlinks
+ * (or global symlinks inside tool skill folders) to reside in `folders.links`
+ * with a valid skill name.
+ *
+ * @throws {ManifestError} If any skill or symlink entry violates folder or mode invariants.
+ */
+export function checkSkillEntries({
+  file,
+  entries,
+  folders,
+  scope,
+}: CheckSkillEntriesParams): void {
+  for (const entry of entries) {
+    if (entry.kind === 'skill') {
+      const expected = join(folders.copies, entry.name);
+      if (entry.path !== expected) {
+        throw new ManifestError(
+          `${file}: the ${entry.name} skill must be recorded at ${expected}, not ${entry.path}`,
+        );
+      }
+      if (scope === 'project' && entry.install.mode === 'link') {
+        throw new ManifestError(
+          `${file}: project skills must be installed as copies, not links (${entry.name})`,
+        );
+      }
+    }
+    if (entry.kind === 'symlink') {
+      const inSkillsFolder = folders.links.includes(dirname(entry.path));
+      if (!inSkillsFolder && scope === 'global') continue;
+      if (!inSkillsFolder || !isSkillName(basename(entry.path))) {
+        throw new ManifestError(
+          `${file}: ${entry.path} is not a skill link in a tool skills folder`,
+        );
+      }
+    }
+  }
 }
 
 export function serializeManifest(
@@ -172,6 +269,15 @@ export async function readGlobalManifest(
     if (entry.kind === 'symlink' && !isAbsolute(entry.target)) {
       throw new ManifestError(
         `${file}: symlink targets must be absolute, got ${entry.target}`,
+      );
+    }
+    if (
+      entry.kind === 'skill' &&
+      entry.install.mode === 'link' &&
+      !isAbsolute(entry.install.target)
+    ) {
+      throw new ManifestError(
+        `${file}: skill link targets must be absolute, got ${entry.install.target}`,
       );
     }
   }
