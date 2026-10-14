@@ -20,7 +20,19 @@ test('resolvePaths honors tool home overrides', () => {
     geminiHome: '/home/me/.gemini',
     copilotHome: '/copilot',
     localBin: '/home/me/.local/bin',
+    applicationsDir: '/Applications',
   });
+});
+
+test('resolvePaths normalizes trailing slashes on HOME and tool overrides', () => {
+  const paths = resolvePaths({
+    HOME: '/home/me///',
+    CODEX_HOME: '/codex/',
+  });
+
+  assert.equal(paths.home, '/home/me');
+  assert.equal(paths.codexHome, '/codex');
+  assert.equal(paths.stateDir, '/home/me/.agents/agents-config');
 });
 
 test('resolvePaths treats empty values as unset', () => {

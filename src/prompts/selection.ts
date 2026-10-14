@@ -35,11 +35,17 @@ export async function promptProjectDir(cwd: string): Promise<string> {
   );
 }
 
-export async function promptTools(
-  scope: Scope,
-  initial: readonly ToolId[],
-  paths: Paths,
-): Promise<ToolId[]> {
+interface PromptToolsParams {
+  scope: Scope;
+  initial: readonly ToolId[];
+  paths: Paths;
+}
+
+export async function promptTools({
+  scope,
+  initial,
+  paths,
+}: PromptToolsParams): Promise<ToolId[]> {
   return unwrap(
     await clack.multiselect<ToolId>({
       message: 'Which tools should get these instructions?',
@@ -60,11 +66,17 @@ export async function promptTools(
   );
 }
 
-export async function promptBlocks(
-  library: BlockLibrary,
-  scope: Scope,
-  initial: readonly string[],
-): Promise<string[]> {
+interface PromptBlocksParams {
+  library: BlockLibrary;
+  scope: Scope;
+  initial: readonly string[];
+}
+
+export async function promptBlocks({
+  library,
+  scope,
+  initial,
+}: PromptBlocksParams): Promise<string[]> {
   const groups: Record<
     string,
     { value: string; label: string; hint: string }[]

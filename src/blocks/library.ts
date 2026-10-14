@@ -36,15 +36,27 @@ const indexSchema = z.object({
   order: z.array(z.string().regex(/^[a-z]+\/[a-z0-9-]+$/)).min(1),
 });
 
-const frontmatterSchema = z.object({
-  title: z.string().min(1),
-  summary: z.string().min(1),
-  group: z.string().min(1),
-  scopes: z.array(z.enum(SCOPES)).min(1),
-  defaults: z.array(z.enum(SCOPES)).default([]),
-  variables: z.array(z.string()).default([]),
-  requires: z.array(z.string()).default([]),
-});
+const frontmatterSchema = z
+  .object({
+    title: z.string().min(1),
+    summary: z.string().min(1),
+    group: z.string().min(1),
+    scopes: z.array(z.enum(SCOPES)).min(1),
+    defaults: z.array(z.enum(SCOPES)).default([]),
+    variables: z.array(z.string()).default([]),
+    requires: z.array(z.string()).default([]),
+  })
+  .superRefine((meta, ctx) => {
+    const invalidDefaults = meta.defaults.filter(
+      (scope) => !meta.scopes.includes(scope),
+    );
+    if (invalidDefaults.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `defaults outside scopes: ${invalidDefaults.join(', ')}`,
+      });
+    }
+  });
 
 export async function loadBlockLibrary(
   blocksDir: string,
@@ -137,6 +149,29 @@ async function listMarkdownFiles(blocksDir: string): Promise<string[]> {
     .sort();
 }
 
+interface ValidateBlockPlaceholdersParams {
+  file: string;
+  body: string;
+  declaredVariables: readonly string[];
+}
+
+function validateBlockPlaceholders({
+  file,
+  body,
+  declaredVariables,
+}: ValidateBlockPlaceholdersParams): void {
+  const used = [...new Set([...body.matchAll(PLACEHOLDER)].map((m) => m[1]))];
+  const undeclared = used.filter(
+    (name) => name !== undefined && !declaredVariables.includes(name),
+  );
+  const unused = declaredVariables.filter((name) => !used.includes(name));
+  if (undeclared.length > 0 || unused.length > 0) {
+    throw new BlockLibraryError(
+      `${file}: variables must match placeholders (undeclared: ${undeclared.join(', ') || 'none'}, unused: ${unused.join(', ') || 'none'})`,
+    );
+  }
+}
+
 interface LoadBlockParams {
   blocksDir: string;
   id: string;
@@ -174,26 +209,13 @@ async function loadBlock({
   if (!(meta.group in groups)) {
     throw new BlockLibraryError(`${file}: unknown group "${meta.group}"`);
   }
-  const invalidDefaults = meta.defaults.filter(
-    (scope) => !meta.scopes.includes(scope),
-  );
-  if (invalidDefaults.length > 0) {
-    throw new BlockLibraryError(
-      `${file}: defaults outside scopes: ${invalidDefaults.join(', ')}`,
-    );
-  }
 
   const content = body.trimEnd();
-  const used = [...new Set([...content.matchAll(PLACEHOLDER)].map((m) => m[1]))];
-  const undeclared = used.filter(
-    (name) => name !== undefined && !meta.variables.includes(name),
-  );
-  const unused = meta.variables.filter((name) => !used.includes(name));
-  if (undeclared.length > 0 || unused.length > 0) {
-    throw new BlockLibraryError(
-      `${file}: variables must match placeholders (undeclared: ${undeclared.join(', ') || 'none'}, unused: ${unused.join(', ') || 'none'})`,
-    );
-  }
+  validateBlockPlaceholders({
+    file,
+    body: content,
+    declaredVariables: meta.variables,
+  });
 
   return { id, ...meta, body: content };
 }

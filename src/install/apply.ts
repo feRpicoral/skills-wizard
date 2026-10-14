@@ -86,6 +86,16 @@ async function executeAll(plan: Plan): Promise<ExecutionResult> {
   return { applied, skipped };
 }
 
+/**
+ * Executes a computed {@link Plan} against the filesystem and persists the
+ * resulting manifest state.
+ *
+ * Actions with `status === 'conflict'` are skipped and retain their `previous`
+ * manifest entry. If a filesystem write fails mid-plan, `applyPlan` still
+ * attempts to record the manifest for all actions applied so far before
+ * rethrowing {@link ApplyError}; if recording the manifest itself fails, the
+ * thrown {@link ApplyError} lists any modified paths that could not be recorded.
+ */
 export async function applyPlan(plan: Plan): Promise<ApplyOutcome> {
   const { applied, skipped, failure } = await executeAll(plan);
 

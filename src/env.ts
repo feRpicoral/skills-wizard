@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
 import { EnvironmentError } from './errors.ts';
 
@@ -11,6 +11,7 @@ export interface Paths {
   geminiHome: string;
   copilotHome: string;
   localBin: string;
+  applicationsDir: string;
 }
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -23,7 +24,7 @@ function directory(env: Environment, name: string): string | undefined {
       `${name} must be an absolute path, got "${value}"`,
     );
   }
-  return value;
+  return resolve(value);
 }
 
 export function resolvePaths(env: Environment = process.env): Paths {
@@ -37,6 +38,7 @@ export function resolvePaths(env: Environment = process.env): Paths {
     geminiHome: join(home, '.gemini'),
     copilotHome: directory(env, 'COPILOT_HOME') ?? join(home, '.copilot'),
     localBin: join(home, '.local', 'bin'),
+    applicationsDir: '/Applications',
   };
 }
 
