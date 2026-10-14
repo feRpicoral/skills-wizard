@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   hasAnyRelativeFile,
@@ -12,10 +12,34 @@ import {
   parsePnpmWorkspaceYaml,
   parsePyprojectToml,
 } from './manifests.ts';
-import type { PresetId } from './presets.ts';
+import {
+  loadPresets,
+  type PresetDefinition,
+  type PresetId,
+  presetsPath,
+} from './presets.ts';
 import { discoverWorkspaces, type WorkspacePackageInfo } from './workspaces.ts';
 
 export { readProjectFile, type WorkspacePackageInfo };
+
+const REPO_ROOT = join(import.meta.dirname, '..', '..');
+
+const CROSS_CUTTING_PRESET_BLOCKS: ReadonlySet<string> = new Set([
+  'stack/tailwind-shadcn',
+  'stack/tanstack-query',
+]);
+
+let cachedPresetsById: Promise<ReadonlyMap<PresetId, PresetDefinition>> | null =
+  null;
+
+function loadBundledPresetsById(): Promise<
+  ReadonlyMap<PresetId, PresetDefinition>
+> {
+  cachedPresetsById ??= loadPresets(presetsPath(REPO_ROOT)).then(
+    (presets) => new Map(presets.map((preset) => [preset.id, preset])),
+  );
+  return cachedPresetsById;
+}
 
 export type DetectedPackageManager =
   'yarn' | 'pnpm' | 'npm' | 'bun' | 'uv' | 'poetry';
@@ -32,6 +56,7 @@ export interface ProjectDetection {
   description?: string;
   preset?: PresetId;
   packageManager?: DetectedPackageManager;
+  pythonPackageManager?: 'uv' | 'poetry';
   nvmrc?: string;
   scripts: Record<string, string>;
   hasNx: boolean;
@@ -96,12 +121,8 @@ function isViteSsrFramework(deps: ReadonlySet<string>): boolean {
 
 function detectNodePresets(deps: ReadonlySet<string>): Set<PresetId> {
   const presets = new Set<PresetId>();
-  if (deps.has('expo')) {
-    presets.add('expo-app');
-  }
-  if (deps.has('next')) {
-    presets.add('nextjs-app');
-  }
+  if (deps.has('expo')) presets.add('expo-app');
+  if (deps.has('next')) presets.add('nextjs-app');
   if (deps.has('@nestjs/core') || deps.has('@nestjs/common')) {
     presets.add('nestjs-api');
   }
@@ -115,19 +136,13 @@ function detectNodePresets(deps: ReadonlySet<string>): Set<PresetId> {
   return presets;
 }
 
-interface ChoosePresetParams {
+function choosePreset(params: {
   hasNx: boolean;
   hasPackageJson: boolean;
   hasPyproject: boolean;
   rootDeps: ReadonlySet<string>;
-}
-
-function choosePreset({
-  hasNx,
-  hasPackageJson,
-  hasPyproject,
-  rootDeps,
-}: ChoosePresetParams): PresetId | undefined {
+}): PresetId | undefined {
+  const { hasNx, hasPackageJson, hasPyproject, rootDeps } = params;
   if (hasNx || rootDeps.has('nx') || rootDeps.has('@nx/workspace')) {
     return 'nx-monorepo';
   }
@@ -140,55 +155,47 @@ function choosePreset({
   ] as const) {
     if (nodePresets.has(candidate)) return candidate;
   }
-  if (hasPyproject && !hasPackageJson) {
-    return 'python-service';
-  }
-  if (hasPackageJson) {
-    return 'node-tool';
-  }
-  if (hasPyproject) {
-    return 'python-service';
-  }
+  if (hasPyproject && !hasPackageJson) return 'python-service';
+  if (hasPackageJson) return 'node-tool';
+  if (hasPyproject) return 'python-service';
   return undefined;
 }
 
 function collectWorkspaceFrameworkSelections(
   allDeps: ReadonlySet<string>,
+  presetsById: ReadonlyMap<PresetId, PresetDefinition>,
   blocks: Set<string>,
   skills: Set<string>,
 ): void {
   const nodePresets = detectNodePresets(allDeps);
-  if (nodePresets.has('nextjs-app')) {
-    blocks.add('stack/nextjs');
-    skills.add('vercel-react-best-practices');
-    skills.add('vercel-composition-patterns');
-    skills.add('web-design-guidelines');
-  }
-  if (nodePresets.has('nestjs-api')) {
-    blocks.add('stack/nestjs');
-    skills.add('nestjs-module');
-  }
-  if (nodePresets.has('expo-app')) {
-    blocks.add('stack/expo-react-native');
-    skills.add('eas-workflows');
-    skills.add('eas-update');
-    skills.add('expo-dev-client');
-    skills.add('expo-upgrade');
-    skills.add('expo-module');
-    skills.add('react-native-best-practices');
-    skills.add('react-navigation');
-    skills.add('react-native-testing');
-    skills.add('upgrading-react-native');
-    skills.add('vercel-react-native-skills');
-  }
-  if (nodePresets.has('vite-spa')) {
-    blocks.add('stack/react-vite');
-    skills.add('vercel-react-best-practices');
-    skills.add('web-design-guidelines');
+  const basePreset = presetsById.get('node-tool');
+  const baseBlocks = new Set(basePreset?.blocks ?? []);
+  const baseSkills = new Set(basePreset?.skills ?? []);
+
+  for (const presetId of [
+    'nextjs-app',
+    'nestjs-api',
+    'expo-app',
+    'vite-spa',
+  ] as const) {
+    if (!nodePresets.has(presetId)) continue;
+    const preset = presetsById.get(presetId);
+    if (!preset) continue;
+    for (const blockId of preset.blocks) {
+      if (
+        !baseBlocks.has(blockId) &&
+        !CROSS_CUTTING_PRESET_BLOCKS.has(blockId)
+      ) {
+        blocks.add(blockId);
+      }
+    }
+    for (const skillName of preset.skills) {
+      if (!baseSkills.has(skillName)) skills.add(skillName);
+    }
   }
 }
 
-interface CollectCrossCuttingParams {
+function collectCrossCuttingSelections(params: {
   hasNx: boolean;
   allDeps: ReadonlySet<string>;
   hasPrismaFiles: boolean;
@@ -199,34 +206,35 @@ interface CollectCrossCuttingParams {
   blocks: Set<string>;
   skills: Set<string>;
   mcpServers: Set<string>;
-}
-
-function collectCrossCuttingSelections({
-  hasNx,
-  allDeps,
-  hasPrismaFiles,
-  hasSupabaseFiles,
-  hasSentry,
-  hasComponentsJson,
-  isUvProject,
-  blocks,
-  skills,
-  mcpServers,
-}: CollectCrossCuttingParams): void {
+}): void {
+  const {
+    hasNx,
+    allDeps,
+    hasPrismaFiles,
+    hasSupabaseFiles,
+    hasSentry,
+    hasComponentsJson,
+    isUvProject,
+    blocks,
+    skills,
+    mcpServers,
+  } = params;
   if (hasNx || allDeps.has('nx') || allDeps.has('@nx/workspace')) {
     mcpServers.add('nx');
   }
-
   const hasPrisma =
     hasPrismaFiles || allDeps.has('prisma') || allDeps.has('@prisma/client');
   if (hasPrisma) {
     blocks.add('stack/prisma');
-    skills.add('prisma-cli');
-    skills.add('prisma-client-api');
-    skills.add('prisma-orm-setup');
-    skills.add('prisma-upgrade-v7');
+    for (const s of [
+      'prisma-cli',
+      'prisma-client-api',
+      'prisma-orm-setup',
+      'prisma-upgrade-v7',
+    ]) {
+      skills.add(s);
+    }
   }
-
   const hasSupabase =
     hasSupabaseFiles ||
     allDeps.has('@supabase/supabase-js') ||
@@ -240,16 +248,11 @@ function collectCrossCuttingSelections({
     skills.add('supabase-postgres-best-practices');
     mcpServers.add('supabase');
   }
-
-  if (hasSentry) {
-    mcpServers.add('sentry');
-  }
-
+  if (hasSentry) mcpServers.add('sentry');
   if (allDeps.has('@tanstack/react-query')) {
     blocks.add('stack/tanstack-query');
     skills.add('tanstack-query-expert');
   }
-
   if (
     hasComponentsJson ||
     allDeps.has('tailwindcss') ||
@@ -259,55 +262,36 @@ function collectCrossCuttingSelections({
     blocks.add('stack/tailwind-shadcn');
     skills.add('tailwind-patterns');
   }
-
   const hasAiSdk =
     allDeps.has('ai') || [...allDeps].some((dep) => dep.startsWith('@ai-sdk/'));
   const hasAnthropicSdk = allDeps.has('@anthropic-ai/sdk');
-  const hasLlm =
+  if (
     hasAiSdk ||
     hasAnthropicSdk ||
     allDeps.has('openai') ||
-    allDeps.has('@google/genai');
-  if (hasLlm) {
+    allDeps.has('@google/genai')
+  ) {
     blocks.add('stack/llm-apps');
   }
-  if (hasAiSdk) {
-    skills.add('ai-sdk');
-  }
-  if (hasAnthropicSdk) {
-    skills.add('claude-api');
-  }
-
+  if (hasAiSdk) skills.add('ai-sdk');
+  if (hasAnthropicSdk) skills.add('claude-api');
   if (allDeps.has('@playwright/test') || allDeps.has('playwright')) {
     skills.add('playwright-cli');
   }
-
-  if (isUvProject) {
-    blocks.add('stack/python-uv');
-  }
+  if (isUvProject) blocks.add('stack/python-uv');
 }
 
-interface CollectAdditiveParams {
+function collectAdditiveSelections(params: {
   hasNx: boolean;
   hasWorkspacePackages: boolean;
   allDeps: ReadonlySet<string>;
+  presetsById: ReadonlyMap<PresetId, PresetDefinition>;
   hasPrismaFiles: boolean;
   hasSupabaseFiles: boolean;
   hasSentry: boolean;
   hasComponentsJson: boolean;
   isUvProject: boolean;
-}
-
-function collectAdditiveSelections({
-  hasNx,
-  hasWorkspacePackages,
-  allDeps,
-  hasPrismaFiles,
-  hasSupabaseFiles,
-  hasSentry,
-  hasComponentsJson,
-  isUvProject,
-}: CollectAdditiveParams): {
+}): {
   blocks: string[];
   skills: string[];
   mcpServers: string[];
@@ -316,17 +300,16 @@ function collectAdditiveSelections({
   const skills = new Set<string>();
   const mcpServers = new Set<string>();
 
-  if (hasWorkspacePackages) {
-    collectWorkspaceFrameworkSelections(allDeps, blocks, skills);
+  if (params.hasWorkspacePackages) {
+    collectWorkspaceFrameworkSelections(
+      params.allDeps,
+      params.presetsById,
+      blocks,
+      skills,
+    );
   }
   collectCrossCuttingSelections({
-    hasNx,
-    allDeps,
-    hasPrismaFiles,
-    hasSupabaseFiles,
-    hasSentry,
-    hasComponentsJson,
-    isUvProject,
+    ...params,
     blocks,
     skills,
     mcpServers,
@@ -337,13 +320,6 @@ function collectAdditiveSelections({
     skills: [...skills],
     mcpServers: [...mcpServers],
   };
-}
-
-interface ProjectFileMarkers {
-  hasPrismaFiles: boolean;
-  hasSupabaseFiles: boolean;
-  hasComponentsJson: boolean;
-  hasSentryFiles: boolean;
 }
 
 const SENTRY_ROOT_CANDIDATES = [
@@ -358,49 +334,25 @@ async function probeProjectMarkers(
   projectDir: string,
   root: string,
   workspaces: readonly WorkspacePackageInfo[],
-): Promise<ProjectFileMarkers> {
-  const workspacePrismaCandidates = workspaces.flatMap((ws) => [
-    `${ws.relativePath}/prisma/schema.prisma`,
-    `${ws.relativePath}/prisma.config.ts`,
-  ]);
-  const workspaceSupabaseCandidates = workspaces.map(
-    (ws) => `${ws.relativePath}/supabase/config.toml`,
-  );
-  const workspaceComponentsCandidates = workspaces.map(
-    (ws) => `${ws.relativePath}/components.json`,
-  );
-  const workspaceSentryCandidates = workspaces.flatMap((ws) =>
-    SENTRY_ROOT_CANDIDATES.map((file) => `${ws.relativePath}/${file}`),
-  );
-
+) {
+  const probe = (files: readonly string[]) =>
+    hasAnyRelativeFile({
+      projectDir,
+      root,
+      candidates: [
+        ...files,
+        ...workspaces.flatMap((ws) =>
+          files.map((f) => `${ws.relativePath}/${f}`),
+        ),
+      ],
+    });
   const [hasPrismaFiles, hasSupabaseFiles, hasComponentsJson, hasSentryFiles] =
     await Promise.all([
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: [
-          'prisma/schema.prisma',
-          'prisma.config.ts',
-          ...workspacePrismaCandidates,
-        ],
-      }),
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: ['supabase/config.toml', ...workspaceSupabaseCandidates],
-      }),
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: ['components.json', ...workspaceComponentsCandidates],
-      }),
-      hasAnyRelativeFile({
-        projectDir,
-        root,
-        candidates: [...SENTRY_ROOT_CANDIDATES, ...workspaceSentryCandidates],
-      }),
+      probe(['prisma/schema.prisma', 'prisma.config.ts']),
+      probe(['supabase/config.toml']),
+      probe(['components.json']),
+      probe(SENTRY_ROOT_CANDIDATES),
     ]);
-
   return {
     hasPrismaFiles,
     hasSupabaseFiles,
@@ -426,6 +378,8 @@ export async function detectProject(
     hasNx,
     nvmrcRaw,
     hasUvLock,
+    hasPoetryLock,
+    presetsById,
   ] = await Promise.all([
     readProjectFile({ projectDir, relativePath: 'package.json', root }),
     readProjectFile({ projectDir, relativePath: 'pyproject.toml', root }),
@@ -437,6 +391,8 @@ export async function detectProject(
     hasProjectFile({ projectDir, relativePath: 'nx.json', root }),
     readProjectFile({ projectDir, relativePath: '.nvmrc', root }),
     hasProjectFile({ projectDir, relativePath: 'uv.lock', root }),
+    hasProjectFile({ projectDir, relativePath: 'poetry.lock', root }),
+    loadBundledPresetsById(),
   ]);
 
   const pkg = pkgSource !== null ? parsePackageJson(pkgSource) : null;
@@ -472,6 +428,7 @@ export async function detectProject(
       pkg,
       pyproject,
       hasUvLock,
+      hasPoetryLock,
     }),
   ]);
 
@@ -485,17 +442,32 @@ export async function detectProject(
     hasPyproject: pyproject !== null,
     rootDeps,
   });
+  const isPoetryProject =
+    Boolean(pyproject?.hasPoetrySection) ||
+    hasPoetryLock ||
+    packageManager === 'poetry';
+  const isUvProject =
+    Boolean(pyproject?.hasUvSection) ||
+    hasUvLock ||
+    packageManager === 'uv' ||
+    (pyproject !== null && !isPoetryProject);
+  const pythonPackageManager: 'uv' | 'poetry' | undefined =
+    pyproject !== null
+      ? isPoetryProject && !pyproject.hasUvSection && !hasUvLock
+        ? 'poetry'
+        : 'uv'
+      : undefined;
   const additive = collectAdditiveSelections({
     hasNx,
     hasWorkspacePackages:
       hasNx || workspacePatterns.length > 0 || workspaces.length > 0,
     allDeps,
+    presetsById,
     hasPrismaFiles: markers.hasPrismaFiles,
     hasSupabaseFiles: markers.hasSupabaseFiles,
     hasSentry: markers.hasSentryFiles || hasSentryDeps,
     hasComponentsJson: markers.hasComponentsJson,
-    isUvProject:
-      Boolean(pyproject?.hasUvSection) || hasUvLock || packageManager === 'uv',
+    isUvProject,
   });
 
   const name = pkg?.name ?? pyproject?.name ?? basename(projectDir);
@@ -506,6 +478,7 @@ export async function detectProject(
     ...(description !== undefined ? { description } : {}),
     ...(preset !== undefined ? { preset } : {}),
     ...(packageManager !== undefined ? { packageManager } : {}),
+    ...(pythonPackageManager !== undefined ? { pythonPackageManager } : {}),
     ...(nvmrc !== undefined ? { nvmrc } : {}),
     scripts: pkg?.scripts ?? {},
     hasNx,

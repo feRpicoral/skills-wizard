@@ -888,5 +888,8 @@ test('prepareEvalWorkspace excludes competing skills across variants and propaga
   assert.equal(compareBClaude.skillShadowed, true);
   assert.match(compareBClaude.warning ?? '', /staged project skill "skill-b"/);
   assert.equal(compareBAgy.possiblyContaminated, true);
-  assert.match(compareBAgy.warning ?? '', /"demo-skill" is installed globally/);
+  assert.match(
+    compareBAgy.warning ?? '',
+    /"demo-skill" is installed globally.*compare:skill-b is possibly contaminated/,
+  );
 });

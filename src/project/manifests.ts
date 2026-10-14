@@ -36,6 +36,11 @@ function dependencyNames(raw: unknown): string[] {
   return Object.keys(raw);
 }
 
+/**
+ * Extracts workspace glob patterns from a `package.json#workspaces` or
+ * `pnpm-workspace.yaml` value (supporting both string arrays and
+ * `{ packages: string[] }` objects).
+ */
 export function parseWorkspacesField(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.filter((item): item is string => typeof item === 'string');
@@ -51,6 +56,11 @@ export function parseWorkspacesField(raw: unknown): string[] {
   return [];
 }
 
+/**
+ * Parses a `package.json` source string into its normalized name, description,
+ * `packageManager`, scripts, combined `dependencies`/`devDependencies` names,
+ * and `workspaces` patterns. Returns `null` when `source` is not a JSON object.
+ */
 export function parsePackageJson(source: string): ParsedPackageJson | null {
   try {
     const parsed = JSON.parse(source) as Record<string, unknown>;
@@ -169,17 +179,34 @@ function unescapeTomlBasicString(raw: string): string {
   });
 }
 
-function extractTomlTableBody(
-  uncommented: string,
-  header: string,
-): string | null {
-  const escaped = RegExp.escape(header);
-  const pattern = new RegExp(
-    `^\\s*\\[${escaped}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`,
-    'm',
-  );
-  const match = uncommented.match(pattern);
-  return match?.[1] ?? null;
+const TOML_STRING_OR_HEADER =
+  /"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|^[^\S\r\n]*(\[\[?[A-Za-z0-9_.-]+\]\]?)[^\S\r\n]*$/gm;
+
+function splitTomlTables(uncommented: string): {
+  headers: string[];
+  tables: Map<string, string>;
+} {
+  const headers: string[] = [];
+  const tables = new Map<string, string>();
+  let currentHeader: string | null = null;
+  let currentStart = 0;
+
+  for (const match of uncommented.matchAll(TOML_STRING_OR_HEADER)) {
+    const rawHeader = match[1];
+    if (rawHeader === undefined) continue;
+    if (currentHeader !== null && !tables.has(currentHeader)) {
+      tables.set(currentHeader, uncommented.slice(currentStart, match.index));
+    }
+    headers.push(rawHeader);
+    currentHeader = rawHeader.startsWith('[[')
+      ? rawHeader.slice(2, -2)
+      : rawHeader.slice(1, -1);
+    currentStart = match.index + match[0].length;
+  }
+  if (currentHeader !== null && !tables.has(currentHeader)) {
+    tables.set(currentHeader, uncommented.slice(currentStart));
+  }
+  return { headers, tables };
 }
 
 function extractTomlStringValue(
@@ -233,11 +260,26 @@ function stripMetadataAssignments(uncommented: string): string {
   );
 }
 
+function hasHeaderPrefix(
+  headers: readonly string[],
+  toolName: string,
+): boolean {
+  const pattern = new RegExp(
+    `^\\[\\[?tool\\.${RegExp.escape(toolName)}(?:\\]|\\.)`,
+  );
+  return headers.some((header) => pattern.test(header));
+}
+
+/**
+ * Parses a `pyproject.toml` source string into its project/Poetry metadata,
+ * `[tool.uv]` / `[tool.poetry]` section flags, and configured Python tooling
+ * (`ruff`, `mypy`, `pyright`, `pytest`), ignoring comments and multiline string
+ * contents that resemble TOML headers.
+ */
 export function parsePyprojectToml(source: string): ParsedPyproject {
   const uncommented = stripTomlComments(source);
-  const projectBody = extractTomlTableBody(uncommented, 'project');
-  const poetryBody = extractTomlTableBody(uncommented, 'tool.poetry');
-  const metadataBody = projectBody ?? poetryBody;
+  const { headers, tables } = splitTomlTables(uncommented);
+  const metadataBody = tables.get('project') ?? tables.get('tool.poetry');
   const name = metadataBody
     ? extractTomlStringValue(metadataBody, 'name')
     : undefined;
@@ -246,20 +288,16 @@ export function parsePyprojectToml(source: string): ParsedPyproject {
     : undefined;
 
   const searchable = stripMetadataAssignments(uncommented);
-  const hasUvSection = /^\s*\[\[?tool\.uv(?:\]|\.)/m.test(uncommented);
-  const hasPoetrySection = /^\s*\[\[?tool\.poetry(?:\]|\.)/m.test(uncommented);
+  const hasUvSection = hasHeaderPrefix(headers, 'uv');
+  const hasPoetrySection = hasHeaderPrefix(headers, 'poetry');
   const hasRuff =
-    /^\s*\[\[?tool\.ruff(?:\]|\.)/m.test(uncommented) ||
-    /\bruff\b/i.test(searchable);
+    hasHeaderPrefix(headers, 'ruff') || /\bruff\b/i.test(searchable);
   const hasMypy =
-    /^\s*\[\[?tool\.mypy(?:\]|\.)/m.test(uncommented) ||
-    /\bmypy\b/i.test(searchable);
+    hasHeaderPrefix(headers, 'mypy') || /\bmypy\b/i.test(searchable);
   const hasPyright =
-    /^\s*\[\[?tool\.pyright(?:\]|\.)/m.test(uncommented) ||
-    /\bpyright\b/i.test(searchable);
+    hasHeaderPrefix(headers, 'pyright') || /\bpyright\b/i.test(searchable);
   const hasPytest =
-    /^\s*\[\[?tool\.pytest(?:\]|\.)/m.test(uncommented) ||
-    /\bpytest\b/i.test(searchable);
+    hasHeaderPrefix(headers, 'pytest') || /\bpytest\b/i.test(searchable);
 
   return {
     ...(name !== undefined ? { name } : {}),
@@ -275,6 +313,10 @@ export function parsePyprojectToml(source: string): ParsedPyproject {
   };
 }
 
+/**
+ * Parses a `pnpm-workspace.yaml` source string and returns its `packages` glob
+ * patterns, or an empty array when the YAML is invalid or omits `packages`.
+ */
 export function parsePnpmWorkspaceYaml(source: string): string[] {
   try {
     const parsed = parseYaml(source) as unknown;
@@ -290,14 +332,22 @@ export interface DetectPackageManagerParams {
   pkg: ParsedPackageJson | null;
   pyproject: ParsedPyproject | null;
   hasUvLock?: boolean;
+  hasPoetryLock?: boolean;
 }
 
+/**
+ * Detects the primary package manager for `projectDir` from `package.json#packageManager`,
+ * JS lockfiles (`yarn.lock`, `pnpm-lock.yaml`, `package-lock.json`, `bun.lock`),
+ * `.yarnrc.yml`, Python `uv`/`poetry` sections and lockfiles, or defaults to
+ * `'yarn'` when `package.json` is present.
+ */
 export async function detectPackageManager({
   projectDir,
   root,
   pkg,
   pyproject,
   hasUvLock,
+  hasPoetryLock,
 }: DetectPackageManagerParams): Promise<DetectedPackageManager | undefined> {
   const declared = pkg?.packageManager?.toLowerCase() ?? '';
   if (declared.startsWith('yarn@')) return 'yarn';
@@ -335,7 +385,8 @@ export async function detectPackageManager({
   if (pyproject?.hasUvSection || uvLock) {
     return 'uv';
   }
-  if (pyproject?.hasPoetrySection || (await hasFile('poetry.lock'))) {
+  const poetryLock = hasPoetryLock ?? (await hasFile('poetry.lock'));
+  if (pyproject?.hasPoetrySection || poetryLock) {
     return 'poetry';
   }
 

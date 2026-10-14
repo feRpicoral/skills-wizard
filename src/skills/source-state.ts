@@ -1,23 +1,47 @@
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { z } from 'zod';
 
+import type { Environment } from '../env.ts';
 import { SourceError } from '../errors.ts';
 import { readTextIfExists, writeTextAtomic } from '../install/fs.ts';
-import { isCommitSha } from './catalog.ts';
 import {
-  checkSpec,
-  DEFAULT_REF,
-  END_OF_OPTIONS,
-  git,
-  type SourceCache,
-  sourceCommit,
-  sourceDir,
-  type SourceSpec,
-} from './sources.ts';
+  isCommitSha,
+  isGitRef,
+  isRepository,
+  isRepositoryPath,
+} from './catalog.ts';
+import { failureDetail } from './process.ts';
 
+const run = promisify(execFile);
+
+const GIT_TIMEOUT_MS = 5 * 60_000;
+const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const STATE_FILE = 'agents-config.json';
+
+export const DEFAULT_REF = 'HEAD';
+export const END_OF_OPTIONS = '--end-of-options';
+
+export interface SourceSettings {
+  url: (repo: string) => string;
+  env: Environment;
+  now: () => Date;
+  mcpRegistryUrl?: string | ((options?: { official?: boolean }) => string);
+  fetch?: typeof globalThis.fetch;
+}
+
+export interface SourceCache extends SourceSettings {
+  root: string;
+}
+
+export interface SourceSpec {
+  repo: string;
+  ref?: string;
+  paths: readonly string[];
+}
 
 export interface UpdateCheck {
   current: string;
@@ -26,6 +50,73 @@ export interface UpdateCheck {
 
 export interface CheckSourceOptions {
   force: boolean;
+}
+
+export function githubUrl(repo: string): string {
+  return `https://github.com/${repo}.git`;
+}
+
+export function sourceDir(cache: SourceCache, repo: string): string {
+  if (!isRepository(repo)) {
+    throw new SourceError(`${repo} is not an owner/repo name`);
+  }
+  return join(cache.root, ...repo.split('/'));
+}
+
+export function checkSpec(spec: SourceSpec): void {
+  if (spec.ref !== undefined && !isGitRef(spec.ref)) {
+    throw new SourceError(`${spec.repo}: ${spec.ref} is not a valid ref`);
+  }
+  const invalid = spec.paths.find((path) => !isRepositoryPath(path));
+  if (invalid !== undefined) {
+    throw new SourceError(
+      `${spec.repo}: ${invalid} is not a path inside the repository`,
+    );
+  }
+}
+
+export interface GitRunParams {
+  cache: SourceCache;
+  args: string[];
+  failure: string;
+  cwd?: string;
+}
+
+export async function gitRaw({
+  cache,
+  args,
+  failure,
+  cwd,
+}: GitRunParams): Promise<string> {
+  try {
+    const { stdout } = await run('git', args, {
+      cwd,
+      env: cache.env,
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
+    });
+    return stdout;
+  } catch (error) {
+    throw new SourceError(`${failure}: ${failureDetail(error)}`, {
+      cause: error,
+    });
+  }
+}
+
+export async function git(params: GitRunParams): Promise<string> {
+  return (await gitRaw(params)).trim();
+}
+
+export async function sourceCommit(
+  cache: SourceCache,
+  repo: string,
+): Promise<string> {
+  return git({
+    cache,
+    args: ['rev-parse', 'HEAD'],
+    failure: `Could not read the cached commit of ${repo}`,
+    cwd: sourceDir(cache, repo),
+  });
 }
 
 const stateSchema = z.object({

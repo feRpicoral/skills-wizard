@@ -1,24 +1,52 @@
+import { styleText } from 'node:util';
+
 import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { displayPath } from '../install/describe.ts';
 import {
   type Finding,
   globalFindings,
+  type Level,
   manifestFindings,
   planFindings,
-  printDoctorReport,
-  printFindings,
-  resolveDoctorSkills,
-  skillFindings,
   symlinkFindings,
 } from './doctor-checks.ts';
 import { mcpFindings, resolveDoctorMcp } from './doctor-mcp.ts';
+import { resolveDoctorSkills, skillFindings } from './doctor-skills.ts';
 import {
   loadLibrary,
   readLocationManifest,
   reconcileManifest,
   resolveLocation,
 } from './shared.ts';
+
+const LEVEL_LABEL: Record<Level, string> = {
+  error: styleText('red', 'error'),
+  warn: styleText('yellow', 'warn '),
+  note: styleText('dim', 'note '),
+};
+
+function printFindings(
+  ctx: Context,
+  findings: readonly Finding[],
+): { problems: Finding[]; errors: Finding[] } {
+  for (const finding of findings) {
+    ctx.print(`${LEVEL_LABEL[finding.level]}  ${finding.message}`);
+  }
+  const problems = findings.filter((finding) => finding.level !== 'note');
+  const errors = problems.filter((finding) => finding.level === 'error');
+  return { problems, errors };
+}
+
+function printDoctorReport(ctx: Context, findings: readonly Finding[]): number {
+  const { problems, errors } = printFindings(ctx, findings);
+  ctx.print(
+    problems.length === 0
+      ? 'No problems found.'
+      : `${problems.length} problem${problems.length === 1 ? '' : 's'} found.`,
+  );
+  return errors.length > 0 ? 1 : 0;
+}
 
 interface DoctorOptions {
   scope: Scope;

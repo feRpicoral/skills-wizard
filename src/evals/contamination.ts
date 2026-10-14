@@ -5,7 +5,7 @@ import type { Paths } from '../env.ts';
 import { lstatIfExists, walkDirectories } from '../install/fs.ts';
 import { scanInstalledSkills, skillRoots } from '../skills/collisions.ts';
 import { TOOLS } from '../tools/registry.ts';
-import type { EvalRunnerName } from './workspace.ts';
+import type { EvalRunnerName, EvalVariant } from './workspace.ts';
 
 export interface PersonalSkillShadowParams {
   runner: EvalRunnerName;
@@ -88,6 +88,7 @@ export interface ApplyBaselineExclusionParams {
   skillName?: string;
   skillNames?: readonly string[];
   runner: EvalRunnerName;
+  variant?: EvalVariant;
   paths?: Paths;
 }
 
@@ -96,6 +97,7 @@ export async function applyBaselineExclusion({
   skillName,
   skillNames,
   runner,
+  variant = 'without_skill',
   paths,
 }: ApplyBaselineExclusionParams): Promise<{
   possiblyContaminated: boolean;
@@ -110,6 +112,7 @@ export async function applyBaselineExclusion({
   if (runner === 'fake' || names.length === 0) {
     return { possiblyContaminated: false };
   }
+  const targetLabel = variant === 'without_skill' ? 'baseline' : variant;
 
   if (runner === 'claude') {
     // Documented in the Claude Code skills and permissions docs: a
@@ -147,7 +150,7 @@ export async function applyBaselineExclusion({
       });
       if (pluginSkill !== undefined) {
         warnings.push(
-          `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; baseline is possibly contaminated.`,
+          `Claude Code plugin skill "${pluginSkill}" is not covered by skillOverrides or the Skill deny rules; ${targetLabel} is possibly contaminated.`,
         );
       }
     }
@@ -182,7 +185,7 @@ export async function applyBaselineExclusion({
     });
     if (installedGlobally) {
       warnings.push(
-        `Runner "${runner}" has no documented workspace-level skill exclusion and "${name}" is installed globally; baseline is possibly contaminated.`,
+        `Runner "${runner}" has no documented workspace-level skill exclusion and "${name}" is installed globally; ${targetLabel} is possibly contaminated.`,
       );
     }
   }

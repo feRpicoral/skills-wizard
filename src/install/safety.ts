@@ -1,19 +1,19 @@
-import type { Stats } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-
 import { ManifestError } from '../errors.ts';
 import type { ManifestEntry } from '../state/manifest.ts';
 import {
+  fileKindProblem,
   fsErrorReason,
   isInside,
   lstatIfExists,
-  readSymlink,
   realLocation,
   resolveIfSymlink,
+  sameFile,
   statIfExists,
 } from './fs.ts';
 import { readStaged, type StagedContents } from './staged.ts';
 import type { FileTarget } from './targets.ts';
+
+export { fileKindProblem, sameFile };
 
 export type ActionStatus =
   'create' | 'update' | 'unchanged' | 'remove' | 'conflict';
@@ -77,51 +77,6 @@ export async function locationProblem({
 
 export function leftInPlace(problem: LocationProblem): string {
   return `${LOCATION_PROBLEMS[problem]}, left in place`;
-}
-
-export function fileKindProblem(stats: Stats | null): string | undefined {
-  if (!stats || stats.isFile()) return undefined;
-  return stats.isDirectory() ? 'is a directory' : 'is not a regular file';
-}
-
-interface SymlinkMatchParams {
-  link: string;
-  destination: string;
-}
-
-async function linksTo({
-  link,
-  destination,
-}: SymlinkMatchParams): Promise<boolean> {
-  const target = await readSymlink(link);
-  if (target === null) return false;
-  const [linked, expected] = await Promise.all([
-    realLocation(resolve(dirname(link), target)),
-    realLocation(destination),
-  ]);
-  return linked !== null && linked === expected;
-}
-
-interface SameFileParams {
-  path: string;
-  other: string;
-}
-
-export async function sameFile({
-  path,
-  other,
-}: SameFileParams): Promise<boolean> {
-  if (
-    (await linksTo({ link: path, destination: other })) ||
-    (await linksTo({ link: other, destination: path }))
-  ) {
-    return true;
-  }
-  const [real, otherReal] = await Promise.all([
-    realLocation(path),
-    realLocation(other),
-  ]);
-  return real !== null && real === otherReal;
 }
 
 interface ConflictParams {

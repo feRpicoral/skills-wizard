@@ -1,7 +1,5 @@
 import { join } from 'node:path';
 
-import * as clack from '@clack/prompts';
-
 import {
   outOfScopeBlockIds,
   requiredVariables,
@@ -20,8 +18,6 @@ import {
 } from '../blocks/variables.ts';
 import type { Context } from '../context.ts';
 import { MissingVariablesError } from '../errors.ts';
-import { displayPath } from '../install/describe.ts';
-import { readTextIfExists } from '../install/fs.ts';
 import { buildPlan, type Plan } from '../install/plan.ts';
 import {
   loadMcpCatalog,
@@ -30,26 +26,34 @@ import {
 } from '../mcp/model.ts';
 import { isPresetChoice, type PresetChoice } from '../project/presets.ts';
 import { promptVariables } from '../prompts/selection.ts';
-import { appendEntries, restoreCatalog } from '../skills/adopt-catalog.ts';
-import type { CatalogEntry } from '../skills/catalog.ts';
-import {
-  DEFAULT_SKILL_MODE,
-  resolveSkillSources,
-  type SkillSource,
-} from '../skills/install.ts';
+import { DEFAULT_SKILL_MODE, type SkillSource } from '../skills/install.ts';
 import type { SkillLibrary } from '../skills/library.ts';
-import { readSkillLock, skillLockPath } from '../skills/lock.ts';
-import type { SourceCache } from '../skills/sources.ts';
 import type { Manifest } from '../state/manifest.ts';
 import type { ToolId } from '../tools/registry.ts';
-import { confirmAndApply } from './confirm.ts';
 import { type Location, warnTrackedFiles } from './location.ts';
 import { notify, notifyLeftGit, setVariablesCommand } from './output.ts';
 import {
+  checkExplicitMcp,
+  type CheckExplicitMcpParams,
+  dropUnavailableBlocks,
+  type DropUnavailableBlocksParams,
   dropUnavailableMcpServers,
+  type DropUnavailableMcpServersParams,
+  dropUnknownPreset,
+  type DropUnknownPresetParams,
   dropUnknownSkills,
+  type DropUnknownSkillsParams,
   replacementSkillHint,
 } from './prune.ts';
+import {
+  applyWithCatalogRollback,
+  type ApplyWithCatalogRollbackOutcome,
+  type ApplyWithCatalogRollbackParams,
+  fetchSkills,
+  type FetchSkillsParams,
+  sourceCache,
+  warnLockedSkills,
+} from './skill-shared.ts';
 
 export {
   confirmAndApply,
@@ -77,6 +81,9 @@ export {
   type SetVariablesCommandParams,
 } from './output.ts';
 export {
+  applyWithCatalogRollback,
+  type ApplyWithCatalogRollbackOutcome,
+  type ApplyWithCatalogRollbackParams,
   checkExplicitMcp,
   type CheckExplicitMcpParams,
   dropUnavailableBlocks,
@@ -87,8 +94,12 @@ export {
   type DropUnknownPresetParams,
   dropUnknownSkills,
   type DropUnknownSkillsParams,
+  fetchSkills,
+  type FetchSkillsParams,
   replacementSkillHint,
-} from './prune.ts';
+  sourceCache,
+  warnLockedSkills,
+};
 
 export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
   return loadBlockLibrary(join(ctx.repoRoot, 'blocks'));
@@ -96,61 +107,6 @@ export async function loadLibrary(ctx: Context): Promise<BlockLibrary> {
 
 export async function loadMcpServers(ctx: Context): Promise<McpCatalog> {
   return loadMcpCatalog(mcpCatalogPath(ctx.repoRoot));
-}
-
-export function sourceCache(ctx: Context): SourceCache {
-  return { root: ctx.paths.sourcesDir, ...ctx.sources };
-}
-
-export interface FetchSkillsParams {
-  ctx: Context;
-  prompting: boolean;
-  library: SkillLibrary;
-  names: readonly string[];
-}
-
-export async function fetchSkills({
-  ctx,
-  prompting,
-  library,
-  names,
-}: FetchSkillsParams): Promise<Map<string, SkillSource>> {
-  if (names.length === 0) return new Map();
-  const spinner = prompting ? clack.spinner() : null;
-  spinner?.start('Fetching skills');
-  const { sources, problems } = await resolveSkillSources({
-    library,
-    names,
-    cache: sourceCache(ctx),
-    fetch: true,
-  });
-  spinner?.stop('Fetched skills');
-  for (const [name, problem] of problems) {
-    notify({
-      ctx,
-      prompting,
-      message: `Skipping the ${name} skill: ${problem}`,
-      level: 'warn',
-    });
-  }
-  return sources;
-}
-
-export async function warnLockedSkills(
-  ctx: Context,
-  prompting: boolean,
-  names: readonly string[],
-): Promise<void> {
-  const locked = await readSkillLock(ctx.paths);
-  const shared = names.filter((name) => locked.has(name));
-  if (shared.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `${displayPath({ path: skillLockPath(ctx.paths), home: ctx.paths.home })} also tracks ${shared.join(', ')}; the installer that wrote it may replace these copies.`,
-      level: 'warn',
-    });
-  }
 }
 
 export interface ReconcileManifestParams {
@@ -161,6 +117,7 @@ export interface ReconcileManifestParams {
 }
 
 export interface ReconciledManifest {
+  knownBlocks: string[];
   blocks: string[];
   unknownBlocks: string[];
   outOfScopeBlocks: string[];
@@ -191,10 +148,13 @@ export async function reconcileManifest({
     rawPreset !== undefined && preset === undefined ? rawPreset : undefined;
   const unknownBlocks = unknownBlockIds(library, manifest.blocks);
   const outOfScopeBlocks = outOfScopeBlockIds(library, manifest.blocks, scope);
-  const known = manifest.blocks.filter(
+  const knownBlocks = manifest.blocks.filter(
     (id) => !unknownBlocks.includes(id) && !outOfScopeBlocks.includes(id),
   );
-  const { ids: blocks, added: addedBlocks } = withRequirements(library, known);
+  const { ids: blocks, added: addedBlocks } = withRequirements(
+    library,
+    knownBlocks,
+  );
   const recordedLocal = manifest.options.keepLocal ?? false;
   const keepLocal = recordedLocal && location.project?.git !== undefined;
   const leftGit = location.project !== undefined && recordedLocal && !keepLocal;
@@ -213,6 +173,7 @@ export async function reconcileManifest({
     (name) => !foundVariables[name]?.trim(),
   );
   return {
+    knownBlocks,
     blocks,
     unknownBlocks,
     outOfScopeBlocks,
@@ -232,7 +193,10 @@ export interface NotifyReconciledBlocksParams {
   ctx: Context;
   prompting: boolean;
   scope: Scope;
-  reconciled: ReconciledManifest;
+  reconciled: Pick<
+    ReconciledManifest,
+    'unknownBlocks' | 'outOfScopeBlocks' | 'addedBlocks'
+  >;
 }
 
 export function notifyReconciledBlocks({
@@ -484,81 +448,4 @@ export async function buildSyncPlanForLocation({
     });
   }
   return plan;
-}
-
-export interface ApplyWithCatalogRollbackParams {
-  ctx: Context;
-  prompting: boolean;
-  plan: Plan;
-  file: string;
-  entries: readonly CatalogEntry[];
-  failureOutcome?: string;
-  manifestPath: string;
-  projectDir?: string;
-  yes: boolean;
-  dryRun: boolean;
-}
-
-export interface ApplyWithCatalogRollbackOutcome {
-  code: number;
-  applied: boolean;
-  keptEntries: CatalogEntry[];
-}
-
-export async function applyWithCatalogRollback({
-  ctx,
-  prompting,
-  plan,
-  file,
-  entries,
-  failureOutcome,
-  manifestPath,
-  projectDir,
-  yes,
-  dryRun,
-}: ApplyWithCatalogRollbackParams): Promise<ApplyWithCatalogRollbackOutcome> {
-  let catalogBefore: string | null | undefined;
-  const writeCatalog = async () => {
-    if (entries.length === 0) return;
-    const original = await readTextIfExists(file);
-    await appendEntries(file, entries, failureOutcome);
-    catalogBefore = original;
-  };
-  let result;
-  try {
-    result = await confirmAndApply(ctx, plan, {
-      yes,
-      dryRun,
-      beforeApply: writeCatalog,
-    });
-  } catch (error) {
-    if (catalogBefore !== undefined) {
-      await restoreCatalog({
-        file,
-        original: catalogBefore,
-        entries,
-        manifestPath,
-        ...(projectDir !== undefined ? { projectDir } : {}),
-      });
-    }
-    throw error;
-  }
-  const keptEntries =
-    catalogBefore !== undefined
-      ? await restoreCatalog({
-          file,
-          original: catalogBefore,
-          entries,
-          manifestPath,
-          ...(projectDir !== undefined ? { projectDir } : {}),
-        })
-      : [...entries];
-  if (result.applied && keptEntries.length > 0) {
-    notify({
-      ctx,
-      prompting,
-      message: `Added to catalog.yaml: ${keptEntries.map((entry) => entry.name).join(', ')}`,
-    });
-  }
-  return { code: result.code, applied: result.applied, keptEntries };
 }

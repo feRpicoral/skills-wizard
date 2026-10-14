@@ -11,7 +11,12 @@ import {
   projectManifestPath,
   run,
 } from '../test-support/command-fixtures.ts';
-import { tempDir, writeFiles } from '../test-support/fixtures.ts';
+import {
+  blockSource,
+  skillSource,
+  tempDir,
+  writeFiles,
+} from '../test-support/fixtures.ts';
 import type { ToolId } from '../tools/registry.ts';
 import { runDoctor } from './doctor.ts';
 import { runInit } from './init.ts';
@@ -266,4 +271,67 @@ test('doctor counts lines accurately when a file has no trailing newline', async
   await runDoctor(ctx, { scope: 'global' });
 
   assert.match(output(), /has 201 lines; Claude Code recommends/);
+});
+
+test('doctor still reports outdated skills when a block gained a variable with no value', async (t) => {
+  const { createCtx } = await commandSandbox(t);
+  const { ctx: baseCtx, output } = createCtx();
+  const repoRoot = await tempDir(t);
+  const ctx = { ...baseCtx, repoRoot, cwd: repoRoot };
+  await writeFiles(repoRoot, {
+    'skills/notes/SKILL.md': skillSource('notes'),
+    'catalog.yaml': 'categories: {}\nskills: []\n',
+    'blocks/index.yaml': [
+      'headers:',
+      '  global: "# Instructions"',
+      'groups:',
+      '  core: Core',
+      'order:',
+      '  - core/identity',
+      '  - core/extra',
+      '',
+    ].join('\n'),
+    'blocks/core/identity.md': blockSource('Follow the rules.', {
+      title: 'Identity',
+      summary: 'Core identity',
+      group: 'core',
+      defaults: ['global', 'project'],
+    }),
+    'blocks/core/extra.md': blockSource('## Extra\n\nExtra rules.', {
+      title: 'Extra',
+      summary: 'Extra block',
+      group: 'core',
+      scopes: ['global'],
+      defaults: [],
+      variables: [],
+    }),
+  });
+  await runInit(ctx, {
+    scope: 'global',
+    tools: ['codex'],
+    blocks: ['core/identity', 'core/extra'],
+    skills: ['notes'],
+    variables: {},
+    yes: true,
+    dryRun: false,
+  });
+  await writeFiles(repoRoot, {
+    'skills/notes/SKILL.md': `${skillSource('notes')}\nMore steps.\n`,
+    'blocks/core/extra.md': blockSource('## Extra\n\nTeam: {{teamName}}', {
+      title: 'Extra',
+      summary: 'Extra block',
+      group: 'core',
+      scopes: ['global'],
+      defaults: [],
+      variables: ['teamName'],
+    }),
+  });
+
+  const code = await runDoctor(ctx, { scope: 'global' });
+
+  assert.equal(code, 1);
+  const printed = output();
+  assert.match(printed, /no recorded value: teamName/);
+  assert.match(printed, /skills\/notes is out of date/);
+  assert.doesNotMatch(printed, /AGENTS\.md is out of date/);
 });

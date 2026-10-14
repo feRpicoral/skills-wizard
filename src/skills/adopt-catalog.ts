@@ -132,7 +132,6 @@ export interface RestoreCatalogParams {
   original: string | null;
   entries: readonly CatalogEntry[];
   manifestPath: string;
-  projectDir?: string;
 }
 
 // A failed or conflicted apply may still have recorded some skills in the

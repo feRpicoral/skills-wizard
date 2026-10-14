@@ -494,19 +494,33 @@ test('--baseline <ref> is accepted before or after the skill name', async (t) =>
 test('--baseline before the skill name without a ref keeps the name', async (t) => {
   const [repo, { cli }] = await Promise.all([skillRepo(t), sandbox(t)]);
 
-  const [bare, missing] = await Promise.all([
+  const [bare, missing, extraArg] = await Promise.all([
     cli(['skill', 'eval', '--baseline', 'demo-skill', '--runner', 'fake'], {
       cwd: repo,
     }),
     cli(['skill', 'eval', '--baseline', 'main', 'no-such-skill'], {
       cwd: repo,
     }),
+    cli(
+      [
+        'skill',
+        'eval',
+        '--baseline',
+        'demo-skill',
+        'extra-arg',
+        '--runner',
+        'fake',
+      ],
+      { cwd: repo },
+    ),
   ]);
 
   assert.equal(bare.code, 0, bare.stderr);
   assert.match(bare.stdout, /without_skill run 1\/1/);
   assert.equal(missing.code, 2);
   assert.match(missing.stderr, /Skill "no-such-skill" was not found/);
+  assert.equal(extraArg.code, 2);
+  assert.match(extraArg.stderr, /Usage: agents-config skill eval <name>/);
 });
 
 test('--baseline <ref> cannot be combined with --compare or another --baseline', async (t) => {
@@ -762,6 +776,42 @@ test('re-running init with --style or --preset updates preset blocks and skills,
   );
   assert.equal(sync.code, 0);
   assert.match(sync.stdout, /Preset "retired-preset" is no longer recognized/);
+
+  const freshNoneProject = await tempDir(t);
+  await writeFile(
+    join(freshNoneProject, 'package.json'),
+    JSON.stringify({
+      name: 'fresh-none',
+      dependencies: {
+        '@prisma/client': '7.0.0',
+        '@supabase/supabase-js': '2.0.0',
+      },
+    }),
+  );
+  const freshNoneInit = await cli([
+    'init',
+    '--project',
+    freshNoneProject,
+    '--tools',
+    'claude-code',
+    '--preset',
+    'none',
+    '--style',
+    'lean',
+    '--yes',
+  ]);
+  assert.equal(freshNoneInit.code, 0);
+  const freshNoneManifest = JSON.parse(
+    await readFile(projectManifestPath(freshNoneProject), 'utf8'),
+  ) as {
+    blocks: string[];
+    skills: string[];
+    options: { preset?: string };
+  };
+  assert.equal(freshNoneManifest.options.preset, 'none');
+  assert.equal(freshNoneManifest.blocks.length > 0, true);
+  assert.equal(freshNoneManifest.blocks.includes('stack/prisma'), false);
+  assert.deepEqual(freshNoneManifest.skills, []);
 });
 
 test('add rejects invalid --source, --ref, --category, and disallowed flags', async (t) => {
