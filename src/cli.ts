@@ -7,15 +7,19 @@ import * as clack from '@clack/prompts';
 
 import {
   buildSkillCommandOptions,
+  parseCategoryFlag,
   parseCommand,
   type ParsedCommand,
+  parseDiscoverSource,
   parseList,
   parsePreset,
   parseProjectStyle,
+  parseRefFlag,
   parseSkillMode,
   parseTools,
   parseVariables,
 } from './cli-args.ts';
+import { runAdd } from './commands/add.ts';
 import { runAdopt } from './commands/adopt.ts';
 import { runDoctor } from './commands/doctor.ts';
 import { runInit } from './commands/init.ts';
@@ -31,6 +35,7 @@ import {
   UsageError,
 } from './errors.ts';
 import { PRESET_IDS } from './project/presets.ts';
+import { DISCOVER_SOURCES } from './skills/discover.ts';
 import { TOOL_IDS } from './tools/registry.ts';
 
 export { isSystemError };
@@ -41,6 +46,7 @@ const HELP = `Usage: agents-config [command] [options]
 
 Commands:
   init                      Install instructions and skills system-wide or into a project
+  add [query|url]           Search or resolve a third-party skill and add it to catalog.yaml
   sync                      Re-apply everything recorded in a manifest
   update                    Fetch skill updates, show changes and risk flags, and refresh installs
   adopt [skill...]          Take over existing unmanaged skills after backing them up
@@ -66,6 +72,11 @@ Options:
   --preset <id>         Project preset: ${PRESET_IDS.join(', ')}, none
   --style <mode>        Project instructions style: lean (default with a system-wide install),
                         self-contained, or strict (alias for self-contained)
+  --source <kind>       add: search source (${DISCOVER_SOURCES.join(', ')}; default: all)
+  --category <name>     add: catalog category (and filter for awesome index search)
+  --ref <ref>           add: pin repository branch, tag, or commit SHA
+  --include-offensive   add: include offensive security skills in awesome index search
+  --install             add: also install the skill after adding it to catalog.yaml
   --catalog             skill validate: validate every skill in catalog.yaml
   --template <kind>     skill new: basic (default), scripted, or reference-heavy
   --with-evals          skill new: also scaffold evals/evals.json and trigger_queries.json
@@ -75,8 +86,8 @@ Options:
   --baseline [none|ref] skill eval: run the without_skill baseline (default). --no-baseline or
                         --baseline none skips it; --baseline <ref> compares against the skill at a
                         git ref instead (cannot be combined with --compare)
-  --compare <ref>       skill eval: also run an old_skill snapshot of the skill folder at <ref>, read
-                        from the git repository that contains the skill
+  --compare <ref|list>  skill eval: run an old_skill snapshot at git <ref>, or compare against
+                        competing skills (<skill-a>,<skill-b>) side by side
   --case <id>           skill eval: filter to a single eval case ID
   --cases <ids>         skill eval: comma-separated eval case IDs
   --parallel <n>        skill eval/triggers: concurrent runs (default: 2)
@@ -147,6 +158,29 @@ function dispatchCommand({
           ? { linkCommand: values['link-command'] }
           : {}),
         ...(values.local !== undefined ? { keepLocal: values.local } : {}),
+      });
+    }
+    case 'add': {
+      if (terminal && !yes) clack.intro('agents-config');
+      const tools = parseTools(values.tools);
+      const source = parseDiscoverSource(values.source);
+      const category = parseCategoryFlag(values.category);
+      const ref = parseRefFlag(values.ref);
+      const target = positionals.slice(1).join(' ').trim();
+      return runAdd(ctx, {
+        ...(target ? { target } : {}),
+        ...(source ? { source } : {}),
+        ...(category ? { category } : {}),
+        ...(ref ? { ref } : {}),
+        ...(values['include-offensive'] !== undefined
+          ? { includeOffensive: values['include-offensive'] }
+          : {}),
+        ...(values.install !== undefined ? { install: values.install } : {}),
+        ...(scope ? { scope } : {}),
+        ...projectOption,
+        ...(tools ? { tools } : {}),
+        yes,
+        dryRun,
       });
     }
     case 'sync':

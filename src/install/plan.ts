@@ -152,7 +152,9 @@ async function planTargetActions({
       blockedSkills.add(target.name);
     }
     await stageAction({ staged, action });
-    actions.push(action);
+    actions.push(
+      target.kind === 'skill' ? { ...action, skill: target.name } : action,
+    );
   }
   return { actions, plannedKeys };
 }

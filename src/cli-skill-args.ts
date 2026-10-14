@@ -307,7 +307,7 @@ export function buildSkillCommandOptions({
   const cases = parseList(values.cases);
   if (baselineRef !== undefined && values.compare !== undefined) {
     throw new UsageError(
-      'Use either --baseline <ref> or --compare <ref>, not both.',
+      'Use either --baseline <ref> or --compare <ref>|<skill-a>,<skill-b>, not both.',
     );
   }
   if (baselineRef !== undefined && values.baseline !== undefined) {
@@ -317,7 +317,7 @@ export function buildSkillCommandOptions({
   }
   if (values.compare?.startsWith('-')) {
     throw new UsageError(
-      `--compare ref must not start with "-", got "${values.compare}"`,
+      `--compare value must not start with "-", got "${values.compare}"`,
     );
   }
   // `--baseline <ref>` replaces the without_skill baseline with the
@@ -337,6 +337,7 @@ export function buildSkillCommandOptions({
     ...(runs !== undefined ? { runs } : {}),
     ...(baseline !== undefined ? { baseline } : {}),
     ...(compare !== undefined ? { compare } : {}),
+    ...(baselineRef !== undefined ? { forceCompareRef: true } : {}),
     ...(values.case !== undefined ? { caseId: values.case } : {}),
     ...(cases !== undefined ? { cases } : {}),
     ...(parallel !== undefined ? { parallel } : {}),

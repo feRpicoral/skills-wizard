@@ -22,6 +22,7 @@ export interface SkillCommandOptions {
   runs?: number;
   baseline?: boolean;
   compare?: string;
+  forceCompareRef?: boolean;
   caseId?: string;
   cases?: readonly string[];
   parallel?: number;

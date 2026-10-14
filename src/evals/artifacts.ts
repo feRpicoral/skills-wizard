@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import { EvalError } from '../errors.ts';
+import { isSkillName } from '../skills/validate.ts';
 import type { BenchmarkSummary, TriggerBenchmarkSummary } from './aggregate.ts';
 import { readEvalJsonFile } from './cases.ts';
-import { EVAL_RUNNER_NAMES } from './workspace.ts';
+import { EVAL_RUNNER_NAMES, type EvalVariant } from './workspace.ts';
 
 /** Version of the `benchmark.json` and `triggers.json` formats. */
 export const EVAL_SCHEMA_VERSION = 1;
@@ -54,10 +55,19 @@ const deltaSummarySchema = z.looseObject({
   tokens: z.string(),
 });
 
+const variantSchema = z.custom<EvalVariant>(
+  (val) =>
+    typeof val === 'string' &&
+    ((VARIANTS as readonly string[]).includes(val) ||
+      (val.startsWith('compare:') &&
+        isSkillName(val.slice('compare:'.length)))),
+  { error: 'Invalid eval variant' },
+);
+
 const runRecordSchema = z.looseObject({
   case_id: z.string(),
   prompt: z.string(),
-  variant: z.enum(VARIANTS),
+  variant: variantSchema,
   run_index: z.number().int(),
   grading: z.looseObject({
     expectations: z.array(
@@ -95,8 +105,12 @@ const assertionAggregateSchema = z.looseObject({
   with_skill_pass_rate: z.number(),
   baseline_pass_rate: z.number().optional(),
   old_skill_pass_rate: z.number().optional(),
+  compare_pass_rates: z.record(z.string(), z.number()).optional(),
   classification: z.enum(CLASSIFICATIONS),
   old_skill_classification: z.enum(CLASSIFICATIONS).optional(),
+  compare_classifications: z
+    .record(z.string(), z.enum(CLASSIFICATIONS))
+    .optional(),
 });
 
 const benchmarkSummarySchema = z.looseObject({
@@ -108,6 +122,7 @@ const benchmarkSummarySchema = z.looseObject({
     timestamp: z.string(),
     runs_per_configuration: z.number().int(),
     compare_ref: z.string().optional(),
+    compare_skills: z.array(z.string()).optional(),
     baseline_status: z.enum(['clean', 'possibly contaminated', 'skipped']),
     with_skill_contaminated: z.boolean().default(false),
     warnings: z.array(z.string()),
@@ -116,15 +131,25 @@ const benchmarkSummarySchema = z.looseObject({
     with_skill: variantAggregateSchema,
     without_skill: variantAggregateSchema.optional(),
     old_skill: variantAggregateSchema.optional(),
+    compare_skills: z.record(z.string(), variantAggregateSchema).optional(),
     delta: deltaSummarySchema.optional(),
     old_skill_delta: deltaSummarySchema.optional(),
+    compare_deltas: z.record(z.string(), deltaSummarySchema).optional(),
   }),
   cases: z.array(
     z.looseObject({
       case_id: z.string(),
       prompt: z.string(),
       expected_output: z.string(),
-      variants: z.partialRecord(z.enum(VARIANTS), variantAggregateSchema),
+      variants: z
+        .record(z.string(), variantAggregateSchema)
+        .refine(
+          (obj) =>
+            Object.keys(obj).every(
+              (key) => variantSchema.safeParse(key).success,
+            ),
+          { error: 'Invalid eval variant' },
+        ),
       assertions: z.array(assertionAggregateSchema),
       runs: z.array(runRecordSchema),
     }),
@@ -137,6 +162,7 @@ const benchmarkSummarySchema = z.looseObject({
     flaky: z.array(z.string()),
     regressing: z.array(z.string()),
     regressing_vs_old: z.array(z.string()),
+    regressing_vs_compare: z.record(z.string(), z.array(z.string())).optional(),
   }),
 });
 

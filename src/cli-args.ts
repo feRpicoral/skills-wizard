@@ -18,6 +18,12 @@ import {
   PROJECT_STYLES,
   type ProjectStyle,
 } from './project/presets.ts';
+import { isGitRef } from './skills/catalog.ts';
+import {
+  DISCOVER_SOURCES,
+  type DiscoverSource,
+  isDiscoverSource,
+} from './skills/discover.ts';
 import { SKILL_MODES, type SkillMode } from './skills/install.ts';
 import { isToolId, type ToolId } from './tools/registry.ts';
 
@@ -39,6 +45,11 @@ export const OPTIONS = {
   'skill-mode': { type: 'string' },
   preset: { type: 'string' },
   style: { type: 'string' },
+  source: { type: 'string' },
+  category: { type: 'string' },
+  ref: { type: 'string' },
+  'include-offensive': { type: 'boolean' },
+  install: { type: 'boolean' },
   catalog: { type: 'boolean' },
   template: { type: 'string' },
   'with-evals': { type: 'boolean' },
@@ -77,6 +88,7 @@ const STRING_OPTIONS = new Set<string>(
 
 export const COMMANDS = [
   'init',
+  'add',
   'sync',
   'update',
   'adopt',
@@ -99,6 +111,18 @@ const ALLOWED: Readonly<Record<Command, readonly OptionName[]>> = {
     'var',
     'link-command',
     'local',
+    'yes',
+    'dry-run',
+  ],
+  add: [
+    'source',
+    'category',
+    'ref',
+    'include-offensive',
+    'install',
+    'global',
+    'project',
+    'tools',
     'yes',
     'dry-run',
   ],
@@ -214,6 +238,39 @@ export function parseProjectStyle(
   return value;
 }
 
+export function parseDiscoverSource(
+  value: string | undefined,
+): DiscoverSource | undefined {
+  if (value === undefined) return undefined;
+  if (!isDiscoverSource(value)) {
+    throw new UsageError(
+      `--source must be one of ${DISCOVER_SOURCES.join(', ')}, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+export function parseRefFlag(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isGitRef(value)) {
+    throw new UsageError(
+      `--ref must be a valid branch, tag or commit SHA, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+export function parseCategoryFlag(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    throw new UsageError('--category must not be empty');
+  }
+  return trimmed;
+}
+
 export function parseVariables(
   values: string[] | undefined,
 ): Record<string, string> {
@@ -325,7 +382,12 @@ export function parseCommand(argv: string[]): ParsedCommand {
   if (!isCommand(command)) {
     throw new UsageError(`Unknown command "${command}"`);
   }
-  if (command !== 'adopt' && command !== 'skill' && positionals.length > 1) {
+  if (
+    command !== 'add' &&
+    command !== 'adopt' &&
+    command !== 'skill' &&
+    positionals.length > 1
+  ) {
     throw new UsageError(
       `Unexpected arguments: ${positionals.slice(1).join(' ')}`,
     );

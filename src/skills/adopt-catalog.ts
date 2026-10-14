@@ -1,7 +1,7 @@
 import { CatalogError, isSystemError, UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
 import { fsErrorReason, removePath, writeTextAtomic } from '../install/fs.ts';
-import { readGlobalManifest } from '../state/manifest.ts';
+import { readManifest } from '../state/manifest.ts';
 import {
   appendCatalogEntries,
   type Catalog,
@@ -114,13 +114,14 @@ export function withCatalogEntries({
 export async function appendEntries(
   file: string,
   entries: readonly CatalogEntry[],
+  failureOutcome = 'nothing was adopted',
 ): Promise<void> {
   try {
     await appendCatalogEntries(file, entries);
   } catch (error) {
     if (!isSystemError(error)) throw error;
     throw new CatalogError(
-      `Could not update ${file} (${fsErrorReason(error) ?? error.message}), so nothing was adopted.`,
+      `Could not update ${file} (${fsErrorReason(error) ?? error.message}), so ${failureOutcome}.`,
       { cause: error },
     );
   }
@@ -133,8 +134,8 @@ export interface RestoreCatalogParams {
   manifestPath: string;
 }
 
-// A failed or conflicted apply may still have recorded some adopted skills in
-// the manifest (actions that ran are kept), so only the entries without an
+// A failed or conflicted apply may still have recorded some skills in the
+// manifest (actions that ran are kept), so only the entries without an
 // installed skill entry in the manifest are taken back out of catalog.yaml.
 export async function restoreCatalog({
   file,
@@ -144,7 +145,7 @@ export async function restoreCatalog({
 }: RestoreCatalogParams): Promise<CatalogEntry[]> {
   let recorded: ReadonlySet<string>;
   try {
-    const manifest = await readGlobalManifest(manifestPath);
+    const manifest = await readManifest(manifestPath);
     recorded = new Set(
       (manifest?.entries ?? []).flatMap((entry) =>
         entry.kind === 'skill' ? [entry.name] : [],

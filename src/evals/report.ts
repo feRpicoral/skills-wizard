@@ -84,23 +84,16 @@ function formatVariantRow(label: string, variant: VariantAggregate): string {
   return `| ${label} | ${passRate} | ${duration} | ${tokens} | ${failed} |`;
 }
 
-interface DeltaRowParams {
+function formatDeltaRow(params: {
   label: string;
   primary: VariantAggregate;
   reference: VariantAggregate;
   timeSeconds: string;
   tokens: string;
-}
-
-function formatDeltaRow({
-  label,
-  primary,
-  reference,
-  timeSeconds,
-  tokens,
-}: DeltaRowParams): string {
-  const tokenCell = tokens === NOT_AVAILABLE ? tokens : `**${tokens}**`;
-  return `| **${label}** | **${formatPassRateDelta(primary, reference)}** | **${timeSeconds}s** | ${tokenCell} | |`;
+}): string {
+  const tokenCell =
+    params.tokens === NOT_AVAILABLE ? params.tokens : `**${params.tokens}**`;
+  return `| **${params.label}** | **${formatPassRateDelta(params.primary, params.reference)}** | **${params.timeSeconds}s** | ${tokenCell} | |`;
 }
 
 function formatAnalysisLine(label: string, items: readonly string[]): string {
@@ -120,17 +113,18 @@ function formatRunHeading(run: EvalRunRecord): string {
   return `#### ${codeSpan(run.variant)} - Run ${run.run_index} (${formatRate(run.grading.summary.pass_rate)}, ${run.timing.total_duration_seconds.toFixed(2)}s, ${tokens}${failure})`;
 }
 
-interface AssertionRowParams {
-  assertion: AssertionAggregate;
-  hasBaseline: boolean;
-  withOldSkill: boolean;
-}
-
 function formatAssertionRow({
   assertion,
   hasBaseline,
   withOldSkill,
-}: AssertionRowParams): string {
+  compareSkillNames,
+}: {
+  assertion: AssertionAggregate;
+  hasBaseline: boolean;
+  withOldSkill: boolean;
+  compareSkillNames: readonly string[];
+}): string {
+  const withCompareSkills = compareSkillNames.length > 0;
   const oldClassification =
     assertion.old_skill_classification ??
     (hasBaseline ? undefined : assertion.classification);
@@ -140,18 +134,32 @@ function formatAssertionRow({
     formatRate(assertion.with_skill_pass_rate),
     ...(hasBaseline ? [formatRate(assertion.baseline_pass_rate)] : []),
     ...(withOldSkill ? [formatRate(assertion.old_skill_pass_rate)] : []),
-    ...(hasBaseline || !withOldSkill
+    ...compareSkillNames.map((name) =>
+      formatRate(assertion.compare_pass_rates?.[name]),
+    ),
+    ...(hasBaseline || (!withOldSkill && !withCompareSkills)
       ? [cellCodeSpan(assertion.classification)]
       : []),
     ...(withOldSkill
       ? [oldClassification ? cellCodeSpan(oldClassification) : NOT_AVAILABLE]
       : []),
+    ...compareSkillNames.map((name, index) => {
+      const compareClassification =
+        assertion.compare_classifications?.[name] ??
+        (!hasBaseline && !withOldSkill && index === 0
+          ? assertion.classification
+          : undefined);
+      return compareClassification
+        ? cellCodeSpan(compareClassification)
+        : NOT_AVAILABLE;
+    }),
   ];
   return `| ${cells.join(' | ')} |`;
 }
 
-function renderOverallSummaryTable(
+function renderOverallSummarySection(
   summary: BenchmarkSummary['run_summary'],
+  compareSkillNames: readonly string[],
 ): string[] {
   const lines: string[] = [
     '## Overall Summary',
@@ -167,6 +175,14 @@ function renderOverallSummaryTable(
   }
   if (summary.old_skill) {
     lines.push(formatVariantRow('`old_skill`', summary.old_skill));
+  }
+  for (const name of compareSkillNames) {
+    const compareVariant = summary.compare_skills?.[name];
+    if (compareVariant) {
+      lines.push(
+        formatVariantRow(cellCodeSpan(`compare:${name}`), compareVariant),
+      );
+    }
   }
   if (summary.delta && summary.without_skill) {
     lines.push(
@@ -190,6 +206,21 @@ function renderOverallSummaryTable(
       }),
     );
   }
+  for (const name of compareSkillNames) {
+    const compareVariant = summary.compare_skills?.[name];
+    const compareDelta = summary.compare_deltas?.[name];
+    if (compareVariant && compareDelta) {
+      lines.push(
+        formatDeltaRow({
+          label: `Delta (vs ${escapeTableCell(name)})`,
+          primary: summary.with_skill,
+          reference: compareVariant,
+          timeSeconds: compareDelta.time_seconds,
+          tokens: compareDelta.tokens,
+        }),
+      );
+    }
+  }
   lines.push('');
   return lines;
 }
@@ -198,26 +229,31 @@ interface AssertionAnalysisSectionParams {
   benchmark: BenchmarkSummary;
   hasBaseline: boolean;
   withOldSkill: boolean;
+  compareSkillNames: readonly string[];
 }
 
 function renderAssertionAnalysisSection({
   benchmark,
   hasBaseline,
   withOldSkill,
+  compareSkillNames,
 }: AssertionAnalysisSectionParams): string[] {
   const lines: string[] = [];
+  const firstCompareName = compareSkillNames[0];
   const referenceLabel = hasBaseline
     ? 'baseline'
     : withOldSkill
       ? '`old_skill`'
-      : undefined;
+      : firstCompareName !== undefined
+        ? codeSpan(`compare:${firstCompareName}`)
+        : undefined;
   const vsReference = referenceLabel ? ` (vs ${referenceLabel})` : '';
 
   if (benchmark.non_discriminating_assertions.length > 0) {
     lines.push(
       '## Non-Discriminating Assertions',
       '',
-      `These assertions passed 100% in both \`with_skill\` and ${hasBaseline ? 'baseline' : '`old_skill`'} runs:`,
+      `These assertions passed 100% in both \`with_skill\` and ${referenceLabel ?? 'reference'} runs:`,
       '',
     );
     for (const item of benchmark.non_discriminating_assertions) {
@@ -227,14 +263,23 @@ function renderAssertionAnalysisSection({
   }
 
   const analysis = benchmark.assertion_analysis;
-  const analysisLines = [
+  const analysisLines: (readonly [string, readonly string[]])[] = [
     [`Pass only with skill${vsReference}`, analysis.pass_only_with_skill],
-    ['Regressing (vs baseline)', analysis.regressing],
+    ...(hasBaseline
+      ? ([['Regressing (vs baseline)', analysis.regressing]] as const)
+      : []),
     ['Regressing (vs `old_skill`)', analysis.regressing_vs_old],
+    ...compareSkillNames.map(
+      (name) =>
+        [
+          `Regressing (vs ${codeSpan(`compare:${name}`)})`,
+          analysis.regressing_vs_compare?.[name] ?? [],
+        ] as const,
+    ),
     [`Pass in both${vsReference}`, analysis.pass_in_both],
     [`Fail in both${vsReference}`, analysis.fail_in_both],
     [`Flaky${vsReference}`, analysis.flaky],
-  ] as const;
+  ];
   if (analysisLines.some(([, items]) => items.length > 0)) {
     lines.push('## Assertion Analysis', '');
     for (const [label, items] of analysisLines) {
@@ -245,72 +290,91 @@ function renderAssertionAnalysisSection({
   return lines;
 }
 
-interface CaseSectionParams {
-  evalCase: CaseBenchmarkSummary;
+interface EvalCasesSectionParams {
+  cases: readonly CaseBenchmarkSummary[];
   hasBaseline: boolean;
   withOldSkill: boolean;
+  compareSkillNames: readonly string[];
 }
 
-function renderCaseSection({
-  evalCase,
+function renderEvalCasesSection({
+  cases,
   hasBaseline,
   withOldSkill,
-}: CaseSectionParams): string[] {
-  const lines: string[] = [
-    `### Case: ${codeSpan(evalCase.case_id)}`,
-    '',
-    '**Prompt:**',
-    '',
-    ...codeBlock(evalCase.prompt),
-    '',
-    '**Expected Output:**',
-    '',
-    ...codeBlock(evalCase.expected_output),
-    '',
-  ];
-
-  if (evalCase.assertions.length > 0) {
-    const header = [
-      'Assertion',
-      'Kind',
-      '`with_skill`',
-      ...(hasBaseline ? ['`without_skill`'] : []),
-      ...(withOldSkill ? ['`old_skill`'] : []),
-      ...(hasBaseline
-        ? ['Classification (vs baseline)']
-        : withOldSkill
-          ? []
-          : ['Classification']),
-      ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
-    ];
+  compareSkillNames,
+}: EvalCasesSectionParams): string[] {
+  const lines: string[] = ['## Eval Cases', ''];
+  const withCompareSkills = compareSkillNames.length > 0;
+  for (const evalCase of cases) {
     lines.push(
-      `| ${header.join(' | ')} |`,
-      `| ${header.map(() => '---').join(' | ')} |`,
+      `### Case: ${codeSpan(evalCase.case_id)}`,
+      '',
+      '**Prompt:**',
+      '',
+      ...codeBlock(evalCase.prompt),
+      '',
+      '**Expected Output:**',
+      '',
+      ...codeBlock(evalCase.expected_output),
+      '',
     );
-    for (const assertion of evalCase.assertions) {
-      lines.push(formatAssertionRow({ assertion, hasBaseline, withOldSkill }));
-    }
-    lines.push('');
-  }
 
-  for (const run of evalCase.runs) {
-    lines.push(formatRunHeading(run), '');
-    if (run.timing.error) {
-      lines.push(`- **Run error:** ${collapseWhitespace(run.timing.error)}`);
-    }
-    for (const exp of run.grading.expectations) {
-      const badge = exp.passed ? 'PASS' : 'FAIL';
+    if (evalCase.assertions.length > 0) {
+      const header = [
+        'Assertion',
+        'Kind',
+        '`with_skill`',
+        ...(hasBaseline ? ['`without_skill`'] : []),
+        ...(withOldSkill ? ['`old_skill`'] : []),
+        ...compareSkillNames.map((name) => cellCodeSpan(`compare:${name}`)),
+        ...(hasBaseline
+          ? ['Classification (vs baseline)']
+          : !withOldSkill && !withCompareSkills
+            ? ['Classification']
+            : []),
+        ...(withOldSkill ? ['Classification (vs `old_skill`)'] : []),
+        ...compareSkillNames.map(
+          (name) => `Classification (vs ${cellCodeSpan(`compare:${name}`)})`,
+        ),
+      ];
       lines.push(
-        `- **[${badge}]** ${collapseWhitespace(exp.text)}: ${collapseWhitespace(exp.evidence)}`,
+        `| ${header.join(' | ')} |`,
+        `| ${header.map(() => '---').join(' | ')} |`,
       );
+      for (const assertion of evalCase.assertions) {
+        lines.push(
+          formatAssertionRow({
+            assertion,
+            hasBaseline,
+            withOldSkill,
+            compareSkillNames,
+          }),
+        );
+      }
+      lines.push('');
     }
-    lines.push('');
+
+    for (const run of evalCase.runs) {
+      lines.push(formatRunHeading(run), '');
+      if (run.timing.error) {
+        lines.push(`- **Run error:** ${collapseWhitespace(run.timing.error)}`);
+      }
+      for (const exp of run.grading.expectations) {
+        const badge = exp.passed ? 'PASS' : 'FAIL';
+        lines.push(
+          `- **[${badge}]** ${collapseWhitespace(exp.text)}: ${collapseWhitespace(exp.evidence)}`,
+        );
+      }
+      lines.push('');
+    }
   }
   return lines;
 }
 
 export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   const { metadata, run_summary: summary, cases } = benchmark;
+  const compareSkillNames =
+    metadata.compare_skills ?? Object.keys(summary.compare_skills ?? {});
   const lines: string[] = [
     `# Skill Evaluation Report: ${codeSpan(metadata.skill_name)}`,
     '',
@@ -323,6 +387,11 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
   if (metadata.compare_ref) {
     lines.push(`- **Compared against ref:** ${codeSpan(metadata.compare_ref)}`);
   }
+  if (compareSkillNames.length > 0) {
+    lines.push(
+      `- **Compared against skills:** ${compareSkillNames.map(codeSpan).join(', ')}`,
+    );
+  }
   lines.push('');
 
   if (metadata.warnings.length > 0) {
@@ -333,9 +402,9 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
     lines.push('');
   }
 
-  lines.push(...renderOverallSummaryTable(summary));
+  lines.push(...renderOverallSummarySection(summary, compareSkillNames));
 
-  // Without baseline runs, assertions are classified against old_skill.
+  // Without baseline runs, assertions are classified against old_skill or the first compared skill.
   const hasBaseline = summary.without_skill !== undefined;
   const withOldSkill = summary.old_skill !== undefined;
   lines.push(
@@ -343,35 +412,25 @@ export function renderBenchmarkReport(benchmark: BenchmarkSummary): string {
       benchmark,
       hasBaseline,
       withOldSkill,
+      compareSkillNames,
+    }),
+    ...renderEvalCasesSection({
+      cases,
+      hasBaseline,
+      withOldSkill,
+      compareSkillNames,
     }),
   );
-
-  lines.push('## Eval Cases', '');
-  for (const evalCase of cases) {
-    lines.push(
-      ...renderCaseSection({
-        evalCase,
-        hasBaseline,
-        withOldSkill,
-      }),
-    );
-  }
 
   return lines.join('\n');
 }
 
-interface CountParams {
+function formatRateWithCount(params: {
   value: number | null;
   numerator: number;
   denominator: number;
-}
-
-function formatRateWithCount({
-  value,
-  numerator,
-  denominator,
-}: CountParams): string {
-  return `${formatRate(value)} (${numerator}/${denominator})`;
+}): string {
+  return `${formatRate(params.value)} (${params.numerator}/${params.denominator})`;
 }
 
 export function renderTriggerReport(summary: TriggerBenchmarkSummary): string {

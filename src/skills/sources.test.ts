@@ -75,10 +75,24 @@ test('ensureSource widens an existing checkout when the catalog adds a path', as
 
   const dir = await ensureSource(cache, {
     repo: REPO,
-    paths: ['skills/alpha', 'skills/beta'],
+    paths: ['skills/beta'],
   });
+  await ensureSource(cache, { repo: REPO, paths: [] });
 
   assert.deepEqual(await readdir(join(dir, 'skills')), ['alpha', 'beta']);
+});
+
+test('ensureSource preserves a full repository checkout when later called with empty or partial paths', async (t) => {
+  const upstream = await createUpstream(t, FILES);
+  const cache = await cacheFor(t, upstream.url);
+  await ensureSource(cache, { repo: REPO, paths: ['.'] });
+
+  const dir = await ensureSource(cache, { repo: REPO, paths: [] });
+
+  assert.equal(
+    await readFile(join(dir, 'tools', 'build.sh'), 'utf8'),
+    'echo build\n',
+  );
 });
 
 test('checkSource reuses a fresh check and queries the remote once it expires', async (t) => {

@@ -4,6 +4,10 @@ import type { Scope } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import { UsageError } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
+import { readTextIfExists } from '../install/fs.ts';
+import type { Plan } from '../install/plan.ts';
+import { appendEntries, restoreCatalog } from '../skills/adopt-catalog.ts';
+import type { CatalogEntry } from '../skills/catalog.ts';
 import { resolveSkillSources, type SkillSource } from '../skills/install.ts';
 import {
   findSkill,
@@ -12,6 +16,7 @@ import {
 } from '../skills/library.ts';
 import { readSkillLock, skillLockPath } from '../skills/lock.ts';
 import type { SourceCache } from '../skills/sources.ts';
+import { confirmAndApply } from './confirm.ts';
 import { notify } from './output.ts';
 
 export function checkExplicitSkills(
@@ -130,4 +135,82 @@ export async function warnLockedSkills(
       level: 'warn',
     });
   }
+}
+
+export interface ApplyWithCatalogRollbackParams {
+  ctx: Context;
+  prompting: boolean;
+  plan: Plan;
+  file: string;
+  entries: readonly CatalogEntry[];
+  failureOutcome?: string;
+  manifestPath: string;
+  yes: boolean;
+  dryRun: boolean;
+}
+
+export interface ApplyWithCatalogRollbackOutcome {
+  code: number;
+  applied: boolean;
+  keptEntries: CatalogEntry[];
+}
+
+/**
+ * Confirms and applies `plan` while transactionally appending `entries` to
+ * `catalog.yaml` (`file`) and rolling back any entries whose skills were not
+ * recorded in the manifest.
+ */
+export async function applyWithCatalogRollback({
+  ctx,
+  prompting,
+  plan,
+  file,
+  entries,
+  failureOutcome,
+  manifestPath,
+  yes,
+  dryRun,
+}: ApplyWithCatalogRollbackParams): Promise<ApplyWithCatalogRollbackOutcome> {
+  let catalogBefore: string | null | undefined;
+  const writeCatalog = async () => {
+    if (entries.length === 0) return;
+    const original = await readTextIfExists(file);
+    await appendEntries(file, entries, failureOutcome);
+    catalogBefore = original;
+  };
+  let result;
+  try {
+    result = await confirmAndApply(ctx, plan, {
+      yes,
+      dryRun,
+      beforeApply: writeCatalog,
+    });
+  } catch (error) {
+    if (catalogBefore !== undefined) {
+      await restoreCatalog({
+        file,
+        original: catalogBefore,
+        entries,
+        manifestPath,
+      });
+    }
+    throw error;
+  }
+  const keptEntries =
+    catalogBefore !== undefined
+      ? await restoreCatalog({
+          file,
+          original: catalogBefore,
+          entries,
+          manifestPath,
+        })
+      : [...entries];
+  if (result.applied && keptEntries.length > 0) {
+    notify({
+      ctx,
+      prompting,
+      message: `Added to catalog.yaml: ${keptEntries.map((entry) => entry.name).join(', ')}`,
+    });
+  }
+  return { code: result.code, applied: result.applied, keptEntries };
 }

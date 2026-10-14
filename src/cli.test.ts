@@ -540,12 +540,18 @@ test('--baseline <ref> cannot be combined with --compare or another --baseline',
     [2, 2, 2, 2, 2, 2],
   );
   const messages = results.map((result) => result.stderr);
-  assert.match(messages[0] ?? '', /either --baseline <ref> or --compare/);
-  assert.match(messages[1] ?? '', /either --baseline <ref> or --compare/);
+  assert.match(
+    messages[0] ?? '',
+    /Use either --baseline <ref> or --compare <ref>\|<skill-a>,<skill-b>, not both/,
+  );
+  assert.match(
+    messages[1] ?? '',
+    /Use either --baseline <ref> or --compare <ref>\|<skill-a>,<skill-b>, not both/,
+  );
   assert.match(messages[2] ?? '', /Use one form of --baseline/);
   assert.match(messages[3] ?? '', /--baseline <ref> was given more than once/);
   assert.match(messages[4] ?? '', /--baseline ref must not start with "-"/);
-  assert.match(messages[5] ?? '', /--compare ref must not start with "-"/);
+  assert.match(messages[5] ?? '', /--compare value must not start with "-"/);
 });
 
 test('a malformed AGY_EXTRA_ARGS only fails agy evals', async (t) => {
@@ -806,4 +812,34 @@ test('re-running init with --style or --preset updates preset blocks and skills,
   assert.equal(freshNoneManifest.blocks.length > 0, true);
   assert.equal(freshNoneManifest.blocks.includes('stack/prisma'), false);
   assert.deepEqual(freshNoneManifest.skills, []);
+});
+
+test('add rejects invalid --source, --ref, --category, and disallowed flags', async (t) => {
+  const { cli } = await sandbox(t);
+
+  const [badSource, badRef, emptyCategory, badFlag, missingTarget] =
+    await Promise.all([
+      cli(['add', 'react', '--source', 'npm']),
+      cli(['add', 'owner/repo', '--ref=-bad-ref']),
+      cli(['add', 'owner/repo', '--category', '   ']),
+      cli(['add', 'owner/repo', '--preset', 'node-tool']),
+      cli(['add', '--yes']),
+    ]);
+
+  assert.equal(badSource.code, 2);
+  assert.match(
+    badSource.stderr,
+    /--source must be one of skills-sh, awesome, all/,
+  );
+  assert.equal(badRef.code, 2);
+  assert.match(badRef.stderr, /--ref must be a valid branch, tag or commit/);
+  assert.equal(emptyCategory.code, 2);
+  assert.match(emptyCategory.stderr, /--category must not be empty/);
+  assert.equal(badFlag.code, 2);
+  assert.match(badFlag.stderr, /--preset does not apply to add/);
+  assert.equal(missingTarget.code, 2);
+  assert.match(
+    missingTarget.stderr,
+    /Pass a search query, owner\/repo\[@skill\], or GitHub URL/,
+  );
 });

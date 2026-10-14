@@ -96,6 +96,38 @@ export function resolveSearchPath(env: Environment = process.env): string[] {
   return (env.PATH ?? '').split(delimiter).filter(Boolean);
 }
 
+export const DEFAULT_SKILLS_SH_URL = 'https://skills.sh';
+
+export function resolveSkillsShUrl(env: Environment = process.env): string {
+  const value = env.SKILLS_SH_URL?.trim();
+  if (!value) return DEFAULT_SKILLS_SH_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new EnvironmentError(
+      `SKILLS_SH_URL must be an http:// or https:// URL, got "${value}"`,
+      { cause: error },
+    );
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new EnvironmentError(
+      `SKILLS_SH_URL must be an http:// or https:// URL, got "${value}"`,
+    );
+  }
+  if (
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.username !== '' ||
+    parsed.password !== ''
+  ) {
+    throw new EnvironmentError(
+      `SKILLS_SH_URL must not include credentials, query parameters, or fragments, got "${value}"`,
+    );
+  }
+  return value.replace(/\/+$/, '');
+}
+
 // What `git rev-parse --local-env-vars` lists, plus GIT_NAMESPACE and the
 // GIT_CONFIG_KEY_n/VALUE_n pairs. This also drops `-c` settings a caller
 // passed (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT); put settings the cache
