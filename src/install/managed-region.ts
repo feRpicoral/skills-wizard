@@ -218,9 +218,7 @@ export function planExcludeRegion({
   previous,
 }: FileActionParams<ExcludeRegionTarget>): PlannedAction {
   try {
-    const body = target.paths
-      ? target.paths.map((path) => gitignorePattern(path)).join('\n')
-      : target.body;
+    const body = target.paths.map((path) => gitignorePattern(path)).join('\n');
     const next = upsertRegion({
       existing: file.existing,
       body,
