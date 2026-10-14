@@ -35,7 +35,7 @@ export interface SkillScan {
   skipped: string[];
 }
 
-interface SkillRoot {
+export interface SkillRoot {
   dir: string;
   kind: 'canonical' | 'tool' | 'external' | 'plugin';
 }
@@ -57,7 +57,7 @@ async function locate(path: string): Promise<string> {
   }
 }
 
-async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
+export async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
   const roots: SkillRoot[] = [];
   const seen = new Set<string>();
   const add = async (root: SkillRoot) => {
@@ -77,18 +77,26 @@ async function skillRoots(paths: Paths): Promise<SkillRoot[]> {
       await add({ dir, kind: 'external' });
     }
   }
+  await add({ dir: join(paths.codexHome, 'skills'), kind: 'external' });
 
-  const pluginsDir = join(paths.geminiHome, 'config', 'plugins');
-  let plugins;
-  try {
-    plugins = await readDirIfExists(pluginsDir);
-  } catch (error) {
-    if (fsErrorReason(error) === undefined) throw error;
-    plugins = null;
-  }
-  for (const entry of plugins ?? []) {
-    if (entry.name.startsWith('.')) continue;
-    await add({ dir: join(pluginsDir, entry.name, 'skills'), kind: 'plugin' });
+  for (const pluginsDir of [
+    join(paths.geminiHome, 'config', 'plugins'),
+    join(paths.geminiHome, 'antigravity-cli', 'plugins'),
+  ]) {
+    let plugins;
+    try {
+      plugins = await readDirIfExists(pluginsDir);
+    } catch (error) {
+      if (fsErrorReason(error) === undefined) throw error;
+      plugins = null;
+    }
+    for (const entry of plugins ?? []) {
+      if (entry.name.startsWith('.')) continue;
+      await add({
+        dir: join(pluginsDir, entry.name, 'skills'),
+        kind: 'plugin',
+      });
+    }
   }
   return roots;
 }

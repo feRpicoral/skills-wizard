@@ -231,3 +231,65 @@ export async function sameFile({
   ]);
   return real !== null && real === otherReal;
 }
+
+export interface WalkDirectoriesParams {
+  root: string;
+  maxDepth: number;
+  skipNames?: ReadonlySet<string>;
+  followSymlinks?: boolean;
+}
+
+export interface WalkDirectoryEntry {
+  path: string;
+  name: string;
+  depth: number;
+}
+
+/**
+ * Walks subdirectories under `root` up to `maxDepth`, optionally following
+ * symlinked directories while tracking visited canonical paths to prevent
+ * symlink loops.
+ */
+export async function* walkDirectories({
+  root,
+  maxDepth,
+  skipNames,
+  followSymlinks = false,
+}: WalkDirectoriesParams): AsyncGenerator<WalkDirectoryEntry> {
+  const visited = new Set<string>();
+  if (followSymlinks) {
+    const rootReal = await realLocation(root).catch(() => null);
+    if (rootReal) visited.add(rootReal);
+  }
+  const pending: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+  while (pending.length > 0) {
+    const next = pending.shift();
+    if (!next) break;
+    let entries;
+    try {
+      entries = await readDirIfExists(next.dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries ?? []) {
+      if (skipNames?.has(entry.name)) continue;
+      const entryPath = join(next.dir, entry.name);
+      const isDir =
+        entry.isDirectory() ||
+        (followSymlinks &&
+          entry.isSymbolicLink() &&
+          (await isDirectory(entryPath)));
+      if (!isDir) continue;
+      if (followSymlinks) {
+        const real = await realLocation(entryPath).catch(() => null);
+        if (!real || visited.has(real)) continue;
+        visited.add(real);
+      }
+      const depth = next.depth + 1;
+      yield { path: entryPath, name: entry.name, depth };
+      if (depth <= maxDepth) {
+        pending.push({ dir: entryPath, depth });
+      }
+    }
+  }
+}

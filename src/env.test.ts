@@ -3,7 +3,13 @@ import { execFile } from 'node:child_process';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
-import { gitEnvironment, resolvePaths } from './env.ts';
+import {
+  gitEnvironment,
+  resolveAgyBin,
+  resolveAgyConfig,
+  resolveAgyExtraArgs,
+  resolvePaths,
+} from './env.ts';
 import { EnvironmentError } from './errors.ts';
 import { tempDir } from './test-support/fixtures.ts';
 import { isolatedGitEnv } from './test-support/git.ts';
@@ -22,6 +28,7 @@ test('resolvePaths honors tool home overrides', () => {
   assert.deepEqual(paths, {
     home: '/home/me',
     stateDir: '/home/me/.agents/agents-config',
+    evalsDir: '/home/me/.agents/agents-config/evals',
     skillsDir: '/home/me/.agents/skills',
     sourcesDir: '/cache/agents-config/sources',
     claudeHome: '/claude',
@@ -74,6 +81,66 @@ test('gitEnvironment keeps the environment and turns off credential prompts', ()
   const env = gitEnvironment({ PATH: '/bin' });
 
   assert.deepEqual(env, { PATH: '/bin', GIT_TERMINAL_PROMPT: '0' });
+});
+
+test('resolveAgyConfig reads AGY_BIN and parses AGY_EXTRA_ARGS JSON array', () => {
+  const config = resolveAgyConfig({
+    AGY_BIN: '/opt/agy/bin/agy',
+    AGY_EXTRA_ARGS: '["--verbose","--model=test"]',
+  });
+
+  assert.deepEqual(config, {
+    bin: '/opt/agy/bin/agy',
+    extraArgs: ['--verbose', '--model=test'],
+  });
+});
+
+test('resolveAgyConfig defaults to empty extraArgs when unset', () => {
+  const config = resolveAgyConfig({});
+
+  assert.deepEqual(config, { extraArgs: [] });
+});
+
+test('resolveAgyBin and resolveAgyConfig reject a relative AGY_BIN', () => {
+  assert.throws(
+    () => resolveAgyBin({ AGY_BIN: 'bin/agy' }),
+    (error) =>
+      error instanceof EnvironmentError &&
+      /AGY_BIN must be an absolute path/.test(error.message),
+  );
+  assert.throws(() => resolveAgyConfig({ AGY_BIN: 'agy' }), EnvironmentError);
+  assert.equal(resolveAgyBin({ AGY_BIN: '  ' }), undefined);
+  assert.equal(resolveAgyBin({ AGY_BIN: '/opt/agy' }), '/opt/agy');
+});
+
+test('resolveAgyBin ignores AGY_EXTRA_ARGS so other runners never parse it', () => {
+  assert.equal(
+    resolveAgyBin({ AGY_BIN: '/opt/agy', AGY_EXTRA_ARGS: 'not-json' }),
+    '/opt/agy',
+  );
+});
+
+test('resolveAgyExtraArgs ignores AGY_BIN so --binary can replace it', () => {
+  assert.deepEqual(
+    resolveAgyExtraArgs({ AGY_BIN: 'relative/agy', AGY_EXTRA_ARGS: '["-v"]' }),
+    ['-v'],
+  );
+  assert.deepEqual(resolveAgyExtraArgs({}), []);
+});
+
+test('resolveAgyConfig rejects invalid AGY_EXTRA_ARGS JSON or non-string arrays', () => {
+  assert.throws(
+    () => resolveAgyConfig({ AGY_EXTRA_ARGS: 'not-json' }),
+    EnvironmentError,
+  );
+  assert.throws(
+    () => resolveAgyConfig({ AGY_EXTRA_ARGS: '{"flag":true}' }),
+    EnvironmentError,
+  );
+  assert.throws(
+    () => resolveAgyConfig({ AGY_EXTRA_ARGS: '[123]' }),
+    EnvironmentError,
+  );
 });
 
 test('gitEnvironment drops variables that point git at another repository', () => {

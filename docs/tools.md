@@ -17,6 +17,18 @@ Gemini CLI also reads `~/.gemini/skills/` and Copilot also reads `$COPILOT_HOME/
 
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` and `XDG_CACHE_HOME` must be absolute paths when set. `GEMINI_CLI_HOME` is not supported: the shared file always lives in `~/.gemini`, because Antigravity reads it from there.
 
+## Skill evaluation
+
+`agents-config skill eval` and `skill triggers` drive one agent CLI per run (`--runner agy|claude|codex|gemini`, auto-detected on `PATH` in that order, or `fake` for a structural dry run that calls no agent and whose results and trigger decisions are synthetic). `--binary <path>` overrides the runner's executable.
+
+| Variable                     | Used by        | Meaning                                                                                                                                             |
+| ---------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGY_BIN`                    | `agy` evals    | Absolute path to the `agy` binary. When it names an existing file, auto-detection picks `agy`. `--binary` wins over it.                             |
+| `AGY_EXTRA_ARGS`             | `agy` evals    | JSON array of strings appended to every `agy` task and grader invocation, for example `["--model=…"]`. Read only for `agy` runs.                    |
+| `GEMINI_CLI_TRUST_WORKSPACE` | `gemini` evals | Not read: the CLI sets it to `true` for every `gemini` run so a headless run trusts the temporary workspace when `security.folderTrust` is enabled. |
+
+Eval runs use your real home directory, so each agent CLI reads its usual settings, credentials and system-wide skills. They are not confined to the temporary workspace: `--sandbox` is passed only to `agy` and `gemini`. Claude Code has no sandbox flag, so the CLI prints a warning for `--runner claude --sandbox`, and Codex task runs always use `--sandbox workspace-write`. Each runner gets only the environment the CLI passes to it. [docs/architecture.md](architecture.md#runners) lists the flags each runner gets.
+
 ## Sources
 
 - [AGENTS.md](https://agents.md)
@@ -27,4 +39,5 @@ Gemini CLI also reads `~/.gemini/skills/` and Copilot also reads `$COPILOT_HOME/
 - [Codex AGENTS.md](https://developers.openai.com/codex/guides/agents-md)
 - [Copilot customization](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
 - [Gemini CLI agent skills](https://geminicli.com/docs/cli/skills)
+- [Gemini CLI trusted folders](https://geminicli.com/docs/cli/trusted-folders)
 - [Copilot agent skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills)

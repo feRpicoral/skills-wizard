@@ -1,11 +1,14 @@
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
+import { z } from 'zod';
+
 import { EnvironmentError } from './errors.ts';
 
 export interface Paths {
   home: string;
   stateDir: string;
+  evalsDir: string;
   skillsDir: string;
   sourcesDir: string;
   claudeHome: string;
@@ -14,6 +17,11 @@ export interface Paths {
   copilotHome: string;
   localBin: string;
   applicationsDir: string;
+}
+
+export interface AgyConfig {
+  bin?: string;
+  extraArgs: string[];
 }
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -32,10 +40,12 @@ function directory(env: Environment, name: string): string | undefined {
 export function resolvePaths(env: Environment = process.env): Paths {
   const home = directory(env, 'HOME') ?? homedir();
   const cache = directory(env, 'XDG_CACHE_HOME') ?? join(home, '.cache');
+  const stateDir = join(home, '.agents', 'agents-config');
 
   return {
     home,
-    stateDir: join(home, '.agents', 'agents-config'),
+    stateDir,
+    evalsDir: join(stateDir, 'evals'),
     skillsDir: join(home, '.agents', 'skills'),
     sourcesDir: join(cache, 'agents-config', 'sources'),
     claudeHome: directory(env, 'CLAUDE_CONFIG_DIR') ?? join(home, '.claude'),
@@ -45,6 +55,41 @@ export function resolvePaths(env: Environment = process.env): Paths {
     localBin: join(home, '.local', 'bin'),
     applicationsDir: '/Applications',
   };
+}
+
+// AGY_BIN must be absolute so the eval runner never depends on the PATH or
+// the working directory of each isolated eval workspace.
+export function resolveAgyBin(
+  env: Environment = process.env,
+): string | undefined {
+  const value = env.AGY_BIN?.trim();
+  if (!value) return undefined;
+  if (!isAbsolute(value)) {
+    throw new EnvironmentError(
+      `AGY_BIN must be an absolute path, got "${value}"`,
+    );
+  }
+  return value;
+}
+
+const stringArraySchema = z.array(z.string());
+
+export function resolveAgyExtraArgs(env: Environment = process.env): string[] {
+  const rawExtra = env.AGY_EXTRA_ARGS?.trim();
+  if (!rawExtra) return [];
+  try {
+    return stringArraySchema.parse(JSON.parse(rawExtra));
+  } catch (error) {
+    throw new EnvironmentError(
+      'AGY_EXTRA_ARGS must be a JSON array of strings',
+      { cause: error },
+    );
+  }
+}
+
+export function resolveAgyConfig(env: Environment = process.env): AgyConfig {
+  const bin = resolveAgyBin(env);
+  return { ...(bin ? { bin } : {}), extraArgs: resolveAgyExtraArgs(env) };
 }
 
 export function resolveSearchPath(env: Environment = process.env): string[] {

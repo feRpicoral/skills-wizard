@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "skill_name": "dockerfile-hardener",
+    "skill_path": "/repo/skills/dockerfile-hardener",
+    "runner": "codex",
+    "split": "validation",
+    "runs_per_query": 3,
+    "threshold": 0.5,
+    "timestamp": "2026-04-12T12:45:00.000Z",
+    "possibly_contaminated": false,
+    "warnings": []
+  },
+  "metrics": {
+    "total_queries": 8,
+    "positive_queries": 4,
+    "negative_queries": 4,
+    "errored_queries": 0,
+    "true_positives": 2,
+    "false_positives": 1,
+    "true_negatives": 3,
+    "false_negatives": 2,
+    "recall": 0.5,
+    "precision": 0.6667,
+    "specificity": 0.75,
+    "false_positive_rate": 0.25,
+    "accuracy": 0.625
+  },
+  "queries": [
+    {
+      "query": "Can you lock down our container image? Security keeps flagging it",
+      "should_trigger": true,
+      "trigger_count": 2,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0.6667,
+      "passed": true
+    },
+    {
+      "query": "Our image is 1.2 GB, slim it down",
+      "should_trigger": true,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": false
+    },
+    {
+      "query": "Stop the app container from running as root",
+      "should_trigger": true,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": true
+    },
+    {
+      "query": "Is our Dockerfile production ready?",
+      "should_trigger": true,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": false
+    },
+    {
+      "query": "Write a Makefile target that runs docker build",
+      "should_trigger": false,
+      "trigger_count": 3,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 1,
+      "passed": false
+    },
+    {
+      "query": "How do I prune dangling Docker images?",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    },
+    {
+      "query": "Add a .dockerignore for node_modules",
+      "should_trigger": false,
+      "trigger_count": 1,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0.3333,
+      "passed": true
+    },
+    {
+      "query": "Set resource limits for the API pod in Kubernetes",
+      "should_trigger": false,
+      "trigger_count": 0,
+      "runs": 3,
+      "errored_runs": 0,
+      "trigger_rate": 0,
+      "passed": true
+    }
+  ]
+}
