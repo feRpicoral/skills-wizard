@@ -62,7 +62,7 @@ test('an import line that already existed is kept when Claude Code is deselected
     (action) => action.path === join(dir, 'CLAUDE.md'),
   );
   assert.equal(claude?.status, 'unchanged');
-  assert.equal(claude?.reason, 'the line was there before agents-config');
+  assert.equal(claude?.reason, 'the line was there before skills-wizard');
   assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n');
 });
 
@@ -111,11 +111,11 @@ test('keep-local patterns are relative to the repository root, one region per pr
   );
   assert.match(
     exclude,
-    /# BEGIN:agents-config packages\/app\n\/packages\/app\/AGENTS\.md\n\/packages\/app\/\.agents\/agents-config\.json\n# END:agents-config packages\/app/,
+    /# BEGIN:skills-wizard packages\/app\n\/packages\/app\/AGENTS\.md\n\/packages\/app\/\.agents\/skills-wizard\.json\n# END:skills-wizard packages\/app/,
   );
   assert.match(
     exclude,
-    /# BEGIN:agents-config packages\/web\n\/packages\/web\/AGENTS\.md/,
+    /# BEGIN:skills-wizard packages\/web\n\/packages\/web\/AGENTS\.md/,
   );
 });
 
@@ -163,7 +163,6 @@ test('keep-local marks a conflict instead of crashing buildPlan when a relative 
       blocks: ['core/style'],
       skills: [],
       variables: {},
-      linkCommand: false,
       keepLocal: true,
       skillMode: 'copy',
     },
@@ -237,17 +236,17 @@ test('displayPath normalizes home directories with trailing slashes and commandO
   );
   assert.equal(displayPath({ path: '/Users/me', home: '/Users/me/' }), '~');
 
-  const prev = process.env.AGENTS_CONFIG_TEST_VAR;
-  process.env.AGENTS_CONFIG_TEST_VAR = 'preserved-from-process-env';
+  const prev = process.env.SKILLS_WIZARD_TEST_VAR;
+  process.env.SKILLS_WIZARD_TEST_VAR = 'preserved-from-process-env';
   try {
     const out = await commandOutput(
       process.execPath,
-      ['-e', 'process.stdout.write(process.env.AGENTS_CONFIG_TEST_VAR ?? "")'],
+      ['-e', 'process.stdout.write(process.env.SKILLS_WIZARD_TEST_VAR ?? "")'],
       { home: '/tmp' },
     );
     assert.equal(out, 'preserved-from-process-env');
   } finally {
-    if (prev === undefined) delete process.env.AGENTS_CONFIG_TEST_VAR;
-    else process.env.AGENTS_CONFIG_TEST_VAR = prev;
+    if (prev === undefined) delete process.env.SKILLS_WIZARD_TEST_VAR;
+    else process.env.SKILLS_WIZARD_TEST_VAR = prev;
   }
 });

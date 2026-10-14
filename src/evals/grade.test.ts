@@ -359,7 +359,7 @@ test('gradeEvalRun runs the grader in an empty temporary folder that names neith
     env: isolatedGitEnv(root),
   });
 
-  assert.match(basename(graderDir), /^agents-config-grader-/);
+  assert.match(basename(graderDir), /^skills-wizard-grader-/);
   assert.doesNotMatch(graderDir, /with_skill|without_skill|old_skill/);
   assert.ok(!graderDir.startsWith(root));
   assert.deepEqual(graderDirEntries, []);

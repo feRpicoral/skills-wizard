@@ -34,7 +34,7 @@ export interface SkillCommandOptions {
 }
 
 const SKILL_USAGE =
-  'Usage: agents-config skill validate [path...] [--catalog] | new <name> | eval <name> | triggers <name> | report <name|run-dir> [iteration-dir]';
+  'Usage: skills-wizard skill validate [path...] [--catalog] | new <name> | eval <name> | triggers <name> | report <name|run-dir> [iteration-dir]';
 
 export async function runSkill(
   ctx: Context,

@@ -32,7 +32,7 @@ async function projectCommand(
     ctx,
     location: {
       scope: 'project',
-      manifestPath: join(project, '.agents', 'agents-config.json'),
+      manifestPath: join(project, '.agents', 'skills-wizard.json'),
       project: { dir: project, title: 'app' },
     },
     names: ['githubUsername'],
@@ -44,7 +44,7 @@ test('setVariablesCommand leaves plain project paths unquoted', async (t) => {
 
   assert.equal(
     command,
-    'agents-config init --project ~/code/app --var githubUsername=<value>',
+    'skills-wizard init --project ~/code/app --var githubUsername=<value>',
   );
 });
 
@@ -55,7 +55,7 @@ test('setVariablesCommand quotes project paths for POSIX shells', async (t) => {
 
   assert.equal(
     command,
-    "agents-config init --project ~/'my '\\''app'\\'' (copy)' --var githubUsername=<value>",
+    "skills-wizard init --project ~/'my '\\''app'\\'' (copy)' --var githubUsername=<value>",
   );
 });
 

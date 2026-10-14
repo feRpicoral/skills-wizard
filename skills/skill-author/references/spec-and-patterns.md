@@ -10,7 +10,7 @@
 
 ## 1. Frontmatter Specification
 
-Strict validation (`agents-config skill validate skills/<name>`, or `yarn agents-config skill validate skills/<name>` inside the agents-config repository) enforces the Agent Skills specification. Without the CLI, check each row by hand:
+Strict validation (`skills-wizard skill validate skills/<name>`, or `yarn skills-wizard skill validate skills/<name>` inside the skills-wizard repository) enforces the Agent Skills specification. Without the CLI, check each row by hand:
 
 | Field           | Required | Constraints                                                                                                                      |
 | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -71,4 +71,4 @@ When adding scripts under `skills/<name>/scripts/`:
 - [ ] Every case has at least one assertion; scripted ones use only `file_exists`, `file_absent`, `regex`, `json_valid`, or `command`, and check conventions the skill teaches.
 - [ ] At least one case prompt is casual and underspecified, the way a user would actually ask.
 - [ ] `evals/trigger_queries.json` has 10 positive and 10 near-miss negative queries written as plain requests, with no labels such as `[negative]`.
-- [ ] `agents-config skill validate skills/<name>` exits `0` with 0 errors and 0 warnings (or every item above was checked by hand when the CLI is unavailable).
+- [ ] `skills-wizard skill validate skills/<name>` exits `0` with 0 errors and 0 warnings (or every item above was checked by hand when the CLI is unavailable).

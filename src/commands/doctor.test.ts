@@ -56,7 +56,7 @@ test('doctor warns that sync will drop blocks that left the library', async (t) 
   const code = await runDoctor(ctx, { scope: 'global' });
 
   assert.equal(code, 0);
-  assert.match(output(), /core\/removed; agents-config sync will drop/);
+  assert.match(output(), /core\/removed; skills-wizard sync will drop/);
   assert.match(await readFile(manifestPath(home), 'utf8'), /core\/removed/);
 });
 
@@ -78,7 +78,7 @@ test('doctor reports a variable a block gained without crashing', async (t) => {
   assert.equal(code, 1);
   assert.match(
     output(),
-    /^error\s+.*githubUsername.*agents-config init --global --var githubUsername=<value>/m,
+    /^error\s+.*githubUsername.*skills-wizard init --global --var githubUsername=<value>/m,
   );
 });
 
@@ -93,10 +93,10 @@ test('doctor still reports conflicts when a gained variable has no value', async
     dryRun: false,
   });
   await clearRecordedVariables(manifestPath(home));
-  const marker = '<!-- BEGIN:agents-config -->';
+  const marker = '<!-- BEGIN:skills-wizard -->';
   await writeFile(
     join(home, '.codex', 'AGENTS.md'),
-    `${marker}\n${marker}\n<!-- END:agents-config -->\n`,
+    `${marker}\n${marker}\n<!-- END:skills-wizard -->\n`,
   );
 
   const { ctx, output } = createCtx();
@@ -127,7 +127,7 @@ test('doctor says sync will record a gained variable it can look up', async (t) 
   assert.equal(code, 0);
   assert.match(
     output(),
-    /^warn\s+.*agents-config sync will record githubUsername=hubot/m,
+    /^warn\s+.*skills-wizard sync will record githubUsername=hubot/m,
   );
   assert.doesNotMatch(output(), /init --global --var/);
 });
@@ -204,7 +204,7 @@ test('doctor warns that sync will drop blocks no longer available for the scope'
   const code = await runDoctor(ctx, { scope: 'project', projectDir: project });
 
   assert.equal(code, 0);
-  assert.match(output(), /core\/identity; agents-config sync will drop/);
+  assert.match(output(), /core\/identity; skills-wizard sync will drop/);
 });
 
 test('doctor names project files relative to the project', async (t) => {
@@ -247,7 +247,7 @@ test('doctor warns that sync will stop keeping files local once the project leav
   assert.equal(code, 0);
   assert.match(
     output(),
-    /^warn\s+.*no longer in a git repository; agents-config sync will stop keeping its files local/m,
+    /^warn\s+.*no longer in a git repository; skills-wizard sync will stop keeping its files local/m,
   );
   assert.doesNotMatch(output(), /another repository/);
 });

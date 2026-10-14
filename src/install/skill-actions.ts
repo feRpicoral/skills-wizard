@@ -290,7 +290,7 @@ export async function planSkill({
       previous,
       reason:
         scope === 'global'
-          ? `${NOT_MANAGED}; run agents-config adopt ${target.name} to take it over`
+          ? `${NOT_MANAGED}; run skills-wizard adopt ${target.name} to take it over`
           : NOT_MANAGED,
     });
   }

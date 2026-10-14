@@ -213,7 +213,7 @@ function planLineRemoval(
     return removal({
       entry,
       change: NONE,
-      reason: 'the line was there before agents-config',
+      reason: 'the line was there before skills-wizard',
     });
   }
 

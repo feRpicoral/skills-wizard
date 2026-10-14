@@ -1,9 +1,9 @@
 import type { BlockLibrary } from '../blocks/library.ts';
 import type { Context } from '../context.ts';
 import {
-  AgentsConfigError,
   MissingVariablesError,
   RegistryError,
+  SkillsWizardError,
   UsageError,
 } from '../errors.ts';
 import { displayPath } from '../install/describe.ts';
@@ -79,7 +79,7 @@ function skipProject({
   projectDir,
   error,
 }: SkipProjectParams): void {
-  if (!(error instanceof AgentsConfigError)) throw error;
+  if (!(error instanceof SkillsWizardError)) throw error;
 
   notify({
     ctx,
@@ -190,7 +190,6 @@ async function planUpdateTarget({
       skills: reconciled.skills,
       mcp: reconciled.mcp,
       variables: reconciled.variables,
-      linkCommand: previous.options.linkCommand ?? false,
       keepLocal: reconciled.keepLocal,
       skillMode: previous.options.skillMode ?? DEFAULT_SKILL_MODE,
       ...(reconciled.preset !== undefined ? { preset: reconciled.preset } : {}),
@@ -277,7 +276,7 @@ export async function runUpdate(
 
   if (targets.length === 0 && stale.length === 0) {
     throw new UsageError(
-      'Nothing recorded to update; run agents-config init first.',
+      'Nothing recorded to update; run skills-wizard init first.',
     );
   }
 

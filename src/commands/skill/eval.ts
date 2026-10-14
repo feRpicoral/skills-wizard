@@ -263,7 +263,7 @@ export async function runSkillEvalCommand(
 ): Promise<number> {
   if (paths.length !== 1 || !paths[0]) {
     throw new UsageError(
-      'Usage: agents-config skill eval <name> [--runner <name>] [--runs <n>] [--baseline|--no-baseline|--baseline none|<ref>] [--compare <ref>|<skill-a>,<skill-b>] [--case <id>] [--cases <ids>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
+      'Usage: skills-wizard skill eval <name> [--runner <name>] [--runs <n>] [--baseline|--no-baseline|--baseline none|<ref>] [--compare <ref>|<skill-a>,<skill-b>] [--case <id>] [--cases <ids>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
     );
   }
 
@@ -324,7 +324,7 @@ export async function runSkillTriggersCommand(
 ): Promise<number> {
   if (paths.length !== 1 || !paths[0]) {
     throw new UsageError(
-      'Usage: agents-config skill triggers <name> [--runner <name>] [--split train|validation|all] [--runs <n>] [--threshold <0..1>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
+      'Usage: skills-wizard skill triggers <name> [--runner <name>] [--split train|validation|all] [--runs <n>] [--threshold <0..1>] [--parallel <n>] [--timeout <s>] [--sandbox] [--keep-workdirs]',
     );
   }
 
@@ -378,7 +378,7 @@ export async function runSkillReportCommand(
 ): Promise<number> {
   if (paths.length < 1 || paths.length > 2 || !paths[0]) {
     throw new UsageError(
-      'Usage: agents-config skill report <name|run-dir> [iteration-dir]',
+      'Usage: skills-wizard skill report <name|run-dir> [iteration-dir]',
     );
   }
 

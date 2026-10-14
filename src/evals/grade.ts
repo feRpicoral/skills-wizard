@@ -52,7 +52,7 @@ export {
   utf8Tail,
 };
 
-const GRADER_DIR_PREFIX = 'agents-config-grader-';
+const GRADER_DIR_PREFIX = 'skills-wizard-grader-';
 
 export interface GradedExpectation {
   text: string;

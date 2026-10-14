@@ -255,18 +255,6 @@ export async function promptVariables(
   return values;
 }
 
-export async function promptLinkCommand(
-  initial: boolean,
-  paths: Paths,
-): Promise<boolean> {
-  return unwrap(
-    await clack.confirm({
-      message: `Link the agents-config command into ${displayPath({ path: paths.localBin, home: paths.home })}?`,
-      initialValue: initial,
-    }),
-  );
-}
-
 export async function promptKeepLocal(initial: boolean): Promise<boolean> {
   const choice = unwrap(
     await clack.select<'commit' | 'local'>({
@@ -295,7 +283,7 @@ export async function promptAdoptSkills(
 ): Promise<string[]> {
   return unwrap(
     await clack.multiselect<string>({
-      message: 'Which unmanaged skills should agents-config take over?',
+      message: 'Which unmanaged skills should skills-wizard take over?',
       options: choices.map((choice) => ({
         value: choice.name,
         label: choice.name,

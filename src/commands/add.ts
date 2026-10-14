@@ -127,7 +127,7 @@ async function installAddedSkill({
 
   if (!previous) {
     throw new UsageError(
-      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init ${scope === 'project' ? '--project' : '--global'} first.`,
+      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run skills-wizard init ${scope === 'project' ? '--project' : '--global'} first.`,
     );
   }
 

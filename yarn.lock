@@ -645,40 +645,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"agents-config@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "agents-config@workspace:."
-  dependencies:
-    "@clack/prompts": "npm:^1.8.1"
-    "@commitlint/cli": "npm:^21.2.3"
-    "@commitlint/config-conventional": "npm:^21.2.3"
-    "@eslint/js": "npm:^10.0.1"
-    "@types/node": "npm:^24.19.1"
-    "@types/which": "npm:3.0.4"
-    "@types/write-file-atomic": "npm:4.0.3"
-    detect-indent: "npm:7.0.2"
-    detect-newline: "npm:4.0.1"
-    dot-prop: "npm:10.2.0"
-    eslint: "npm:^10.12.0"
-    eslint-config-prettier: "npm:^10.1.8"
-    eslint-plugin-prettier: "npm:^5.5.6"
-    eslint-plugin-simple-import-sort: "npm:^14.0.0"
-    husky: "npm:^9.1.7"
-    jsonc-parser: "npm:3.3.1"
-    lint-staged: "npm:^17.6.0"
-    prettier: "npm:^3.9.9"
-    smol-toml: "npm:^1.9.1"
-    typescript: "npm:^6.0.3"
-    typescript-eslint: "npm:^8.71.1"
-    which: "npm:7.0.0"
-    write-file-atomic: "npm:8.0.0"
-    yaml: "npm:^2.9.1"
-    zod: "npm:^4.6.5"
-  bin:
-    agents-config: ./src/cli.ts
-  languageName: unknown
-  linkType: soft
-
 "ajv@npm:^6.14.0":
   version: 6.15.0
   resolution: "ajv@npm:6.15.0"
@@ -1569,6 +1535,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"pinst@npm:^3":
+  version: 3.0.0
+  resolution: "pinst@npm:3.0.0"
+  bin:
+    pinst: bin.js
+  checksum: 10c0/abb1ed62ea2acb2207a7a860715bdb26ecbde74ede8fad5f6200194f3e22db25e2b7a49af05e5cc7fc05384709c651e0000323f0077d7239060c4b68c8acd428
+  languageName: node
+  linkType: hard
+
 "prelude-ls@npm:^1.2.1":
   version: 1.2.1
   resolution: "prelude-ls@npm:1.2.1"
@@ -1669,6 +1644,41 @@ __metadata:
   checksum: 10c0/230ac975cca485b7f6fe2b96a711aa62a6a26ead3e6fb8ba17c5a00d61b8bed0d7adc21f5626b70d7c33c62ff4e63933017a6462942c719d1980bb0b1207ad46
   languageName: node
   linkType: hard
+
+"skills-wizard@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "skills-wizard@workspace:."
+  dependencies:
+    "@clack/prompts": "npm:^1.8.1"
+    "@commitlint/cli": "npm:^21.2.3"
+    "@commitlint/config-conventional": "npm:^21.2.3"
+    "@eslint/js": "npm:^10.0.1"
+    "@types/node": "npm:^24.19.1"
+    "@types/which": "npm:3.0.4"
+    "@types/write-file-atomic": "npm:4.0.3"
+    detect-indent: "npm:7.0.2"
+    detect-newline: "npm:4.0.1"
+    dot-prop: "npm:10.2.0"
+    eslint: "npm:^10.12.0"
+    eslint-config-prettier: "npm:^10.1.8"
+    eslint-plugin-prettier: "npm:^5.5.6"
+    eslint-plugin-simple-import-sort: "npm:^14.0.0"
+    husky: "npm:^9.1.7"
+    jsonc-parser: "npm:3.3.1"
+    lint-staged: "npm:^17.6.0"
+    pinst: "npm:^3"
+    prettier: "npm:^3.9.9"
+    smol-toml: "npm:^1.9.1"
+    typescript: "npm:^6.0.3"
+    typescript-eslint: "npm:^8.71.1"
+    which: "npm:7.0.0"
+    write-file-atomic: "npm:8.0.0"
+    yaml: "npm:^2.9.1"
+    zod: "npm:^4.6.5"
+  bin:
+    skills-wizard: ./dist/cli.js
+  languageName: unknown
+  linkType: soft
 
 "smol-toml@npm:^1.9.1":
   version: 1.9.1

@@ -33,7 +33,7 @@ export async function runSync(
 
   if (!previous) {
     throw new UsageError(
-      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run agents-config init first.`,
+      `Nothing recorded at ${displayPath({ path: location.manifestPath, home: ctx.paths.home })}; run skills-wizard init first.`,
     );
   }
 
