@@ -34,6 +34,7 @@ import {
 } from '../prompts/selection.ts';
 import { DEFAULT_SKILL_MODE, type SkillMode } from '../skills/install.ts';
 import {
+  blockSkillNames,
   defaultSkillNames,
   findSkill,
   type SkillLibrary,
@@ -79,6 +80,7 @@ export interface ResolveToolsSelectionParams {
   prompting: boolean;
   requestedTools?: ToolId[];
   previous: Manifest | null;
+  remembered?: ToolId[] | undefined;
 }
 
 export async function resolveToolsSelection({
@@ -87,8 +89,10 @@ export async function resolveToolsSelection({
   prompting,
   requestedTools,
   previous,
+  remembered,
 }: ResolveToolsSelectionParams): Promise<ToolId[]> {
   const initial =
+    remembered ??
     requestedTools ??
     previous?.tools ??
     (await detectTools(ctx.paths, ctx.searchPath));
@@ -114,8 +118,9 @@ export interface ResolveBlocksSelectionParams {
   presetChanged: boolean;
   styleChanged: boolean;
   presetSelection: ResolvedPresetSelection | null;
-  replacedPreset?: PresetDefinition;
+  replacedPreset?: PresetDefinition | undefined;
   reconciled: ReconciledManifest | null;
+  remembered?: string[] | undefined;
 }
 
 export async function resolveBlocksSelection({
@@ -131,6 +136,7 @@ export async function resolveBlocksSelection({
   presetSelection,
   replacedPreset,
   reconciled,
+  remembered,
 }: ResolveBlocksSelectionParams): Promise<string[]> {
   if (requestedBlocks) checkExplicitBlocks(library, requestedBlocks, scope);
 
@@ -159,6 +165,7 @@ export async function resolveBlocksSelection({
         })
       : null;
   const initial =
+    remembered ??
     requestedBlocks ??
     initialBlocks({
       library,
@@ -227,6 +234,7 @@ export interface ResolveVariablesSelectionParams {
   givenVariables: Readonly<Record<string, string>>;
   previous: Manifest | null;
   reconciled: ReconciledManifest | null;
+  remembered?: Record<string, string> | undefined;
 }
 
 export async function resolveVariablesSelection({
@@ -238,6 +246,7 @@ export async function resolveVariablesSelection({
   givenVariables,
   previous,
   reconciled,
+  remembered,
 }: ResolveVariablesSelectionParams): Promise<Record<string, string>> {
   const needed = requiredVariables(selectBlocks(library, blocks, scope));
   const unused = Object.keys(givenVariables).filter(
@@ -262,7 +271,9 @@ export async function resolveVariablesSelection({
     },
     { home: ctx.paths.home, searchPath: ctx.searchPath },
   );
-  const variables = prompting ? await promptVariables(needed, known) : known;
+  const variables = prompting
+    ? await promptVariables(needed, { ...known, ...remembered })
+    : known;
   const missing = needed.filter((name) => !variables[name]?.trim());
 
   if (missing.length > 0) {
@@ -282,6 +293,7 @@ export interface ResolveInstallOptionsParams {
   requestedKeepLocal?: boolean;
   previous: Manifest | null;
   reconciled: ReconciledManifest | null;
+  remembered?: boolean | undefined;
 }
 
 export async function resolveInstallOptions({
@@ -291,6 +303,7 @@ export async function resolveInstallOptions({
   prompting,
   requestedKeepLocal,
   reconciled,
+  remembered,
 }: ResolveInstallOptionsParams): Promise<{
   keepLocal: boolean;
 }> {
@@ -315,7 +328,7 @@ export async function resolveInstallOptions({
       ? await resolveKeepLocal({
           prompting,
           requestedKeepLocal,
-          previousLocal: reconciled?.keepLocal ?? false,
+          previousLocal: remembered ?? reconciled?.keepLocal ?? false,
         })
       : false;
 
@@ -339,32 +352,39 @@ async function resolveKeepLocal({
 
 export interface ResolveSkillsSelectionParams {
   ctx: Context;
+  library: BlockLibrary;
   skillLibrary: SkillLibrary;
   scope: Scope;
+  blocks: readonly string[];
   prompting: boolean;
   requestedSkills?: string[];
-  requestedSkillMode?: SkillMode;
   presetChanged: boolean;
   presetSelection: ResolvedPresetSelection | null;
-  replacedPreset?: PresetDefinition;
+  replacedPreset?: PresetDefinition | undefined;
   previous: Manifest | null;
+  remembered?: string[] | undefined;
 }
 
+/**
+ * Resolves the skills to install. Without `--skills`, the starting selection
+ * is the recorded, preset or default skills plus the skills suggested by blocks
+ * that were not selected the last time (every selected block on a first run),
+ * minus the skills of blocks that are no longer selected.
+ */
 export async function resolveSkillsSelection({
   ctx,
+  library,
   skillLibrary,
   scope,
+  blocks,
   prompting,
   requestedSkills,
-  requestedSkillMode,
   presetChanged,
   presetSelection,
   replacedPreset,
   previous,
-}: ResolveSkillsSelectionParams): Promise<{
-  skills: string[];
-  skillMode: SkillMode;
-}> {
+  remembered,
+}: ResolveSkillsSelectionParams): Promise<string[]> {
   if (requestedSkills) {
     checkExplicitSkills(skillLibrary, requestedSkills, scope);
   }
@@ -379,34 +399,108 @@ export async function resolveSkillsSelection({
       })
     : null;
   const initialSkills =
+    remembered ??
     requestedSkills ??
-    initialSkillNames({
+    withBlockSkills({
+      library,
       skillLibrary,
       scope,
-      recordedSkills,
-      presetChanged,
-      presetSelection,
-      replacedPreset,
+      blocks,
+      recordedBlocks: previous?.blocks ?? [],
+      presetSkills: presetSelection?.skills ?? [],
+      skills: initialSkillNames({
+        skillLibrary,
+        scope,
+        recordedSkills,
+        presetChanged,
+        presetSelection,
+        replacedPreset,
+      }),
     });
-  const skills = prompting
-    ? await promptSkills(skillLibrary, scope, initialSkills)
+
+  return prompting
+    ? promptSkills(skillLibrary, scope, initialSkills)
     : initialSkills;
+}
+
+interface WithBlockSkillsParams {
+  library: BlockLibrary;
+  skillLibrary: SkillLibrary;
+  scope: Scope;
+  blocks: readonly string[];
+  recordedBlocks: readonly string[];
+  presetSkills: readonly string[];
+  skills: readonly string[];
+}
+
+/**
+ * Adds the skills of blocks selected since the last install and removes the
+ * skills of blocks no longer selected, unless a selected block or the preset
+ * still suggests them.
+ */
+function withBlockSkills({
+  library,
+  skillLibrary,
+  scope,
+  blocks,
+  recordedBlocks,
+  presetSkills,
+  skills,
+}: WithBlockSkillsParams): string[] {
+  const suggested = (blockIds: readonly string[]) =>
+    blockSkillNames({
+      library: skillLibrary,
+      blocks: library,
+      blockIds,
+      scope,
+    });
+  const recorded = new Set(recordedBlocks);
+  const selected = new Set(blocks);
+  const kept = new Set([...suggested(blocks), ...presetSkills]);
+  const dropped = new Set(
+    suggested(recordedBlocks.filter((id) => !selected.has(id))).filter(
+      (name) => !kept.has(name),
+    ),
+  );
+  const added = suggested(blocks.filter((id) => !recorded.has(id)));
+
+  return [
+    ...new Set([...skills.filter((name) => !dropped.has(name)), ...added]),
+  ];
+}
+
+export interface ResolveSkillModeSelectionParams {
+  skillLibrary: SkillLibrary;
+  scope: Scope;
+  skills: readonly string[];
+  prompting: boolean;
+  requestedSkillMode?: SkillMode;
+  previous: Manifest | null;
+  remembered?: SkillMode | undefined;
+}
+
+export async function resolveSkillModeSelection({
+  skillLibrary,
+  scope,
+  skills,
+  prompting,
+  requestedSkillMode,
+  previous,
+  remembered,
+}: ResolveSkillModeSelectionParams): Promise<SkillMode> {
+  if (scope !== 'global') return DEFAULT_SKILL_MODE;
+  if (requestedSkillMode !== undefined) return requestedSkillMode;
+
   const previousMode = previous?.options.skillMode ?? DEFAULT_SKILL_MODE;
   const firstParty = skills.some(
     (name) => findSkill(skillLibrary, name)?.origin.type === 'local',
   );
-  let skillMode = DEFAULT_SKILL_MODE;
-  if (scope === 'global') {
-    if (requestedSkillMode !== undefined) {
-      skillMode = requestedSkillMode;
-    } else if (prompting && firstParty) {
-      skillMode = await promptSkillMode(previousMode);
-    } else {
-      skillMode = previousMode;
-    }
+
+  if (prompting && firstParty) {
+    return promptSkillMode(remembered ?? previousMode);
   }
 
-  return { skills, skillMode };
+  return previousMode;
 }
 
 function initialSkillNames({
@@ -447,6 +541,7 @@ export interface ResolveMcpSelectionParams {
   requestedMcp?: string[];
   location: Location;
   previous: Manifest | null;
+  remembered?: string[] | undefined;
 }
 
 export async function resolveMcpSelection({
@@ -457,6 +552,7 @@ export async function resolveMcpSelection({
   requestedMcp,
   location,
   previous,
+  remembered,
 }: ResolveMcpSelectionParams): Promise<string[]> {
   if (requestedMcp) {
     checkExplicitMcp({ catalog: mcpCatalog, names: requestedMcp, scope });
@@ -486,7 +582,7 @@ export async function resolveMcpSelection({
   ];
   const fallbackMcp =
     scope === 'project' ? projectMcp : defaultMcpServerNames(mcpCatalog, scope);
-  const initialMcp = requestedMcp ?? recordedMcp ?? fallbackMcp;
+  const initialMcp = remembered ?? requestedMcp ?? recordedMcp ?? fallbackMcp;
 
   return prompting
     ? promptMcpServers({

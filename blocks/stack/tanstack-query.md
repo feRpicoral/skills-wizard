@@ -4,6 +4,7 @@ summary: Server-state ownership, as-const query key factories and per-resource h
 group: stack
 scopes: [project]
 defaults: []
+skills: [tanstack-query-expert]
 ---
 
 ## TanStack Query

@@ -4,6 +4,7 @@ summary: ESLint flat config, Prettier, import sorting, Husky and commitlint
 group: stack
 scopes: [project]
 defaults: []
+skills: [eslint-configuration, prettier-configuration]
 ---
 
 ## Linting and Formatting

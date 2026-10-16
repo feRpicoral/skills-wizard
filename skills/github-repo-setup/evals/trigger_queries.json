@@ -4,7 +4,7 @@
     "should_trigger": true
   },
   {
-    "query": "Use the gh CLI to disable squash and rebase merges on feRpicoral/relay, enable merge commits only, and turn on automatic deletion of head branches after merge.",
+    "query": "Use the gh CLI to disable squash and rebase merges on acme/relay, enable merge commits only, and turn on automatic deletion of head branches after merge.",
     "should_trigger": true
   },
   {
@@ -20,7 +20,7 @@
     "should_trigger": true
   },
   {
-    "query": "Create a repeatable scripts/setup-github-repo.sh script that inspects the repo with gh repo view, applies our house merge settings, and creates the main branch ruleset.",
+    "query": "Create a repeatable scripts/setup-github-repo.sh script that inspects the repo with gh repo view, applies our merge settings (merge commits only), and creates the main branch ruleset.",
     "should_trigger": true
   },
   {
@@ -36,7 +36,7 @@
     "should_trigger": true
   },
   {
-    "query": "Check whether feRpicoral/quotahit has deleteBranchOnMerge enabled and an active main branch ruleset blocking direct pushes.",
+    "query": "Check whether acme/storefront has deleteBranchOnMerge enabled and an active main branch ruleset blocking direct pushes.",
     "should_trigger": true
   },
   {

@@ -4,6 +4,7 @@ summary: Domain modules, controller/service/repository layering, nestjs-zod DTOs
 group: stack
 scopes: [project]
 defaults: []
+skills: [nestjs-module]
 ---
 
 ## NestJS

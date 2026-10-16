@@ -50,7 +50,7 @@ export default [
 - Keep Prettier options in `.prettierrc`, not in the rule's options: editor extensions read `.prettierrc` but not ESLint settings.
 - When reformatting a large unformatted codebase, the README suggests temporarily disabling `prettier/prettier` and running `eslint --fix` and `prettier --write` separately.
 
-The Prettier docs call these plugins (eslint-plugin-prettier, stylelint-prettier) "generally not recommended" today, listing three downsides: many red squiggly lines in the editor, slower than running Prettier directly, and one more layer where things can break. The user's house style uses eslint-plugin-prettier anyway; keep it and mention the trade-off in one sentence. In a repo that uses only eslint-config-prettier, keep that.
+The Prettier docs call these plugins (eslint-plugin-prettier, stylelint-prettier) "generally not recommended" today, listing three downsides: many red squiggly lines in the editor, slower than running Prettier directly, and one more layer where things can break. This skill's default setup uses eslint-plugin-prettier anyway; keep it and mention the trade-off in one sentence. In a repo that uses only eslint-config-prettier, keep that.
 
 ## prettier-eslint and prettier-stylelint
 
@@ -68,4 +68,4 @@ Symptoms: the file changes back and forth on save, ESLint reports formatting err
 
 ## lint-staged order
 
-When lint-staged runs both tools, run ESLint before Prettier (install docs). The house block runs `eslint --fix` and then `prettier --write`.
+When lint-staged runs both tools, run ESLint before Prettier (install docs). The default block runs `eslint --fix` and then `prettier --write`.

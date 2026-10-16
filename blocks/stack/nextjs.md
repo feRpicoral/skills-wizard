@@ -4,6 +4,7 @@ summary: Next.js 16 App Router, Server Components, typed Server Actions and prox
 group: stack
 scopes: [project]
 defaults: []
+skills: [vercel-react-best-practices, vercel-composition-patterns, web-design-guidelines]
 ---
 
 ## Next.js App Router

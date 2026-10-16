@@ -4,6 +4,7 @@ summary: Supabase keys, pooling URLs and baseline migrations
 group: stack
 scopes: [project]
 defaults: []
+skills: [supabase-prisma, supabase, supabase-postgres-best-practices]
 ---
 
 ## Supabase with Prisma

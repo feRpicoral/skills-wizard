@@ -4,6 +4,7 @@ summary: Tailwind CSS v4 @theme inline tokens, shadcn/ui Radix primitives and cl
 group: stack
 scopes: [project]
 defaults: []
+skills: [tailwind-patterns]
 ---
 
 ## Tailwind CSS and shadcn/ui

@@ -17,10 +17,10 @@ metadata:
 
 Configure Prettier and its integrations. Two kinds of knowledge live here and stay separate:
 
-- What Prettier supports, condensed from the Prettier 3.9.10 docs: the `references/` files except `house-style.md`.
-- What this user prefers, verified against their repositories: `references/house-style.md`.
+- What Prettier supports, condensed from the Prettier 3.9.10 docs: the `references/` files except `default-setup.md`.
+- The opinionated default this skill uses for new setups: `references/default-setup.md`. It is a preference, not a Prettier requirement.
 
-When you explain a change, say which parts Prettier requires and which are the user's preference.
+When you explain a change, say which parts Prettier requires and which come from the default setup.
 
 ## Start here
 
@@ -48,19 +48,19 @@ When you explain a change, say which parts Prettier requires and which are the u
 
 3. Pick the path:
    - Existing Prettier setup: keep matching it (file name, quote style, `printWidth`, plugins, how ESLint integrates). Change only what the task needs. A repo that already uses `eslint-plugin-prettier` keeps it.
-   - No Prettier setup: use the house style in [references/house-style.md](references/house-style.md), not the generic doc defaults.
+   - No Prettier setup: use the default setup in [references/default-setup.md](references/default-setup.md), not the generic doc defaults.
 
 ## Workflow
 
-### New setup (house style)
+### New setup (default setup)
 
 1. Create `.prettierrc` with `{ "singleQuote": true }` and nothing else unless the repo needs it. Prettier's option philosophy says options are frozen and each one is a debate; do not restate defaults.
-2. If the repo uses Tailwind CSS, add `prettier-plugin-tailwindcss` (last in `plugins`); for Tailwind v4 also set `tailwindStylesheet`, as described in house-style.md.
+2. If the repo uses Tailwind CSS, add `prettier-plugin-tailwindcss` (last in `plugins`); for Tailwind v4 also set `tailwindStylesheet`, as described in default-setup.md.
 3. Create `.prettierignore` for build output, coverage, generated code and lockfiles that are not already in `.gitignore`.
 4. Add scripts `format` and `format:check`, and devDependencies `prettier` (plus the plugin).
 5. ESLint integration: add `eslint-plugin-prettier/recommended` (with `eslint-config-prettier`) after the shared configs, and remove stylistic ESLint rules. The eslint-configuration skill covers the config itself. Mention once that Prettier's docs list downsides of running Prettier inside ESLint (editor noise, speed, indirection), and keep it.
-6. Hooks: add devDependencies `husky` and `lint-staged` (plus `@commitlint/cli` and `@commitlint/config-conventional` with `commitlint.config.mjs` when adding the `commit-msg` hook), the house `lint-staged` block (ESLint first, then Prettier), and `.husky/pre-commit` (and `.husky/commit-msg` when commitlint is configured). With Yarn, install Husky from `postinstall`; with npm, pnpm or bun, from `prepare`.
-7. Where the user's repos disagree (quotes, `printWidth`), follow the target repo if it already decided; otherwise use the newest repos' choice (desvia, quotahit: single quotes, default `printWidth`) and say so.
+6. Hooks: add devDependencies `husky` and `lint-staged` (plus `@commitlint/cli` and `@commitlint/config-conventional` with `commitlint.config.mjs` when adding the `commit-msg` hook), the default `lint-staged` block (ESLint first, then Prettier), and `.husky/pre-commit` (and `.husky/commit-msg` when commitlint is configured). With Yarn, install Husky from `postinstall`; with npm, pnpm or bun, from `prepare`.
+7. Where a repo already made a different choice (quotes, `printWidth`), keep it; otherwise use the default (single quotes, default `printWidth`) and say so.
 
 ### Stop Prettier from touching something
 
@@ -100,7 +100,7 @@ Read only what the task needs:
 | [plugins.md](references/plugins.md)                         | Loading plugins, official plugins, Tailwind plugin ordering                                |
 | [precommit-and-ci.md](references/precommit-and-ci.md)       | lint-staged, Husky, other hook tools, CI checks, version drift between machines            |
 | [version-differences.md](references/version-differences.md) | The installed version is not 3.9.10, or you are upgrading                                  |
-| [house-style.md](references/house-style.md)                 | New setups, or the user asks for their usual setup                                         |
+| [default-setup.md](references/default-setup.md)             | New setups, and compatibility with the latest versions                                     |
 
 ## Gotchas
 
@@ -128,5 +128,5 @@ Read only what the task needs:
 - The documented version lives only in `metadata.docs-version` above; `scripts/check-version.mjs` reads it from there.
 - To update, fetch each page at the new tag, for example `gh api 'repos/prettier/prettier/contents/docs/options.md?ref=<version>' --jq .content | base64 -d`, compare it with the matching reference, then update the facts, the `Source:` line, `docs-version` and `docs-source`.
 - Add each release's option, CLI and output changes to version-differences.md, from `CHANGELOG.md` and the `website/blog/` release posts at the tag.
-- Re-check house-style.md against the user's repositories when their setup changes, and keep the repo name next to every pattern.
+- Re-check the compatibility section of default-setup.md against each package's latest release and `peerDependencies` when updating the skill.
 - Re-run the cases in `evals/evals.json` after editing.

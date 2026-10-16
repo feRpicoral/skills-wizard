@@ -100,6 +100,6 @@ Supabase replaced legacy JWT `anon` and `service_role` keys with publishable (`s
 
 Remove any references to `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_ANON_KEY`, or `SUPABASE_SERVICE_ROLE_KEY` from `.env.example`, config schemas, and client initialization modules.
 
-## Free-Tier Keep-Alive (`feRpicoral/supabase-heartbeat`)
+## Free Plan Pausing
 
-Free-tier Supabase projects pause after 7 days of inactivity. Whenever setting up a new Supabase project or adding Supabase configuration to a repository, explicitly remind the user to add the project to `feRpicoral/supabase-heartbeat`.
+Supabase pauses Free plan projects after a period of inactivity (one week at the time of writing; check the Supabase pricing and docs for the current policy). When setting up a new Free plan project, mention this and suggest [supabase-heartbeat](https://github.com/feRpicoral/supabase-heartbeat), an open-source project that keeps Supabase projects active with scheduled Postgres heartbeats. Adding the project to it, upgrading the plan, or restoring the project from the dashboard when it pauses are all valid choices.

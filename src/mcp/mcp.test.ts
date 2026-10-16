@@ -47,6 +47,7 @@ const testLibrary: BlockLibrary = {
       defaults: ['global', 'project'],
       variables: [],
       requires: [],
+      skills: [],
       body: '## Style\n\nBe direct.',
     },
   ],

@@ -1,5 +1,5 @@
 {
-  "name": "relay-api",
+  "name": "ledger-api",
   "version": "0.1.0",
   "private": true,
   "type": "module",

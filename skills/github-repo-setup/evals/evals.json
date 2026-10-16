@@ -51,8 +51,8 @@
     },
     {
       "id": "precise-ruleset-and-merge-script",
-      "prompt": "Create .github/ruleset-main.json and scripts/configure-repo.sh for feRpicoral/ledger-api based on repo-snapshot.json so the repository follows our house merge policy and default-branch ruleset conventions, and verify the state at the end of the script.",
-      "expected_output": "Valid .github/ruleset-main.json and scripts/configure-repo.sh that inspects feRpicoral/ledger-api, disables squash and rebase merges while enabling merge commits and delete-branch-on-merge, creates or updates the main ruleset via gh api (excluding parent org rulesets via includes_parents=false), and verifies the resulting settings.",
+      "prompt": "Create .github/ruleset-main.json and scripts/configure-repo.sh for acme/ledger-api based on repo-snapshot.json so the repository allows only merge commits, deletes head branches on merge and protects the default branch with a ruleset, and verify the state at the end of the script.",
+      "expected_output": "Valid .github/ruleset-main.json and scripts/configure-repo.sh that inspects acme/ledger-api, disables squash and rebase merges while enabling merge commits and delete-branch-on-merge, creates or updates the main ruleset via gh api (excluding parent org rulesets via includes_parents=false), and verifies the resulting settings.",
       "files": [
         "evals/files/precise-ruleset-and-merge-script/repo-snapshot.json"
       ],
@@ -99,7 +99,7 @@
         {
           "type": "regex",
           "path": "scripts/configure-repo.sh",
-          "pattern": "feRpicoral/ledger-api"
+          "pattern": "acme/ledger-api"
         }
       ]
     },

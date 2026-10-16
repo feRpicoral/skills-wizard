@@ -307,6 +307,105 @@ export function resolvePresetSelection({
   return { blocks, skills };
 }
 
+export interface ResolveProjectPresetChoiceParams {
+  scope: Scope;
+  prompting: boolean;
+  presets: readonly PresetDefinition[];
+  detection: ProjectDetection | undefined;
+  previous: Manifest | null;
+  previousPreset: PresetChoice | undefined;
+  requestedPreset: PresetChoice | undefined;
+  /** The answer given the last time this prompt was shown, preselected instead of the default. */
+  remembered?: PresetChoice | undefined;
+  prompt?: typeof promptPreset;
+}
+
+/**
+ * Determines the effective project `preset` (`PresetId | 'none'`) during
+ * `init`, combining the explicit CLI flag, the recorded manifest option, an
+ * interactive prompt and auto-detection.
+ */
+export async function resolveProjectPresetChoice({
+  scope,
+  prompting,
+  presets,
+  detection,
+  previous,
+  previousPreset,
+  requestedPreset,
+  remembered,
+  prompt = promptPreset,
+}: ResolveProjectPresetChoiceParams): Promise<PresetChoice | undefined> {
+  if (scope !== 'project') return undefined;
+  if (requestedPreset !== undefined) return requestedPreset;
+
+  if (prompting && presets.length > 0) {
+    return prompt(
+      presets,
+      remembered ?? previousPreset ?? detection?.preset,
+      detection?.preset,
+    );
+  }
+
+  if (previous !== null) return previousPreset;
+  if (presets.length > 0) return detection?.preset;
+
+  return undefined;
+}
+
+export interface ResolveProjectStyleParams {
+  scope: Scope;
+  prompting: boolean;
+  hasGlobalInstall: boolean;
+  detection: ProjectDetection | undefined;
+  previous: Manifest | null;
+  preset: PresetChoice | undefined;
+  requestedStyle: ProjectStyle | undefined;
+  /** The answer given the last time this prompt was shown, preselected instead of the default. */
+  remembered?: ProjectStyle | undefined;
+  prompt?: typeof promptProjectStyle;
+}
+
+/**
+ * Determines the effective project `style` (`lean` | `self-contained`) during
+ * `init`, combining the explicit CLI flag, the recorded manifest option, an
+ * interactive prompt and auto-detection.
+ */
+export async function resolveProjectStyle({
+  scope,
+  prompting,
+  hasGlobalInstall,
+  detection,
+  previous,
+  preset,
+  requestedStyle,
+  remembered,
+  prompt = promptProjectStyle,
+}: ResolveProjectStyleParams): Promise<ProjectStyle | undefined> {
+  if (scope !== 'project') return undefined;
+  if (requestedStyle !== undefined) return requestedStyle;
+
+  const defaultStyle: ProjectStyle = hasGlobalInstall
+    ? 'lean'
+    : 'self-contained';
+
+  if (prompting) {
+    return prompt(remembered ?? previous?.options.style ?? defaultStyle);
+  }
+
+  if (previous !== null) return previous.options.style;
+
+  const hasAdditive =
+    (detection?.detectedBlocks.length ?? 0) > 0 ||
+    (detection?.detectedSkills.length ?? 0) > 0;
+
+  if ((preset !== undefined && preset !== 'none') || hasAdditive) {
+    return defaultStyle;
+  }
+
+  return undefined;
+}
+
 export interface ResolveProjectPresetParams {
   scope: Scope;
   prompting: boolean;
@@ -343,46 +442,28 @@ export async function resolveProjectPresetAndStyle({
   preset: PresetChoice | undefined;
   style: ProjectStyle | undefined;
 }> {
-  if (scope !== 'project') {
-    return { preset: undefined, style: undefined };
-  }
-
-  const askPreset = prompts?.promptPreset ?? promptPreset;
-  const askStyle = prompts?.promptProjectStyle ?? promptProjectStyle;
-
-  let preset: PresetChoice | undefined;
-
-  if (requestedPreset !== undefined) {
-    preset = requestedPreset;
-  } else if (prompting && presets.length > 0) {
-    preset = await askPreset(
-      presets,
-      previousPreset ?? detection?.preset,
-      detection?.preset,
-    );
-  } else if (previous !== null) {
-    preset = previousPreset;
-  } else if (presets.length > 0) {
-    preset = detection?.preset;
-  }
-
-  const hasAdditive =
-    (detection?.detectedBlocks.length ?? 0) > 0 ||
-    (detection?.detectedSkills.length ?? 0) > 0;
-  const defaultStyle: ProjectStyle = hasGlobalInstall
-    ? 'lean'
-    : 'self-contained';
-  let style: ProjectStyle | undefined;
-
-  if (requestedStyle !== undefined) {
-    style = requestedStyle;
-  } else if (prompting) {
-    style = await askStyle(previous?.options.style ?? defaultStyle);
-  } else if (previous !== null) {
-    style = previous.options.style;
-  } else if ((preset !== undefined && preset !== 'none') || hasAdditive) {
-    style = defaultStyle;
-  }
+  const preset = await resolveProjectPresetChoice({
+    scope,
+    prompting,
+    presets,
+    detection,
+    previous,
+    previousPreset,
+    requestedPreset,
+    ...(prompts?.promptPreset ? { prompt: prompts.promptPreset } : {}),
+  });
+  const style = await resolveProjectStyle({
+    scope,
+    prompting,
+    hasGlobalInstall,
+    detection,
+    previous,
+    preset,
+    requestedStyle,
+    ...(prompts?.promptProjectStyle
+      ? { prompt: prompts.promptProjectStyle }
+      : {}),
+  });
 
   return { preset, style };
 }

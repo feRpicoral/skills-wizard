@@ -34,7 +34,6 @@ Versions come from the changelog at v10.12.0.
 - 9.22.0 to 9.39.x: the references apply except for rows above marked later than the installed version, plus these 9.x behaviors: the config is looked up from the working directory unless the per-file lookup flag is set, and eslintrc can still be loaded with `ESLINT_USE_FLAT_CONFIG=false`. Import `.gitignore` patterns with `includeIgnoreFile(path, 'name')` from `@eslint/compat`.
 - 9.0.0 to 9.21.x: no `defineConfig`, `globalIgnores` or `extends`. Export a plain array, spread shared configs into it, and use an object whose only key is `ignores` for global ignores.
 - 8.x: flat config is used only when `eslint.config.js` exists at the project root or `ESLINT_USE_FLAT_CONFIG=true` is set; eslintrc is the default. Recommend upgrading (ESLint 8 cannot use `eslint/config`).
-- The house repos are on ESLint 9 (`^9.8.0` to `^9.39.4`), so expect `older` there.
 
 ## ESLint 10.0.0 (from 9.x)
 
@@ -74,6 +73,6 @@ Codemods: `npx codemod @eslint/v8-to-v9-config` (configuration, including `eslin
 - `--quiet` no longer runs `"warn"` rules; `--output-file` always writes a file; running without patterns lints `.` (`--pass-on-no-patterns` restores exit 0).
 - Severity-only `/* eslint */` comments keep config options; repeated comments for one rule are reported; `/* exported */` parsing is stricter.
 - `"eslint:recommended"` and `"eslint:all"` strings are rejected in flat config; use `js.configs.recommended` from `@eslint/js`.
-- `no-unused-vars` defaults `caughtErrors` to `"all"`, and `varsIgnorePattern` no longer covers catch parameters; add `caughtErrorsIgnorePattern` (quotahit's `^_` setup does).
+- `no-unused-vars` defaults `caughtErrors` to `"all"`, and `varsIgnorePattern` no longer covers catch parameters; add `caughtErrorsIgnorePattern` (the `^_` setup in default-setup.md does).
 - Stricter schemas or new defaults: `no-constructor-return`, `no-sequences`, `no-implicit-coercion`, `no-invalid-regexp` (case-sensitive flags), `no-restricted-imports` (repeated `name` entries all apply), `no-inner-declarations` (`blockScopedFunctions`), `no-useless-computed-key` (class members), `camelcase` (`allow` takes strings only).
 - Plugin API: `context.getScope()` and similar moved to `sourceCode`, so outdated plugins throw `TypeError: context.getScope is not a function`. Function-style rules and rules with options but no `meta.schema` are rejected.

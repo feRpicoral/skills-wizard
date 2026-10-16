@@ -19,6 +19,8 @@ export interface Block {
   defaults: Scope[];
   variables: string[];
   requires: string[];
+  /** Skills suggested when this block is selected. */
+  skills: string[];
   body: string;
 }
 
@@ -45,6 +47,7 @@ const frontmatterSchema = z
     defaults: z.array(z.enum(SCOPES)).default([]),
     variables: z.array(z.string()).default([]),
     requires: z.array(z.string()).default([]),
+    skills: z.array(z.string().min(1)).default([]),
   })
   .superRefine((meta, ctx) => {
     const invalidDefaults = meta.defaults.filter(

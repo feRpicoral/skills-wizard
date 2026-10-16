@@ -4,6 +4,7 @@ summary: React 19 with Vite, typed router entry structure, Zod env validation an
 group: stack
 scopes: [project]
 defaults: []
+skills: [vercel-react-best-practices, web-design-guidelines]
 ---
 
 ## React and Vite

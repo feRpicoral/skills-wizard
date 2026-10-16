@@ -4,13 +4,13 @@
     {
       "id": "casual-supabase-prisma-setup",
       "prompt": "We are setting up a new Supabase project with Prisma 7 for our Next.js app (see package.json and prisma/schema.prisma). Create prisma.config.ts, src/db.ts using @prisma/adapter-pg, and .env.example with our Supabase connection pooling and API key conventions, and let me know anything else I need to remember for a new Supabase project.",
-      "expected_output": "Creates prisma.config.ts using DATABASE_SESSION_POOLING_URL (port 5432), src/db.ts using PrismaPg with DATABASE_TRANSACTION_POOLING_URL (port 6543), and .env.example with DATABASE_TRANSACTION_POOLING_URL (:6543), DATABASE_SESSION_POOLING_URL (:5432), NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, and SUPABASE_SECRET_KEY (no legacy anon or service_role keys). Reminds the user to add the new Supabase project to feRpicoral/supabase-heartbeat.",
+      "expected_output": "Creates prisma.config.ts using DATABASE_SESSION_POOLING_URL (port 5432), src/db.ts using PrismaPg with DATABASE_TRANSACTION_POOLING_URL (port 6543), and .env.example with DATABASE_TRANSACTION_POOLING_URL (:6543), DATABASE_SESSION_POOLING_URL (:5432), NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, and SUPABASE_SECRET_KEY (no legacy anon or service_role keys). Mentions that Supabase pauses inactive Free plan projects and suggests supabase-heartbeat to keep it active.",
       "files": [
         "evals/files/casual-supabase-prisma-setup/package.json",
         "evals/files/casual-supabase-prisma-setup/prisma/schema.prisma"
       ],
       "assertions": [
-        "Reminds the user to register the new Supabase project in feRpicoral/supabase-heartbeat so it does not pause",
+        "Mentions that Supabase pauses inactive Free plan projects and suggests supabase-heartbeat to keep the project active",
         "Explains that runtime queries use DATABASE_TRANSACTION_POOLING_URL on port 6543 while prisma.config.ts and migrations use DATABASE_SESSION_POOLING_URL on port 5432",
         { "type": "file_exists", "path": "prisma.config.ts" },
         { "type": "file_exists", "path": "src/db.ts" },

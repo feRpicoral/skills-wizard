@@ -79,7 +79,7 @@ npx eslint --prune-suppressions                          # drop entries that no 
 
 ## Other
 
-- `--init` runs `npm init @eslint/config`, a wizard that writes `eslint.config.js` or `.mjs`. For this user, write the house-style config instead.
+- `--init` runs `npm init @eslint/config`, a wizard that writes `eslint.config.js` or `.mjs`. For a new setup, write the config from default-setup.md instead.
 - `--mcp` starts the ESLint MCP server. Editors usually register it as `npx @eslint/mcp@latest`. With a TypeScript config, install `@eslint/mcp` and `jiti` locally and use `npx @eslint/mcp`, or set `ESLINT_FLAGS=unstable_native_nodejs_ts_config` and `NODE_OPTIONS=--experimental-transform-types` in the server's environment. Yarn Plug'n'Play is not supported; use `nodeLinker: node-modules`.
 - `-h`, `--help` and `-v`, `--version` do not lint.
 
